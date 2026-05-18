@@ -1,2 +1,2 @@
-# jac
-JAC should make an LLM behave less like a stateless assistant and more like a persistent, tool-using, context-aware coworker.
+# JAC
+JAC is a local-first AI coworker runtime. It lets a user delegate software and reasoning tasks through chat, CLI, browser, API, or SDK. JAC should understand the workspace, ask clarifying questions when needed, plan work, use tools to inspect and modify the environment, execute and verify tasks, communicate progress, remember important context across sessions, and manage LLM/tool/context resources so it can work reliably over long-running projects.
