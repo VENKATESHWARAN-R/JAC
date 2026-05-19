@@ -57,7 +57,7 @@ PROVIDERS: dict[str, dict[str, str | None]] = {
     "pydantic-ai-gateway": {
         "env_key": "PYDANTIC_AI_GATEWAY_API_KEY",
         "suggested_model": "gpt-4o",
-        "format": "pydantic-ai-gateway:{model}",
+        "format": "gateway/{model}",
     },
 }
 
