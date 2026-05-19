@@ -1,16 +1,15 @@
 """Interactive REPL loop for JAC.
 
-Phase 0: plain non-streaming send/receive against the bare Gru agent. The
-hooks-driven event bus (ARCHITECTURE.md §7) lands in Phase 1 — at which point
-this file becomes a *renderer* that consumes events rather than directly
-calling ``gru.run``. Keep that future shape in mind: nothing in this file
-should grow runtime logic.
+Phase 0.5: plain non-streaming send/receive against the bare Gru agent.
+The hooks-driven event bus (ARCHITECTURE.md §7) lands in Phase 1 — at
+which point this file becomes a *renderer* that consumes events rather
+than directly awaiting ``gru.run``. Keep that future shape in mind:
+nothing in this file should grow runtime logic.
 """
 
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
@@ -19,20 +18,20 @@ from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
 
-from jac.config import settings
+from jac.config import get_settings
 from jac.errors import JacConfigError
 from jac.runtime.gru import build_gru
+from jac.workspace import paths
 
-_HISTORY_PATH = Path.home() / ".jac" / "history"
 _EXIT_WORDS = {"exit", "quit", ":q", ":quit"}
 
 console = Console()
 
 
 def _make_session() -> PromptSession[str]:
-    _HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    paths.USER_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
     return PromptSession(
-        history=FileHistory(str(_HISTORY_PATH)),
+        history=FileHistory(str(paths.USER_HISTORY_FILE)),
         auto_suggest=AutoSuggestFromHistory(),
         multiline=False,
     )
@@ -41,7 +40,7 @@ def _make_session() -> PromptSession[str]:
 def _greet(model_id: str) -> None:
     console.print(
         Panel.fit(
-            "[bold cyan]JAC[/bold cyan] — phase 0 shell\n"
+            "[bold cyan]JAC[/bold cyan] — phase 0.5 shell\n"
             f"[dim]model:[/dim] {model_id}\n"
             "[dim]type 'exit' or Ctrl-D to quit[/dim]",
             border_style="cyan",
@@ -56,12 +55,12 @@ async def _repl_loop(model_override: str | None = None) -> None:
         console.print(f"[red]config error:[/red] {exc}")
         return
 
-    # build_gru guarantees a model was resolved if we got here.
-    model_id = model_override or settings.model or "unknown"
+    # build_gru guarantees a non-None model if we got here.
+    model_id = model_override or get_settings().model or "unknown"
     session = _make_session()
     _greet(model_id)
 
-    # Phase 0: in-memory only. Session persistence is Phase 1.
+    # Phase 0.5: in-memory only. Session persistence is Phase 1.
     message_history: list = []
 
     while True:

@@ -10,7 +10,7 @@ dependencies = [
     "prompt-toolkit>=3.0.52",
     "pydantic>=2.13.4",
     "pydantic-ai-slim[anthropic,cli,duckduckgo,evals,fastmcp,google,logfire,mistral,openai,openrouter]>=1.98.0",
-    "pydantic-settings>=2.14.1",
+    "pydantic-settings[yaml]>=2.14.1",
     "rich>=15.0.0",
     "typer>=0.25.1",
 ]
@@ -24,3 +24,8 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/jac"]
+
+[dependency-groups]
+dev = [
+    "types-pyyaml>=6.0.12.20260518",
+]

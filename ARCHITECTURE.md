@@ -56,7 +56,7 @@ flowchart TB
 | **HITL approval** | `ApprovalRequiredToolset` + `deferred_tool_calls` hook | Built-in. Tools we mark `approval_required` defer; CLI handles the prompt. |
 | **CLI event bus** | `Hooks` (`event`, `before_*`, `deferred_tool_calls`) | CLI registers a `Hooks` capability that pushes lifecycle events to a UI queue. |
 | **Session memory** | `ModelMessagesTypeAdapter` + custom disk capability | Pure serialization; storage is our responsibility. |
-| **Project memory** | Custom `Capability` with `get_instructions()` | Auto-injects a `PROJECT.md`-style file into the system prompt. |
+| **Project memory** | Custom `Capability` with `get_instructions()` | Auto-injects `<repo>/AGENTS.md` (at repo root, community convention) into the system prompt. |
 | **Sliding window / summarization** | `ProcessHistory` capability | Built-in. We supply the processor function. |
 | **Cheap routing decisions** | `pydantic_ai.direct.model_request_sync` | For "should Gru delegate?" classification. No agent loop needed. |
 | **CodeMode** | `CodeMode` capability from `pydantic-ai-harness` | Drop-in. Pulls in Monty automatically. |
@@ -85,7 +85,7 @@ jac/
 │   ├── capabilities/             # all JAC-specific capabilities
 │   │   ├── memory/
 │   │   │   ├── session.py        # save/load message history
-│   │   │   ├── project.py        # inject PROJECT.md
+│   │   │   ├── project.py        # inject AGENTS.md
 │   │   │   └── user.py           # v2
 │   │   ├── tools/
 │   │   │   ├── filesystem.py     # read, write, edit
@@ -128,7 +128,7 @@ sequenceDiagram
     User->>CLI: jac
     CLI->>Session: open or resume
     Session->>Session: load message_history from .jac/sessions/<id>.json
-    Session->>ProjMem: load PROJECT.md if present
+    Session->>ProjMem: load AGENTS.md if present
     Session->>Gru: build Agent with capabilities + history
     CLI->>User: prompt
     User->>CLI: "fix the off-by-one in pagination"
@@ -199,7 +199,7 @@ sequenceDiagram
     Session->>Session: persist full message history
     Session->>Summarizer: spawn (template="summarizer", deps=history)
     Summarizer-->>Session: ProjectMemoryDelta (facts, decisions)
-    Session->>ProjMem: apply delta to PROJECT.md
+    Session->>ProjMem: apply delta to AGENTS.md
     Session-->>CLI: closed
 ```
 
@@ -388,7 +388,7 @@ flowchart TB
         S[ModelMessages JSON] -.lives in.-> SD[.jac/sessions/<id>.json]
     end
     subgraph "Project memory"
-        P[PROJECT.md + facts.json] -.lives in.-> PD[<repo>/.jac/]
+        P[AGENTS.md at repo root + facts.jsonl in .agents/] -.lives in.-> PD[<repo>/AGENTS.md + <repo>/.agents/]
     end
     subgraph "User memory (v2)"
         U[USER.md + prefs.json] -.lives in.-> UD[~/.jac/]
@@ -401,7 +401,7 @@ flowchart TB
 ```
 
 - **Session:** raw `ModelMessage` list, JSON via `ModelMessagesTypeAdapter`. Stored under `.jac/sessions/<timestamp>/` (folder convention — sorts chronologically, human-readable). Resumable via `message_history=` parameter.
-- **Project:** starts as just `PROJECT.md` (prose). Auto-injected on every Gru run via a `ProjectMemory` capability's `get_instructions()`. Updated at session close by a summarizer minion. **Structured `facts.jsonl` is added only if/when prose retrieval gets noisy** — memory management is a last resort, not a first move.
+- **Project:** starts as just `AGENTS.md` (prose). Auto-injected on every Gru run via a `ProjectMemory` capability's `get_instructions()`. Updated at session close by a summarizer minion. **Structured `facts.jsonl` is added only if/when prose retrieval gets noisy** — memory management is a last resort, not a first move.
 - **User:** v2. Same shape, scoped to `~/.jac/`.
 
 **Predict-calibrate (v2):** at session close, the summarizer minion is given existing project memory + new session transcript. It predicts what the project memory *should* now say; the diff is what gets written. Avoids duplicate facts and stale overwrites. Steal from `memv`.
@@ -431,7 +431,7 @@ gantt
     ProcessHistory window management        :p1f, after p1e, 1d
 
     section Phase 2: Project memory
-    PROJECT.md capability                   :p2a, after p1f, 1d
+    AGENTS.md capability                   :p2a, after p1f, 1d
     Summarizer minion + session-close write :p2b, after p2a, 2d
 
     section Phase 3: Minion factory
@@ -468,7 +468,7 @@ Five canonical journeys we should design against. If any of these feel wrong, th
 
 1. User `cd`s into a repo and runs `jac`.
 2. No `.jac/` exists. Gru introduces itself, runs a one-shot scan (read top-level structure + README), asks 2–3 clarifying questions about the project.
-3. User answers. Gru writes initial `PROJECT.md`.
+3. User answers. Gru writes initial `AGENTS.md`.
 4. Loop ready for normal interaction.
 
 ### J2: Simple ask, single turn
@@ -508,14 +508,14 @@ These were open in the previous draft; now locked.
 | D1 | **Minion task packet:** `objective` (req), `success_criteria` (req), `relevant_files` (opt), `forbidden_actions` (opt), `expected_output` (req). Templates may extend with their own fields. See §5a. |
 | D2 | **Approval granularity:** per-tool, with an optional `risk: high` tag for one-off escalation. **Every tool call carries a `reason: str`** that is rendered in the approval UI. See §6a. |
 | D3 | **Session ID:** timestamp folder. `.jac/sessions/2026-05-19T16-23-04/`. Human-readable, sorts chronologically, trivially scriptable. |
-| D4 | **Project memory:** prose `PROJECT.md` first. Add structured `facts.jsonl` only if/when prose retrieval gets noisy. Memory management is a last resort. |
-| D5 | **Skills location (v2 feature):** both project (`<repo>/.jac/skills/`) and user (`~/.jac/skills/`). Project entries shadow user entries on name collision. |
+| D4 | **Project memory:** prose `AGENTS.md` first. Add structured `facts.jsonl` only if/when prose retrieval gets noisy. Memory management is a last resort. |
+| D5 | **Skills location (v2 feature):** both project (`<repo>/.agents/skills/`) and user (`~/.jac/skills/`). Project entries shadow user entries on name collision. |
 | D6 | **CLI stack:** `typer` (commands) + `rich` (rendering) + `prompt-toolkit` (interactive input loop). |
 | D7 | **A2A:** use `fasta2a` for server-side exposure; build a small bespoke HTTP client toolset for outbound calls. Both wrapped as JAC capabilities. v2. |
 | D8 | **Tracing schema:** every Logfire span carries `template`, `task_id`, `parent_run_id`, `token_cost`, `duration`, `exit_status`. |
-| D9 | **Config layering:** package defaults → user (`~/.jac/`) → project (`<repo>/.jac/`) → env vars → CLI args. Required values without an override raise `JacConfigError` — never silent defaults. |
-| D10 | **File-format standards:** **TOML** for app config; **YAML** for agent/minion specs; **JSON / JSONL** for machine state; **Markdown** for prose; **dotenv** for secrets. Don't mix formats within a category. |
-| D11 | **Workspace layout:** user workspace at `~/.jac/`, project workspace at `<repo>/.jac/`. Symmetric subdirs (`prompts/`, `minions/templates/`, `skills/`). Sessions live at project scope only. Project shadows user shadows package defaults. |
+| D9 | **Config layering:** package defaults → user (`~/.jac/`) → project (`<repo>/.agents/`) → env vars → CLI args. Required values without an override raise `JacConfigError` — never silent defaults. |
+| D10 | **File-format standards:** **YAML** for app config *and* agent/minion specs (one format for all human-edited structured data); **JSON / JSONL** for machine state; **Markdown** for prose; **dotenv** for secrets. |
+| D11 | **Workspace layout:** user workspace at `~/.jac/`, project workspace at `<repo>/.agents/`. Symmetric subdirs (`prompts/`, `minions/templates/`, `skills/`). Sessions live at project scope only. Project shadows user shadows package defaults. **AGENTS.md** (community convention) lives at `<repo>/AGENTS.md` (root, not inside `.agents/`) and at `~/.jac/AGENTS.md`; both are auto-loaded into Gru's instructions when present. |
 | D12 | **No hardcoded defaults for required runtime values.** No model default in code; the user must configure one via env, CLI flag, or config file. Prompts and minion templates ship with package defaults but may be overridden at the user or project workspace. |
 
 ### Still open (smaller calls, deferrable)

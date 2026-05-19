@@ -1,19 +1,37 @@
-"""Runtime configuration. Reads from environment variables.
+"""JAC runtime configuration.
 
-Env vars are prefixed with ``JAC_``. Example: ``JAC_MODEL=anthropic:claude-opus-4-6``.
-A ``.env`` file in the current working directory is also honored.
+Reads from a layered stack:
+
+  CLI args > env vars > .env > <repo>/.agents/config.yaml >
+  ~/.jac/config.yaml > <package>/defaults.yaml
+
+The layering is plumbed in :mod:`jac.workspace.config_loader`. Required
+values (no default in code) raise ``JacConfigError`` at the point of use —
+see CLAUDE.md "Fail-first, no hardcoding".
+
+``Settings()`` is constructed lazily via :func:`get_settings` so that
+:func:`jac.workspace.bootstrap.ensure_user_workspace` can run first and
+create the YAML files this loader will read.
 """
 
 from __future__ import annotations
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from functools import cache
+
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
+
+from jac.workspace.config_loader import jac_config_sources
 
 
 class Settings(BaseSettings):
     """Top-level JAC configuration.
 
-    Keep this small. New tunables go here, not into ad-hoc env reads scattered
-    across modules.
+    Keep this class small. New tunables go here, not into ad-hoc env reads
+    scattered across modules.
     """
 
     model_config = SettingsConfigDict(
@@ -28,10 +46,40 @@ class Settings(BaseSettings):
 
     model: str | None = None
     """Model identifier (``provider:name``). **Required** — set via ``JAC_MODEL``,
-    the ``--model`` CLI flag, or ``model = "..."`` in a config file.
+    the ``--model`` CLI flag, or ``model = "..."`` in any layered config file.
 
-    No default is hardcoded in code (fail-first principle, see CLAUDE.md).
-    See ``.env.template`` for example values."""
+    No default is hardcoded (fail-first principle). See ``.env.template``."""
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        # Pydantic calls this when building Settings(). We plug in our YAML
+        # layers (project → user → package) between dotenv and file secrets.
+        return jac_config_sources(
+            settings_cls,
+            init_settings,
+            env_settings,
+            dotenv_settings,
+            file_secret_settings,
+        )
 
 
-settings = Settings()
+@cache
+def get_settings() -> Settings:
+    """Return the process-wide Settings singleton.
+
+    Constructed lazily so workspace bootstrap can create missing YAML files
+    first. Tests can call :func:`reset_settings_cache` to force a reload.
+    """
+    return Settings()
+
+
+def reset_settings_cache() -> None:
+    """Drop the cached Settings — useful in tests after changing the env."""
+    get_settings.cache_clear()

@@ -1,0 +1,11 @@
+# JAC package defaults — non-required tunables only.
+#
+# Required runtime values (model, provider keys) are intentionally NOT
+# pre-filled here. They must be set via env, CLI, or a user/project
+# config file. See CLAUDE.md "Fail-first, no hardcoding".
+#
+# Layering (highest → lowest precedence):
+#   CLI args > env vars > <repo>/.agents/config.yaml > ~/.jac/config.yaml > this file
+#
+# Add non-required tunables here as they emerge. Keep this file small;
+# anything that lives here is something every user inherits by default.

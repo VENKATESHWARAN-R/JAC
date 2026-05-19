@@ -10,12 +10,12 @@ For the *why* see `IDEA.md`. For the *how* see `ARCHITECTURE.md` and `CLAUDE.md`
 | Phase | Status | Notes |
 | --- | --- | --- |
 | Phase 0 — Skeleton | ✅ Complete | bare CLI + Gru, Logfire wired, no tools |
-| Phase 0.5 — Config foundation | ⏳ Next | workspace layout, layered config, fail-first |
-| Phase 1 — Solo Gru | ⏸ Queued | hooks bus + tools + HITL + session memory |
-| Phase 2 — Project memory | ⏸ Queued | `PROJECT.md` + summarizer minion |
+| Phase 0.5 — Config foundation | ✅ Complete | workspace, layered config, AGENTS.md, `jac init` |
+| Phase 1 — Solo Gru | ⏳ Next | hooks bus + tools + HITL + session memory |
+| Phase 2 — Project memory | ⏸ Queued | richer AGENTS.md write-back via summarizer minion |
 | Phase 3 — Minion factory | ⏸ Queued | spec loader + factory + first templates |
 | Phase 4 — Quality | ⏸ Queued | CodeMode + stuck-loop + tests + docs |
-| v2 | ⏸ Future | A2A / scheduling / YOLO / user memory / surfaces |
+| v2 | ⏸ Future | A2A / scheduling / YOLO / user memory tier / surfaces |
 
 ---
 
@@ -26,41 +26,38 @@ For the *why* see `IDEA.md`. For the *how* see `ARCHITECTURE.md` and `CLAUDE.md`
 - [x] Project scaffold + `uv` + `pyproject.toml` (build system + console script entry)
 - [x] Logfire instrumentation (`logfire.configure(send_to_logfire="if-token-present")` + `instrument_pydantic_ai`)
 - [x] Typer CLI entry (`jac`, `python -m jac`)
-- [x] Prompt-toolkit + rich REPL with input history at `~/.jac/history`
+- [x] Prompt-toolkit + rich REPL
 - [x] Bare `Gru` agent (no tools, no capabilities yet)
 - [x] In-memory message history within a single session
 - [x] `.env.template` documenting all supported provider keys
 - [x] Fail-first when no model is configured (`JacConfigError`)
 
-**Phase 0 known gaps that Phase 0.5 closes:**
+## Phase 0.5 — Config foundation ✅
 
-- Gru's system prompt is loaded only from the installed package. Should support user/project workspace overrides (`~/.jac/prompts/`, `<repo>/.jac/prompts/`).
-- No `~/.jac/` or `<repo>/.jac/` workspace bootstrap.
-- No TOML config file loading.
+**Goal:** establish workspace + layered config + format conventions before any Phase 1 code touches the filesystem.
 
----
-
-## Phase 0.5 — Config foundation ⏳
-
-**Goal:** establish the workspace + layered config + format conventions **before** any Phase 1 code lands. No more hardcoded defaults.
-
-- [ ] Define `~/.jac/` and `<repo>/.jac/` workspace layouts (doc landed in ARCHITECTURE.md §11 D11)
-- [ ] Format-convention doc landed (CLAUDE.md "Configuration & workspace")
-- [ ] Layered settings loader: package defaults → user TOML → project TOML → env → CLI args
-- [ ] Ship a package `defaults.toml` (with **no** required values pre-filled — fail-first)
-- [ ] `JacConfigError` raised with actionable messages for any missing required value
-- [ ] Layered prompt loader: project `<repo>/.jac/prompts/` → user `~/.jac/prompts/` → package `src/jac/prompts/`
-- [ ] First-run bootstrap: silently create `~/.jac/` skeleton if missing (interactive onboarder is v2 polish)
-- [ ] Workspace path resolver (one source of truth: `jac.workspace.paths`)
-- [ ] Smoke-test: model can be set via env, project TOML, user TOML, or CLI; precedence is correct
+- [x] Workspace layout: user at `~/.jac/`, project at `<repo>/.agents/`, project context at `<repo>/AGENTS.md` (community convention)
+- [x] Format-convention table locked: YAML for human-edited structured data, JSON for state, Markdown for prose, dotenv for secrets
+- [x] Layered settings loader: package defaults → user YAML → project YAML → env → CLI (`jac.workspace.config_loader`)
+- [x] Shipped `src/jac/defaults.yaml` (intentionally empty — fail-first means no required defaults)
+- [x] `JacConfigError` with actionable messages everywhere a required value is missing
+- [x] Layered prompt loader (`jac.workspace.prompts`) — project → user → package, first hit wins
+- [x] AGENTS.md auto-loader (`jac.workspace.context`) — concatenates user + project context into Gru's instructions
+- [x] First-run silent bootstrap (`jac.workspace.bootstrap.ensure_user_workspace`) — idempotent, creates skeleton + template files
+- [x] Workspace path resolver (`jac.workspace.paths`) — one source of truth for every path
+- [x] `jac init` interactive wizard (`jac.cli.init`) — provider + model + config write with confirmation
+- [x] Multi-command Typer app (`jac`, `jac init`)
+- [x] Settings made lazy via `get_settings()` so bootstrap can run first
+- [x] History file moved under `~/.jac/history` (was already there via prompt-toolkit; now path-resolved)
+- [x] Docs updated: CLAUDE.md, ARCHITECTURE.md §11 (D4, D10, D11), PROGRESS.md
 
 ---
 
-## Phase 1 — Solo Gru ⏸
+## Phase 1 — Solo Gru ⏳
 
-Starts after Phase 0.5. Recommended order: build the event bus **before** the tools, so tools slot into a stable architecture.
+**Recommended order:** event bus **before** tools. The bus is the architectural inversion; every later piece slots into it cleanly.
 
-- [ ] Hooks capability — push lifecycle events to an `asyncio.Queue` (the event bus)
+- [ ] `Hooks` capability — push lifecycle events onto an `asyncio.Queue`
 - [ ] CLI renderer consumes the queue (replaces direct `await gru.run` in `repl.py`)
 - [ ] `JacTool` decorator enforcing the `reason: str` first-arg requirement
 - [ ] Wrapper toolset that rejects tools missing `reason: str` at agent construction
@@ -69,22 +66,24 @@ Starts after Phase 0.5. Recommended order: build the event bus **before** the to
 - [ ] Search capability: `grep`, `glob`
 - [ ] `ApprovalRequiredToolset` wired for risky tools
 - [ ] Approval prompt UI in CLI (renders `reason` alongside args)
-- [ ] Session persistence at `<repo>/.jac/sessions/<timestamp>/messages.json`
+- [ ] Session persistence at `<repo>/.agents/sessions/<timestamp>/messages.json`
 - [ ] `ProcessHistory` window management
 - [ ] Resume support: `jac --resume <session-id>` or auto-resume last
 
 ## Phase 2 — Project memory ⏸
 
-- [ ] `ProjectMemory` capability — inject `PROJECT.md` via `get_instructions()`
-- [ ] Summarizer minion (first minion) at session close
-- [ ] Append delta back to `PROJECT.md`
+Project context already auto-loads from `<repo>/AGENTS.md` since Phase 0.5. Phase 2 adds dynamic write-back.
+
+- [ ] `ProjectMemoryCapability` — formal capability wrapping the existing context loader + write path
+- [ ] Summarizer minion (first minion!) at session close
+- [ ] Append-delta back into `<repo>/AGENTS.md` (or a managed section thereof)
 
 ## Phase 3 — Minion factory ⏸
 
 - [ ] Minion runner — load YAML spec, instantiate via `Agent.from_spec()`, run with task packet
 - [ ] `MinionFactory` capability exposing `spawn_minion(reason, template, task)`
 - [ ] First three templates: `researcher.yaml`, `builder.yaml`, `reviewer.yaml`
-- [ ] Playbook docstring on `spawn_minion` — Gru's decision guidance
+- [ ] Playbook docstring on `spawn_minion` — Gru's delegation guidance
 
 ## Phase 4 — Quality ⏸
 
@@ -101,7 +100,7 @@ Starts after Phase 0.5. Recommended order: build the event bus **before** the to
 - [ ] Night Shift / cron scheduling
 - [ ] User-tier memory + predict-calibrate extraction
 - [ ] Agent-authored skills
-- [ ] Interactive onboarder for first-run setup
+- [ ] Richer `jac init` (tier-based models, project workspace setup, key-validation)
 - [ ] Browser / API / SDK surfaces
 
 ---
