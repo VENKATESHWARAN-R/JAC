@@ -20,6 +20,7 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 
 from jac.config import settings
+from jac.errors import JacConfigError
 from jac.runtime.gru import build_gru
 
 _HISTORY_PATH = Path.home() / ".jac" / "history"
@@ -49,8 +50,14 @@ def _greet(model_id: str) -> None:
 
 
 async def _repl_loop(model_override: str | None = None) -> None:
-    model_id = model_override or settings.model
-    gru = build_gru(model_override=model_id)
+    try:
+        gru = build_gru(model_override=model_override)
+    except JacConfigError as exc:
+        console.print(f"[red]config error:[/red] {exc}")
+        return
+
+    # build_gru guarantees a model was resolved if we got here.
+    model_id = model_override or settings.model or "unknown"
     session = _make_session()
     _greet(model_id)
 

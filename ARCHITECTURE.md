@@ -513,6 +513,10 @@ These were open in the previous draft; now locked.
 | D6 | **CLI stack:** `typer` (commands) + `rich` (rendering) + `prompt-toolkit` (interactive input loop). |
 | D7 | **A2A:** use `fasta2a` for server-side exposure; build a small bespoke HTTP client toolset for outbound calls. Both wrapped as JAC capabilities. v2. |
 | D8 | **Tracing schema:** every Logfire span carries `template`, `task_id`, `parent_run_id`, `token_cost`, `duration`, `exit_status`. |
+| D9 | **Config layering:** package defaults → user (`~/.jac/`) → project (`<repo>/.jac/`) → env vars → CLI args. Required values without an override raise `JacConfigError` — never silent defaults. |
+| D10 | **File-format standards:** **TOML** for app config; **YAML** for agent/minion specs; **JSON / JSONL** for machine state; **Markdown** for prose; **dotenv** for secrets. Don't mix formats within a category. |
+| D11 | **Workspace layout:** user workspace at `~/.jac/`, project workspace at `<repo>/.jac/`. Symmetric subdirs (`prompts/`, `minions/templates/`, `skills/`). Sessions live at project scope only. Project shadows user shadows package defaults. |
+| D12 | **No hardcoded defaults for required runtime values.** No model default in code; the user must configure one via env, CLI flag, or config file. Prompts and minion templates ship with package defaults but may be overridden at the user or project workspace. |
 
 ### Still open (smaller calls, deferrable)
 

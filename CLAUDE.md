@@ -2,16 +2,11 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project state: design-phase, pre-implementation
+## Project state
 
-JAC is a **local-first AI coworker harness** built on Pydantic AI. The repo currently contains design documents and project scaffolding — there is no source code yet. Implementation begins with Phase 0 of `ARCHITECTURE.md` §9 (skeleton + Logfire + minimal CLI shell + bare Gru agent).
+See `PROGRESS.md` for what's implemented, what's in flight, and what's queued. **Update it as work lands.**
 
-**Read these first, in order:**
-
-1. `IDEA.md` — what JAC is, why it exists, what's in/out of scope, v1 vs v2 split.
-2. `ARCHITECTURE.md` — the design contract. Mermaid diagrams, JAC↔Pydantic AI mapping, locked decisions (§11), proposed module layout (§3), phased roadmap (§9), user journeys (§10).
-
-When the design is ambiguous, **`ARCHITECTURE.md` is the source of truth for *how* JAC is built**; **`IDEA.md` is the source of truth for *what it is* and *what it is not*.** If you need to deviate from either, update the doc in the same change.
+For the *why*, read `IDEA.md`. For the *how*, read `ARCHITECTURE.md`. When the design is ambiguous, **`ARCHITECTURE.md` is the source of truth for *how* JAC is built**; **`IDEA.md` is the source of truth for *what it is and is not*.** If you deviate from either, update the doc in the same change.
 
 ## Stack
 
@@ -20,24 +15,82 @@ When the design is ambiguous, **`ARCHITECTURE.md` is the source of truth for *ho
 - **Logfire** for tracing — every model call, tool call, minion spawn, and memory write must be instrumented.
 - **typer + rich + prompt-toolkit** for the CLI surface.
 - **fasta2a** for A2A (v2; server-side only — client side is a bespoke HTTP toolset we write).
-- **pydantic-settings** for config.
+- **pydantic-settings** for layered config.
 
 ## Commands
 
 ```bash
 uv sync                    # install / refresh dependencies
-uv run python -c "..."     # quick check inside the env
+uv run jac                 # interactive REPL (requires a provider key + a model setting)
+uv run jac --help          # CLI help
+uv run python -m jac       # equivalent invocation
 ```
 
-No `jac` CLI entry point, no tests, no linter config yet — these arrive in Phase 0. Update this section as those land.
+**No required runtime values are defaulted in code.** Set them via `.env`, env vars, project/user config files, or the `--model` flag. See `.env.template` for the canonical list of environment variables.
+
+## Configuration & workspace
+
+### File-format conventions (locked)
+
+| What | Location | Format |
+| --- | --- | --- |
+| Secrets (API keys, tokens) | `.env`, env vars | dotenv |
+| App config | `~/.jac/config.toml`, `<repo>/.jac/config.toml` | **TOML** |
+| Agent / minion specs | `~/.jac/minions/*.yaml`, `<repo>/.jac/minions/*.yaml` | **YAML** |
+| System prompts | `~/.jac/prompts/*.md`, `<repo>/.jac/prompts/*.md` | **Markdown** |
+| Session message history | `<repo>/.jac/sessions/<ts>/messages.json` | **JSON** |
+| Project memory (prose) | `<repo>/.jac/PROJECT.md` | **Markdown** |
+| Project memory (structured, v2) | `<repo>/.jac/facts.jsonl` | **JSONL** |
+| Skills (v2) | `~/.jac/skills/*.py`, `<repo>/.jac/skills/*.py` | **Python** |
+
+**Unified standards:** TOML for typed app config (Python-ecosystem-native, matches `pyproject.toml` familiarity); YAML for declarative specs (matches Pydantic AI's `Agent.from_spec()` format); JSON/JSONL for machine state; Markdown for human-authored prose; dotenv for secrets. Do not mix formats within a category.
+
+### Layered config precedence (highest → lowest)
+
+1. CLI arguments (`--model anthropic:claude-opus-4-6`)
+2. Environment variables (`JAC_MODEL=...`)
+3. Project config (`<repo>/.jac/config.toml`)
+4. User config (`~/.jac/config.toml`)
+5. Package defaults (`src/jac/defaults.toml` — *non-required* values only)
+
+### Workspace layout
+
+```text
+~/.jac/                   # user workspace (cross-project)
+├── config.toml
+├── prompts/              # overrides for shipped defaults
+├── minions/templates/
+├── skills/               # v2
+└── history               # prompt-toolkit input history
+
+<repo>/.jac/              # project workspace (per repo, typically gitignored)
+├── config.toml
+├── PROJECT.md
+├── prompts/              # project-level prompt overrides
+├── minions/templates/    # project-level minion templates
+├── skills/               # v2
+└── sessions/<timestamp>/
+    └── messages.json
+```
+
+Project-level files **shadow** user-level files of the same name; user-level files shadow package defaults. Sessions live only at project scope.
+
+See `.env.template` for the canonical list of environment variables — keep it in sync when adding new tunables.
 
 ## Architecture — non-negotiables
 
-These are the structural rules every change must respect. Full rationale is in `ARCHITECTURE.md`; this is the cheat sheet.
+Structural rules every change must respect. Full rationale lives in `ARCHITECTURE.md`; this is the cheat sheet.
+
+### Fail-first, no hardcoding
+
+- Every path, model, provider, and prompt must be configurable through the layered config above.
+- Required config that's missing **raises `JacConfigError`** with a message telling the user exactly how to fix it. Never silently default to something that costs money or behaves unexpectedly.
+- Paths are derived constants (one source of truth in `jac.workspace.paths` once Phase 0.5 lands), not strings sprinkled across modules.
+- "Silent fallback to a safe default" is forbidden. Be loud, be explicit.
 
 ### Capabilities are the atom of the system
 
-Almost every cross-cutting concern is a Pydantic AI `Capability`, not a hand-rolled class. Tools, memory tiers, telemetry, the minion factory, sandboxing, even the CLI event bus — all capabilities. **If you find yourself writing a class that hooks into the agent lifecycle without being a Capability, you are probably wrong.** See §2.
+Almost every cross-cutting concern is a Pydantic AI `Capability`, not a hand-rolled class. Tools, memory tiers, telemetry, the minion factory, sandboxing, even the CLI event bus — all capabilities. **If you find yourself writing a class that hooks into the agent lifecycle without being a Capability, you are probably wrong.** See ARCHITECTURE.md §2.
 
 ### Hooks are the runtime event bus, not a logging detail
 
@@ -64,7 +117,7 @@ The following are built-in or shipped via `pydantic-ai-harness` — use them, do
 
 ### Minions = `Agent.from_spec()` loaded from YAML
 
-Minions are short-lived agents loaded from declarative YAML specs in `src/jac/minions/templates/`. They receive a **locked task packet schema** via `deps`:
+Minions are short-lived agents loaded from declarative YAML specs in `src/jac/minions/templates/` (package defaults) with overrides at `~/.jac/minions/templates/` and `<repo>/.jac/minions/templates/`. They receive a **locked task packet schema** via `deps`:
 
 | Field | Required | Purpose |
 | --- | --- | --- |
@@ -78,7 +131,7 @@ Templates may add their own `deps_schema` fields, but these five stay stable. Gr
 
 ### Memory: prose first, structured later
 
-Project memory starts as a single `PROJECT.md` (prose), auto-injected via a `ProjectMemory` capability's `get_instructions()`. Structured `facts.jsonl` is added **only when prose retrieval gets noisy** — memory management is a last resort, not a first move. Session memory lives under `.jac/sessions/<timestamp>/` (folder-per-session, timestamp-named, human-readable).
+Project memory starts as a single `PROJECT.md` (prose), auto-injected via a `ProjectMemory` capability's `get_instructions()`. Structured `facts.jsonl` is added **only when prose retrieval gets noisy** — memory management is a last resort, not a first move. Session memory lives under `<repo>/.jac/sessions/<timestamp>/` (folder-per-session, timestamp-named, human-readable).
 
 ### Tracing fields on every Logfire span
 
@@ -94,8 +147,9 @@ If a task seems to require any of these, stop and ask before scaffolding:
 - User-tier memory + predict-calibrate extraction
 - Browser / API / SDK surfaces
 - Agent-authored reusable skills
+- Interactive onboarder for first-run setup
 
-The full roadmap is `ARCHITECTURE.md` §9.
+The full roadmap is `ARCHITECTURE.md` §9; the live tracker is `PROGRESS.md`.
 
 ## Reference projects (read-only, for inspiration)
 
@@ -114,4 +168,5 @@ This project will outlive any single session. The design docs are how it survive
 
 - When you make a structural decision, **update `ARCHITECTURE.md` in the same change** — preferably by extending the decisions table in §11.
 - When the vision or scope shifts, **update `IDEA.md`**.
+- When you start or finish a piece of work, **update `PROGRESS.md`**.
 - Don't accumulate undocumented architectural debt.

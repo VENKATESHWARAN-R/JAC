@@ -26,8 +26,12 @@ class Settings(BaseSettings):
         protected_namespaces=(),
     )
 
-    model: str = "anthropic:claude-sonnet-4-5"
-    """Default model identifier (provider:name). Override with ``--model`` or ``JAC_MODEL``."""
+    model: str | None = None
+    """Model identifier (``provider:name``). **Required** — set via ``JAC_MODEL``,
+    the ``--model`` CLI flag, or ``model = "..."`` in a config file.
+
+    No default is hardcoded in code (fail-first principle, see CLAUDE.md).
+    See ``.env.template`` for example values."""
 
 
 settings = Settings()
