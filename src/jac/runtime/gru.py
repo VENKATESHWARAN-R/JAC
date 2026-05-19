@@ -1,16 +1,16 @@
 """Construct the Gru agent.
 
-Phase 0.5: bare ``Agent`` with a layered system prompt and auto-loaded
-AGENTS.md context. No tools and no per-agent capabilities yet beyond the
-global Logfire instrumentation set up in
-:mod:`jac.capabilities.observability`.
-
-Subsequent phases attach the filesystem, shell, memory, and minion-factory
-capabilities here. The model identifier and prompt source are not
-hardcoded — both flow through the layered workspace.
+Phase 1: bare ``Agent`` with a layered system prompt, AGENTS.md session
+context, and optional extra capabilities passed in by the caller (e.g.
+the event-bus hooks installed by the CLI). No tools yet — those land in
+Phase 1 step 2+, attached via ``extra_capabilities`` so this function
+doesn't need to know about them.
 """
 
 from __future__ import annotations
+
+from collections.abc import Sequence
+from typing import Any
 
 from pydantic_ai import Agent
 
@@ -26,13 +26,19 @@ def _compose_instructions() -> str:
     return f"{base}\n\n---\n\n# Session context\n\n{context}"
 
 
-def build_gru(model_override: str | None = None) -> Agent[None, str]:
+def build_gru(
+    model_override: str | None = None,
+    extra_capabilities: Sequence[Any] | None = None,
+) -> Agent[None, str]:
     """Build the Gru agent.
 
     Args:
         model_override: optional model id (e.g. ``"anthropic:claude-opus-4-6"``).
             Falls back to the layered config (env / project / user / package).
             **No package default** — fail-first if nothing is configured.
+        extra_capabilities: additional Pydantic AI capabilities to attach.
+            The CLI uses this to wire ``Hooks`` → :class:`EventBus` → renderer;
+            later phases will pass tool capabilities, memory, etc.
 
     Returns:
         A ready-to-run ``Agent``.
@@ -49,4 +55,5 @@ def build_gru(model_override: str | None = None) -> Agent[None, str]:
             '(3) `model: "..."` in ~/.jac/config.yaml, '
             "or (4) run `jac init` for an interactive setup wizard."
         )
-    return Agent(model, instructions=_compose_instructions())
+    capabilities: list[Any] = list(extra_capabilities or [])
+    return Agent(model, instructions=_compose_instructions(), capabilities=capabilities)

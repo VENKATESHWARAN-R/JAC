@@ -11,7 +11,7 @@ For the *why* see `IDEA.md`. For the *how* see `ARCHITECTURE.md` and `CLAUDE.md`
 | --- | --- | --- |
 | Phase 0 — Skeleton | ✅ Complete | bare CLI + Gru, Logfire wired, no tools |
 | Phase 0.5 — Config foundation | ✅ Complete | workspace, layered config, AGENTS.md, `jac init` |
-| Phase 1 — Solo Gru | ⏳ Next | hooks bus + tools + HITL + session memory |
+| Phase 1 — Solo Gru | ⏳ In progress | event bus ✓; tools + HITL + session memory next |
 | Phase 2 — Project memory | ⏸ Queued | richer AGENTS.md write-back via summarizer minion |
 | Phase 3 — Minion factory | ⏸ Queued | spec loader + factory + first templates |
 | Phase 4 — Quality | ⏸ Queued | CodeMode + stuck-loop + tests + docs |
@@ -57,15 +57,26 @@ For the *why* see `IDEA.md`. For the *how* see `ARCHITECTURE.md` and `CLAUDE.md`
 
 **Recommended order:** event bus **before** tools. The bus is the architectural inversion; every later piece slots into it cleanly.
 
-- [ ] `Hooks` capability — push lifecycle events onto an `asyncio.Queue`
-- [ ] CLI renderer consumes the queue (replaces direct `await gru.run` in `repl.py`)
-- [ ] `JacTool` decorator enforcing the `reason: str` first-arg requirement
-- [ ] Wrapper toolset that rejects tools missing `reason: str` at agent construction
+### Step 1: event bus + tool guard ✅
+
+- [x] `Hooks` capability emitting `JacEvent`s onto an `asyncio.Queue` (`jac.capabilities.hooks.make_hooks`)
+- [x] `EventBus` (`jac.runtime.bus`) + typed event dataclasses (`jac.runtime.events`)
+- [x] `CliRenderer` consumes the bus and draws status + final markdown (`jac.cli.renderer`)
+- [x] `repl.py` runs the agent in a background task while the renderer consumes events concurrently — direct `await gru.run` no longer in the CLI control flow
+- [x] `build_gru(extra_capabilities=...)` parameter so the CLI wires hooks without touching the function's defaults
+- [x] `@jac_tool` decorator enforcing `reason: str` as the first non-ctx parameter (fail at decoration time)
+
+### Step 2: first tools + HITL ⏳ next
+
+- [ ] `JacToolset` wrapper toolset that rejects tools missing `@jac_tool` at agent construction (catches tools registered via other paths)
 - [ ] Filesystem capability: `read_file`, `write_file`, `edit_file`, `list_dir`
 - [ ] Shell capability: `run_shell` (HITL-gated)
 - [ ] Search capability: `grep`, `glob`
-- [ ] `ApprovalRequiredToolset` wired for risky tools
-- [ ] Approval prompt UI in CLI (renders `reason` alongside args)
+- [ ] `ApprovalRequiredToolset` wired for risky tools (shell + write/edit)
+- [ ] Approval prompt UI in CLI (renders `reason` alongside args; surfaced via `deferred_tool_calls` hook → bus → renderer)
+
+### Step 3: persistence
+
 - [ ] Session persistence at `<repo>/.agents/sessions/<timestamp>/messages.json`
 - [ ] `ProcessHistory` window management
 - [ ] Resume support: `jac --resume <session-id>` or auto-resume last
