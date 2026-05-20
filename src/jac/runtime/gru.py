@@ -1,12 +1,13 @@
 """Construct the Gru agent.
 
-Phase 1 step 2: Gru ships with filesystem, search, and shell capabilities.
-Risky tools (``write_file``, ``edit_file``, ``run_shell``) are
-approval-required; the CLI's :class:`make_approval_handler` capability
-turns those deferred calls into bus-mediated approval prompts.
+Phase 2a: Gru ships with filesystem, search, shell, **memory**, and
+history capabilities. Risky tools (``write_file``, ``edit_file``,
+``run_shell``, ``remember``) are approval-required; the CLI's
+:class:`make_approval_handler` capability turns those deferred calls into
+bus-mediated approval prompts.
 
 Callers can pass ``extra_capabilities`` to attach hooks (event bus),
-approval handlers, or future memory/factory capabilities without touching
+approval handlers, or future minion-factory capabilities without touching
 this function. Set ``include_default_tools=False`` for headless / test
 contexts that don't want filesystem access.
 """
@@ -20,6 +21,7 @@ from pydantic_ai import Agent
 
 from jac.capabilities.filesystem import FilesystemCapability
 from jac.capabilities.history import make_history_capability
+from jac.capabilities.memory import MemoryCapability
 from jac.capabilities.search import SearchCapability
 from jac.capabilities.shell import ShellCapability
 from jac.config import get_settings
@@ -40,6 +42,7 @@ def _default_tool_capabilities() -> list[Any]:
         FilesystemCapability(),
         SearchCapability(),
         ShellCapability(),
+        MemoryCapability(),
         make_history_capability(),
     ]
 

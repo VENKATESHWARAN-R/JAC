@@ -388,21 +388,28 @@ flowchart TB
         S[ModelMessages JSON] -.lives in.-> SD[.jac/sessions/<id>.json]
     end
     subgraph "Project memory"
-        P[AGENTS.md at repo root + facts.jsonl in .agents/] -.lives in.-> PD[<repo>/AGENTS.md + <repo>/.agents/]
+        P[AGENTS.md + .agents/memory.md] -.lives in.-> PD[<repo>/AGENTS.md + <repo>/.agents/memory.md]
     end
-    subgraph "User memory (v2)"
-        U[USER.md + prefs.json] -.lives in.-> UD[~/.jac/]
+    subgraph "User memory"
+        U[~/.jac/AGENTS.md + ~/.jac/memory.md] -.lives in.-> UD[~/.jac/]
     end
 
     Gru[Gru Agent] -.injected at startup.-> P
     Gru -.injected at startup.-> U
     Gru -.continuous read/write.-> S
-    Closer[Session close] -.summarize & persist.-> P
+    Gru -.remember/forget, scope=project, HITL.-> P
+    Gru -.remember/forget, scope=user, HITL.-> U
+    Closer[Session close, Phase 2b] -.summarizer proposes deltas.-> P
 ```
 
-- **Session:** raw `ModelMessage` list, JSON via `ModelMessagesTypeAdapter`. Stored under `.jac/sessions/<timestamp>/` (folder convention — sorts chronologically, human-readable). Resumable via `message_history=` parameter.
-- **Project:** starts as just `AGENTS.md` (prose). Auto-injected on every Gru run via a `ProjectMemory` capability's `get_instructions()`. Updated at session close by a summarizer minion. **Structured `facts.jsonl` is added only if/when prose retrieval gets noisy** — memory management is a last resort, not a first move.
-- **User:** v2. Same shape, scoped to `~/.jac/`.
+- **Session:** raw `ModelMessage` list, JSON via `ModelMessagesTypeAdapter`. Stored under `<repo>/.agents/sessions/<timestamp>/` (folder convention — sorts chronologically, human-readable). Resumable via `message_history=` parameter.
+- **Project + User (2×2 matrix):** memory has two axes — *who authored the file* and *which scope it covers*. Both axes are loaded into Gru's instructions on every run.
+  - **Read side (user-authored, we never mutate):** `~/.jac/AGENTS.md` for cross-project context, `<repo>/AGENTS.md` for repo-specific context.
+  - **Read side (JAC-managed, we write to):** `~/.jac/memory.md` for facts that follow the user across every project, `<repo>/.agents/memory.md` for facts about this repo only. Both lazily bootstrapped from a shared template (5 fixed `##` sections matching the 5 categories) on first write.
+  - **Write side:** Gru calls the **HITL-gated `remember(reason, content, category, scope)` tool** (`MemoryCapability`) whenever it identifies a durable fact worth keeping; `forget(reason, content, scope)` removes one. `scope` is required and validated — `scope="project"` outside a git repo fails fast rather than scribbling into CWD. Each entry carries `<!-- jac: <timestamp> session: <session-id> -->` for audit. Atomic writes; exact-normalized de-dup against the target section. A soft size warning is surfaced through the tool result past ~25 entries per section. See D14.
+  - **Phase 2b (queued):** a summarizer minion that proposes additional deltas at session close, routed through the same `remember` approval path.
+  - **Structured `facts.jsonl` is added only if/when prose retrieval gets noisy** — memory management is a last resort, not a first move.
+- **User:** the `~/.jac/memory.md` half of the 2×2 already exists (Phase 2a.1). Predict-calibrate extraction over user-tier memory remains v2.
 
 **Predict-calibrate (v2):** at session close, the summarizer minion is given existing project memory + new session transcript. It predicts what the project memory *should* now say; the diff is what gets written. Avoids duplicate facts and stale overwrites. Steal from `memv`.
 
@@ -518,6 +525,7 @@ These were open in the previous draft; now locked.
 | D11 | **Workspace layout:** user workspace at `~/.jac/`, project workspace at `<repo>/.agents/`. Symmetric subdirs (`prompts/`, `minions/templates/`, `skills/`). Sessions live at project scope only. Project shadows user shadows package defaults. **AGENTS.md** (community convention) lives at `<repo>/AGENTS.md` (root, not inside `.agents/`) and at `~/.jac/AGENTS.md`; both are auto-loaded into Gru's instructions when present. |
 | D12 | **No hardcoded defaults for required runtime values.** No model default in code; the user must configure one via env, CLI flag, or config file. Prompts and minion templates ship with package defaults but may be overridden at the user or project workspace. |
 | D13 | **Profiles + secrets:** user-facing config is organized into named **profiles** (`[a-z0-9-]+`) in `~/.jac/config.yaml`, each binding `model:` + optional `env:` + optional `requires_env:`. Required secret env vars are inferred from the model's provider prefix; values resolve from process env → configured backend (`keyring` default, `dotenv` fallback, `env-only` for pure shell-managed setups) → fail-first. Profile activation writes `os.environ` so pydantic-ai's normal provider construction stays unchanged. `--model` bypasses profile lookup but still resolves credentials best-effort. |
+| D14 | **Memory write path (2×2):** Gru writes durable facts via HITL-gated **`remember(reason, content, category, scope)`** into one of two JAC-owned files — `~/.jac/memory.md` for `scope="user"` (cross-project) or `<repo>/.agents/memory.md` for `scope="project"` (repo-local). Both mirror the AGENTS.md split (user-authored read side ↔ JAC-managed write side). Categories are a fixed enum (`convention / fact / preference / gotcha / decision`); the file structure is the same at both scopes. `scope` is required — there is no default, and `scope="project"` outside a git repo raises with an actionable error rather than scribbling into CWD. The symmetric **`forget(reason, content, scope)`** tool removes entries by exact-normalized match. Every entry carries an audit comment with timestamp + originating session id (via `jac.runtime.session_ctx` ContextVar). A soft size warning is surfaced through the tool result once a section crosses ~25 entries — loud, no automation. The summarizer minion (Phase 2b) routes any deltas through the same `remember` approval path; it never writes directly. |
 
 ### Still open (smaller calls, deferrable)
 

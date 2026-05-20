@@ -1,6 +1,6 @@
 # JAC — Implementation Progress
 
-> **Updated:** 2026-05-19 · keep this in sync as work lands.
+> **Updated:** 2026-05-21 · keep this in sync as work lands.
 
 This file tracks **what is implemented**, **what is in flight**, and **what is queued**.
 For the *why* see `IDEA.md`. For the *how* see `ARCHITECTURE.md` and `CLAUDE.md`.
@@ -13,7 +13,9 @@ For the *why* see `IDEA.md`. For the *how* see `ARCHITECTURE.md` and `CLAUDE.md`
 | Phase 0.5 — Config foundation | ✅ Complete | workspace, layered config, AGENTS.md, `jac init` |
 | Phase 1 — Solo Gru | ✅ Complete | event bus, tools, HITL, session persistence + resume |
 | Phase 1.5 — Profiles & secrets | ✅ Complete | multi-profile config, keyring/dotenv/env-only backends, `jac profiles`/`jac keys` |
-| Phase 2 — Project memory | ⏸ Queued | richer AGENTS.md write-back via summarizer minion |
+| Phase 2a — `remember` tool | ✅ Complete | HITL-gated `remember`, JAC-owned `.agents/memory.md`, fixed category enum, auto-injected into Gru's context |
+| Phase 2a.1 — User scope + `forget` | ✅ Complete | `~/.jac/memory.md`, scope-aware `remember`/`forget`, session-id audit trail, soft size warning, fail-first on no-repo |
+| Phase 2b — Summarizer minion | ⏸ Queued | proposes deltas at session close, routes through `remember` approval — needs Phase 3 minion infra |
 | Phase 3 — Minion factory | ⏸ Queued | spec loader + factory + first templates |
 | Phase 4 — Quality | ⏸ Queued | CodeMode + stuck-loop + tests + docs |
 | v2 | ⏸ Future | A2A / scheduling / YOLO / user memory tier / surfaces |
@@ -110,13 +112,40 @@ For the *why* see `IDEA.md`. For the *how* see `ARCHITECTURE.md` and `CLAUDE.md`
 - [x] Old top-level `model:` field dropped (hard cutover; YAML rewritten on `jac init`)
 - [x] `keyring>=25.0` added as a hard dep
 
-## Phase 2 — Project memory ⏸
+## Phase 2a — `remember` tool ✅
 
-Project context already auto-loads from `<repo>/AGENTS.md` since Phase 0.5. Phase 2 adds dynamic write-back.
+**Goal:** give Gru a structured, HITL-gated way to persist durable project facts. Avoid touching the user's `AGENTS.md`; write to a JAC-owned `memory.md` instead. Cheap, immediate, low-bloat — the high-signal path.
 
-- [ ] `ProjectMemoryCapability` — formal capability wrapping the existing context loader + write path
-- [ ] Summarizer minion (first minion!) at session close
-- [ ] Append-delta back into `<repo>/AGENTS.md` (or a managed section thereof)
+- [x] `MemoryCapability` + `remember(reason, content, category)` tool (`jac.capabilities.memory`) — HITL-gated, atomic writes, exact-normalized de-dup with loud feedback
+- [x] Fixed category enum: `convention` / `fact` / `preference` / `gotcha` / `decision` — predictable file structure, easy de-dup
+- [x] `<repo>/.agents/memory.md` lazily bootstrapped from template on first call; `project_memory_file()` in `jac.workspace.paths` is the single source of truth
+- [x] Audit trail: every entry carries an HTML-comment timestamp (`<!-- jac: 2026-... -->`)
+- [x] Context loader (`jac.workspace.context.load_project_memory`) auto-injects memory.md **after** AGENTS.md so the freshest facts dominate
+- [x] `MemoryCapability` wired into `_default_tool_capabilities` — every session gets `remember` for free
+- [x] `gru_system.md` updated with the "When to call `remember`" discipline (durable-only, anti-examples)
+- [x] Architecture decision recorded as D14; §8 memory-subsystem diagram refreshed
+
+## Phase 2a.1 — User scope + `forget` ✅
+
+**Goal:** complete the 2×2 memory matrix (user/project × authored/JAC-managed) and add the symmetric removal tool. Random-terminal use case now writes to `~/.jac/memory.md` rather than scribbling into CWD.
+
+- [x] `~/.jac/memory.md` lazily bootstrapped on first user-scope write; `USER_MEMORY_FILE` in `jac.workspace.paths`
+- [x] `is_in_project_repo()` helper in `paths` for scope-aware fail-first checks
+- [x] `remember(reason, content, category, scope)` — `scope` is `Literal["user", "project"]`, required, no default
+- [x] `forget(reason, content, scope)` — symmetric removal, exact-normalized match, errors on 0 / >1 matches with actionable disambiguation
+- [x] `scope="project"` outside a git repo raises `JacConfigError` with a clear "use scope=user instead" message — no silent fallback
+- [x] Session-id stamping: `jac.runtime.session_ctx` ContextVar-backed `set_current_session_id` / `get_current_session_id`; REPL sets it once per session; audit comment becomes `<!-- jac: <ts> session: <sid> -->`
+- [x] Soft size warning surfaced through the tool result when a section crosses 25 entries — loud, no automation
+- [x] Context loader refactored into per-source loaders (`load_user_context`, `load_user_memory`, `load_project_context`, `load_project_memory`); `load_session_context` concatenates in the order user-AGENTS → user-memory → project-AGENTS → project-memory
+- [x] `gru_system.md` extended with `scope` semantics, `forget` discipline, and a "Picking scope" heuristic table (preference→user, conv/gotcha/decision→project, fact case-by-case)
+
+## Phase 2b — Summarizer minion ⏸
+
+The "first minion." Built on top of Phase 3 infra so we don't paint ourselves into a corner. Acts as a redundant safety net on the Phase 2a primary path — proposes deltas at session close, routes them through the same `remember` approval flow rather than writing directly.
+
+- [ ] `summarizer.yaml` minion template (no write tools — structurally cannot mutate memory.md)
+- [ ] Session-close hook that invokes the summarizer, then funnels proposed entries through `remember` (each one HITL-gated)
+- [ ] Token-cost / opt-in gating so summarization isn't surprise spend
 
 ## Phase 3 — Minion factory ⏸
 

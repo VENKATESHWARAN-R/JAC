@@ -55,6 +55,8 @@ uv run python -m jac             # equivalent invocation
 | Project context (auto-loaded) | `<repo>/AGENTS.md` (at repo root, community convention) | **Markdown** |
 | User context (auto-loaded) | `~/.jac/AGENTS.md` | **Markdown** |
 | Session message history | `<repo>/.agents/sessions/<ts>/messages.json` | **JSON** |
+| Project memory (JAC-managed, auto-loaded) | `<repo>/.agents/memory.md` | **Markdown** |
+| User memory (JAC-managed, auto-loaded) | `~/.jac/memory.md` | **Markdown** |
 | Project memory (structured, v2) | `<repo>/.agents/facts.jsonl` | **JSONL** |
 | Skills (v2) | `~/.jac/skills/*.py`, `<repo>/.agents/skills/*.py` | **Python** |
 
@@ -101,7 +103,8 @@ Profile activation lives in `jac.secrets.apply_profile_env` and writes `os.envir
 ```text
 ~/.jac/                       # user workspace (JAC-private, cross-project)
 ├── config.yaml
-├── AGENTS.md                 # user-level context, auto-loaded
+├── AGENTS.md                 # user-level context (user-authored), auto-loaded
+├── memory.md                 # user-level JAC-managed memory, written via `remember`
 ├── prompts/                  # overrides for shipped prompts
 ├── minions/templates/
 ├── skills/                   # v2
@@ -111,6 +114,7 @@ Profile activation lives in `jac.secrets.apply_profile_env` and writes `os.envir
                               # not inside .agents/) — auto-loaded if present
 <repo>/.agents/               # JAC project workspace (community-neutral dir name)
 ├── config.yaml
+├── memory.md                 # JAC-managed project memory, written via `remember`
 ├── prompts/                  # project-level prompt overrides
 ├── minions/templates/        # project-level minion templates
 ├── skills/                   # v2
@@ -176,7 +180,18 @@ Templates may add their own `deps_schema` fields, but these five stay stable. Gr
 
 ### Memory: prose first, structured later
 
-Project context is read from `<repo>/AGENTS.md` at the repo root (community convention; auto-loaded). User context is read from `~/.jac/AGENTS.md`. Structured `facts.jsonl` is added **only when prose retrieval gets noisy** — memory management is a last resort, not a first move. Session memory lives under `<repo>/.agents/sessions/<timestamp>/` (folder-per-session, timestamp-named, human-readable).
+Memory follows a **2×2 matrix** — user / project × user-authored / JAC-managed:
+
+|                          | User scope            | Project scope                    |
+| ------------------------ | --------------------- | -------------------------------- |
+| User-authored (we read)  | `~/.jac/AGENTS.md`    | `<repo>/AGENTS.md`               |
+| JAC-managed (we write)   | `~/.jac/memory.md`    | `<repo>/.agents/memory.md`       |
+
+**Read side.** All four files are auto-loaded into Gru's instructions on session start (when present), in the order user-AGENTS → user-memory → project-AGENTS → project-memory, so project specifics dominate and the freshest JAC-learned facts come last.
+
+**Write side.** Gru persists durable facts via the **HITL-gated `remember(reason, content, category, scope)` tool** (Phase 2a / 2a.1) and removes them via the symmetric **`forget(reason, content, scope)`**. Categories are a fixed enum — `convention / fact / preference / gotcha / decision`. `scope` is required: `"user"` for cross-project facts, `"project"` for repo-specific facts. `scope="project"` outside a git repo raises `JacConfigError` rather than scribbling into CWD. Each entry carries `<!-- jac: <timestamp> session: <id> -->` for audit, written atomically, de-duped against the target section (loud rejection — Gru is told, not silently dropped). A soft "consider pruning" warning surfaces past ~25 entries per section. We **never** write to either `AGENTS.md` — those are owned by the user.
+
+The summarizer minion (Phase 2b, queued) will propose additional deltas at session close, but routes them through the same `remember` approval path — it never writes directly. Structured `facts.jsonl` (v2) is added **only when prose retrieval gets noisy** — memory management is a last resort, not a first move. Session memory lives under `<repo>/.agents/sessions/<timestamp>/` (folder-per-session, timestamp-named, human-readable).
 
 ### Tracing fields on every Logfire span
 

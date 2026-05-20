@@ -1,6 +1,6 @@
 [project]
 name = "jac"
-version = "0.1.0"
+version = "0.1.1"
 description = "Local-first AI coworker harness built on Pydantic AI."
 readme = "README.md"
 requires-python = ">=3.13"

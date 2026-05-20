@@ -24,6 +24,7 @@ from pathlib import Path
 USER_WORKSPACE: Path = Path.home() / ".jac"
 USER_CONFIG_FILE: Path = USER_WORKSPACE / "config.yaml"
 USER_CONTEXT_FILE: Path = USER_WORKSPACE / "AGENTS.md"
+USER_MEMORY_FILE: Path = USER_WORKSPACE / "memory.md"
 USER_PROMPTS_DIR: Path = USER_WORKSPACE / "prompts"
 USER_MINIONS_DIR: Path = USER_WORKSPACE / "minions" / "templates"
 USER_SKILLS_DIR: Path = USER_WORKSPACE / "skills"
@@ -49,6 +50,17 @@ def find_project_root(start: Path | None = None) -> Path:
     return here
 
 
+def is_in_project_repo(start: Path | None = None) -> bool:
+    """``True`` iff a ``.git`` directory exists at or above ``start`` (default: CWD).
+
+    Used by scope-aware code paths (e.g. project-memory writes) that need to
+    refuse to run outside a tracked repo, rather than silently anchoring to
+    whatever CWD happens to be.
+    """
+    here = (start or Path.cwd()).resolve()
+    return any((candidate / ".git").exists() for candidate in (here, *here.parents))
+
+
 def project_workspace() -> Path:
     return find_project_root() / PROJECT_WORKSPACE_DIRNAME
 
@@ -60,6 +72,15 @@ def project_config_file() -> Path:
 def project_context_file() -> Path:
     """``<project_root>/AGENTS.md`` — at repo root, NOT inside ``.agents/``."""
     return find_project_root() / PROJECT_CONTEXT_FILENAME
+
+
+def project_memory_file() -> Path:
+    """``<project_root>/.agents/memory.md`` — JAC-managed project memory.
+
+    Distinct from ``AGENTS.md``: this file is written by Gru via the
+    ``remember`` tool, with HITL approval. We never mutate ``AGENTS.md``.
+    """
+    return project_workspace() / "memory.md"
 
 
 def project_prompts_dir() -> Path:

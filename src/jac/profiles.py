@@ -64,8 +64,21 @@ class Profile(BaseModel):
     def required_env_keys(self) -> list[str]:
         if self.requires_env is not None:
             return list(self.requires_env)
-        provider = self.model.split(":", 1)[0] if ":" in self.model else self.model
-        return list(PROVIDER_REQUIREMENTS.get(provider, []))
+        return list(PROVIDER_REQUIREMENTS.get(_provider_prefix(self.model), []))
+
+
+def _provider_prefix(model: str) -> str:
+    """Map a pydantic-ai model id to the provider key in :data:`PROVIDER_REQUIREMENTS`.
+
+    Most providers use ``provider:model``. Gateway uses ``gateway/<upstream>[:model]``,
+    so a naive split on ``:`` yields ``gateway/google-cloud``, which would miss the
+    ``gateway`` entry and skip credential resolution.
+    """
+    if model.startswith("gateway/"):
+        return "gateway"
+    if ":" in model:
+        return model.split(":", 1)[0]
+    return model
 
 
 # ---------- raw YAML I/O ----------

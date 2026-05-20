@@ -36,6 +36,7 @@ from jac.runtime.bus import EventBus
 from jac.runtime.events import RunCompleted, RunFailed
 from jac.runtime.gru import build_gru
 from jac.runtime.session import Session
+from jac.runtime.session_ctx import set_current_session_id
 from jac.workspace import paths
 
 _EXIT_WORDS = {"exit", "quit", ":q", ":quit"}
@@ -117,6 +118,10 @@ async def _repl_loop(
     except JacConfigError as exc:
         console.print(f"[red]session error:[/red] {exc}")
         return
+
+    # Make the active session id discoverable to tools (e.g. `remember`)
+    # without threading a session object through every call site.
+    set_current_session_id(session.session_id)
 
     # Build Gru (default tools + caller-supplied hooks/approval/extra caps).
     try:

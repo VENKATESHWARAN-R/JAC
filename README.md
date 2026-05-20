@@ -7,10 +7,13 @@ own: persistent memory, tools, human-in-the-loop gates, multi-provider
 credentials, and session continuity. It runs entirely on your machine — your
 keys, your files, your context, no cloud relay.
 
-> **Status:** **v0.1.0 alpha** (pre-release). Phase 1.5 of the roadmap is shipped —
-> chat, file/search/shell tools, HITL approval, session persistence + resume,
-> and multi-provider profile management. Project memory and the minion factory
-> are next. See [`PROGRESS.md`](PROGRESS.md) for the current state.
+> **Status:** **v0.1.0 alpha** (pre-release). Phase 2a.1 of the roadmap is
+> shipped — chat, file/search/shell tools, HITL approval, session persistence
+> + resume, multi-provider profile management, and a two-scope memory system
+> (`remember` / `forget` writing to `~/.jac/memory.md` or
+> `<repo>/.agents/memory.md` under HITL approval). The summarizer minion and
+> the wider minion factory are next. See [`PROGRESS.md`](PROGRESS.md) for the
+> current state.
 
 ## What it does today
 
@@ -31,6 +34,11 @@ keys, your files, your context, no cloud relay.
   or env-only (read-through, JAC stores nothing).
 - **AGENTS.md auto-loading** from the repo root and `~/.jac/AGENTS.md` —
   follows the community context-file convention.
+- **Two-scope memory**: Gru saves durable facts via the approval-gated
+  `remember` and `forget` tools. Project-scoped facts land in
+  `<repo>/.agents/memory.md`; cross-project facts (preferences, language-
+  level habits) land in `~/.jac/memory.md`. Both files auto-load into
+  every future session.
 - **Logfire tracing** out of the box. Every model call, tool call, and
   lifecycle event is instrumented. Ships to Logfire cloud if `LOGFIRE_TOKEN`
   is set, stays local otherwise.
@@ -142,18 +150,53 @@ jac keys unset ANTHROPIC_API_KEY   # delete from backend
 ### In-session
 
 - Type `exit`, `quit`, `:q`, or hit Ctrl-D to leave.
-- Mutating tools (`write_file`, `edit_file`, `run_shell`) trigger an approval
-  panel showing the tool name, the reason Gru gave, and the args. Approve
-  with `y`, deny with `n`.
+- Mutating tools (`write_file`, `edit_file`, `run_shell`, `remember`) trigger
+  an approval panel showing the tool name, the reason Gru gave, and the args.
+  Approve with `y`, deny with `n`.
 - The status spinner reports per event — when Gru is thinking, when it's
   calling a tool, etc.
+
+### Project + user memory
+
+Gru saves durable facts via two HITL-gated tools — `remember(reason, content,
+category, scope)` and the symmetric `forget(reason, content, scope)`. The
+files JAC writes to are separate from `AGENTS.md` (which JAC never touches)
+and auto-load into every future session at the matching scope.
+
+**Two scopes:**
+
+| Scope     | File                            | What goes here                                   |
+| --------- | ------------------------------- | ------------------------------------------------ |
+| `user`    | `~/.jac/memory.md`              | Cross-project facts — preferences, habits, language-level conventions. Follows you everywhere. |
+| `project` | `<repo>/.agents/memory.md`      | Repo-specific facts — local conventions, structure, decisions, gotchas. Fails fast outside a git repo. |
+
+**Five categories** (same at both scopes): `convention`, `fact`, `preference`,
+`gotcha`, `decision`. Each entry lands in the matching `##` section.
+
+**Discipline:**
+
+- Every write is approval-gated — you see the proposed line, scope, and
+  reason before it lands. Deny `n` and the entry is dropped.
+- Each entry gets a timestamp **and** the originating session id in an HTML
+  comment, so "where did this fact come from?" is always answerable.
+- Exact-normalized duplicates are rejected loudly — Gru gets told, so it can
+  choose a more specific phrasing.
+- Past ~25 entries in any one section, `remember` tacks a "consider pruning"
+  hint onto its return — loud, no automation.
+- `forget` removes by exact-normalized match. If multiple lines match,
+  it asks for a more specific phrasing rather than guessing.
+
+Want to prune or rewrite an entry by hand? Just edit the relevant
+`memory.md` directly — JAC preserves manual edits. Delete the file entirely
+and JAC will bootstrap a fresh template on the next `remember` call.
 
 ## How JAC is organized on disk
 
 ```text
 ~/.jac/                            # user workspace (cross-project)
 ├── config.yaml                    # profiles + secrets backend choice
-├── AGENTS.md                      # user-level context, auto-loaded into every session
+├── AGENTS.md                      # user-level context (user-authored), auto-loaded
+├── memory.md                      # user-level JAC-managed memory, written via `remember`
 ├── .env                           # if `dotenv` backend (chmod 600)
 ├── prompts/                       # overrides for shipped prompts
 └── history                        # prompt-toolkit input history
@@ -161,6 +204,7 @@ jac keys unset ANTHROPIC_API_KEY   # delete from backend
 <repo>/AGENTS.md                   # project context (community convention, optional)
 <repo>/.agents/                    # JAC project workspace
 ├── config.yaml                    # per-project profile/backend overrides (optional)
+├── memory.md                      # JAC-managed project memory, written via `remember`
 └── sessions/<timestamp>/
     └── messages.json
 ```
@@ -219,8 +263,9 @@ The architecture is documented in detail:
 
 ## What's coming
 
-- **Phase 2** — Project memory. Summarizer minion at session close; AGENTS.md
-  write-back of new facts.
+- **Phase 2b** — Summarizer minion. Proposes additional memory deltas at
+  session close, routed through the same `remember` HITL approval path so
+  it can never trample the file directly. Built on Phase 3 infra.
 - **Phase 3** — Minion factory. Researcher, builder, reviewer, tester
   templates as `Agent.from_spec()` YAML files.
 - **Phase 4** — Quality. CodeMode (single sandboxed `run_code` tool),
