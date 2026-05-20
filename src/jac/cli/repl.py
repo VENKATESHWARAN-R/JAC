@@ -1,15 +1,19 @@
 """Interactive REPL loop for JAC.
 
-Phase 1 step 1: the CLI is a pure renderer. It installs a ``Hooks``
-capability on Gru that pushes lifecycle events to an :class:`EventBus`,
-and a :class:`CliRenderer` consumes the bus and draws to the terminal.
+Phase 1: the CLI is a pure renderer. It installs a ``Hooks`` capability on
+Gru that pushes lifecycle events to an :class:`EventBus`, and a
+:class:`CliRenderer` consumes the bus and draws to the terminal.
 
-The agent run and the renderer run **concurrently** within each turn.
-The renderer returns when it sees a terminal event
-(:class:`RunCompleted` / :class:`RunFailed`); the REPL then awaits the
-agent task to harvest the message history. Errors raised inside
-``agent.run`` are emitted as :class:`RunFailed`, rendered, and absorbed
-so the REPL continues to the next prompt.
+The agent run and the renderer run **concurrently** within each turn. The
+renderer returns when it sees a terminal event (:class:`RunCompleted` /
+:class:`RunFailed`); the REPL then awaits the agent task to harvest the
+message history. Errors raised inside ``agent.run`` are emitted as
+:class:`RunFailed`, rendered, and absorbed so the REPL continues to the
+next prompt.
+
+Session state (message history) persists to disk after every completed
+turn via :class:`jac.runtime.session.Session`. Resume support is exposed
+by the CLI's ``--resume`` / ``--session`` flags.
 """
 
 from __future__ import annotations
@@ -19,9 +23,9 @@ import asyncio
 from prompt_toolkit import PromptSession
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
 from prompt_toolkit.history import FileHistory
+from pydantic_ai import Agent, AgentRunResult
 from rich.console import Console
 from rich.panel import Panel
-from pydantic_ai import Agent, AgentRunResult
 
 from jac.capabilities.approval import make_approval_handler
 from jac.capabilities.hooks import make_hooks
@@ -31,6 +35,7 @@ from jac.errors import JacConfigError
 from jac.runtime.bus import EventBus
 from jac.runtime.events import RunCompleted, RunFailed
 from jac.runtime.gru import build_gru
+from jac.runtime.session import Session
 from jac.workspace import paths
 
 _EXIT_WORDS = {"exit", "quit", ":q", ":quit"}
@@ -38,7 +43,7 @@ _EXIT_WORDS = {"exit", "quit", ":q", ":quit"}
 console = Console()
 
 
-def _make_session() -> PromptSession[str]:
+def _make_prompt_session() -> PromptSession[str]:
     paths.USER_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
     return PromptSession(
         history=FileHistory(str(paths.USER_HISTORY_FILE)),
@@ -47,18 +52,25 @@ def _make_session() -> PromptSession[str]:
     )
 
 
-def _greet(model_id: str) -> None:
-    console.print(
-        Panel.fit(
-            "[bold cyan]JAC[/bold cyan] — phase 1 shell\n"
-            f"[dim]model:[/dim] {model_id}\n"
-            "[dim]type 'exit' or Ctrl-D to quit[/dim]",
-            border_style="cyan",
+def _greet(*, model_id: str, session: Session, resumed: bool) -> None:
+    lines = [
+        "[bold cyan]JAC[/bold cyan] — phase 1 shell",
+        f"[dim]model:[/dim] {model_id}",
+    ]
+    if resumed:
+        lines.append(
+            f"[dim]session:[/dim] {session.session_id} "
+            f"[yellow](resumed, {len(session.message_history)} prior messages)[/yellow]"
         )
-    )
+    else:
+        lines.append(f"[dim]session:[/dim] {session.session_id} [green](new)[/green]")
+    lines.append("[dim]type 'exit' or Ctrl-D to quit[/dim]")
+    console.print(Panel.fit("\n".join(lines), border_style="cyan"))
 
 
-async def _run_turn(gru: Agent, bus: EventBus, text: str, message_history: list) -> list:
+async def _run_turn(
+    gru: Agent, bus: EventBus, text: str, message_history: list
+) -> list:
     """Run one agent turn through the bus. Returns the updated message history."""
     renderer = CliRenderer(console)
 
@@ -85,7 +97,28 @@ async def _run_turn(gru: Agent, bus: EventBus, text: str, message_history: list)
     return result.all_messages()
 
 
-async def _repl_loop(model_override: str | None = None) -> None:
+async def _repl_loop(
+    model_override: str | None = None,
+    *,
+    resume_latest: bool = False,
+    resume_id: str | None = None,
+) -> None:
+    # Resolve which session to attach.
+    try:
+        if resume_id is not None:
+            session = Session.resume(resume_id)
+            resumed = True
+        elif resume_latest:
+            session = Session.resume_latest()
+            resumed = True
+        else:
+            session = Session.new()
+            resumed = False
+    except JacConfigError as exc:
+        console.print(f"[red]session error:[/red] {exc}")
+        return
+
+    # Build Gru (default tools + caller-supplied hooks/approval/extra caps).
     try:
         bus = EventBus()
         hooks = make_hooks(bus)
@@ -99,13 +132,13 @@ async def _repl_loop(model_override: str | None = None) -> None:
         return
 
     model_id = model_override or get_settings().model or "unknown"
-    session = _make_session()
-    _greet(model_id)
+    prompt_session = _make_prompt_session()
+    _greet(model_id=model_id, session=session, resumed=resumed)
 
-    message_history: list = []
+    message_history: list = list(session.message_history)
     while True:
         try:
-            text = await session.prompt_async("» ")
+            text = await prompt_session.prompt_async("» ")
         except (EOFError, KeyboardInterrupt):
             console.print("\n[dim]bye[/dim]")
             return
@@ -118,8 +151,24 @@ async def _repl_loop(model_override: str | None = None) -> None:
             return
 
         message_history = await _run_turn(gru, bus, text, message_history)
+        # Persist after every completed turn so kills mid-turn don't lose prior turns.
+        try:
+            session.save(message_history)
+        except OSError as exc:
+            console.print(f"[yellow]warning:[/yellow] session save failed: {exc}")
 
 
-def run_repl(model_override: str | None = None) -> None:
+def run_repl(
+    model_override: str | None = None,
+    *,
+    resume_latest: bool = False,
+    resume_id: str | None = None,
+) -> None:
     """Synchronous wrapper around the async REPL loop."""
-    asyncio.run(_repl_loop(model_override=model_override))
+    asyncio.run(
+        _repl_loop(
+            model_override=model_override,
+            resume_latest=resume_latest,
+            resume_id=resume_id,
+        )
+    )

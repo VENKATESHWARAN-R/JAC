@@ -11,7 +11,7 @@ For the *why* see `IDEA.md`. For the *how* see `ARCHITECTURE.md` and `CLAUDE.md`
 | --- | --- | --- |
 | Phase 0 — Skeleton | ✅ Complete | bare CLI + Gru, Logfire wired, no tools |
 | Phase 0.5 — Config foundation | ✅ Complete | workspace, layered config, AGENTS.md, `jac init` |
-| Phase 1 — Solo Gru | ⏳ In progress | event bus ✓; tools + HITL + session memory next |
+| Phase 1 — Solo Gru | ✅ Complete | event bus, tools, HITL, session persistence + resume |
 | Phase 2 — Project memory | ⏸ Queued | richer AGENTS.md write-back via summarizer minion |
 | Phase 3 — Minion factory | ⏸ Queued | spec loader + factory + first templates |
 | Phase 4 — Quality | ⏸ Queued | CodeMode + stuck-loop + tests + docs |
@@ -80,11 +80,17 @@ For the *why* see `IDEA.md`. For the *how* see `ARCHITECTURE.md` and `CLAUDE.md`
 - [x] `build_gru` ships default tool capabilities (fs / search / shell) with an `include_default_tools=False` escape hatch
 - [x] Updated `gru_system.md` so Gru knows what tools it has and the discipline around `reason`
 
-### Step 3: persistence
+### Step 3: persistence ✅
 
-- [ ] Session persistence at `<repo>/.agents/sessions/<timestamp>/messages.json`
-- [ ] `ProcessHistory` window management
-- [ ] Resume support: `jac --resume <session-id>` or auto-resume last
+- [x] `Session` class wrapping disk persistence (`jac.runtime.session`) — folder-per-session under `<repo>/.agents/sessions/<timestamp>/`, `messages.json` via `ModelMessagesTypeAdapter`
+- [x] Save after every completed turn (mid-turn kills don't lose prior turns)
+- [x] `Session.resume(id)`, `Session.resume_latest()`, `Session.list_ids()`, `Session.latest_id()`
+- [x] CLI flags `--resume / -r` (latest) and `--session / -s ID` (specific)
+- [x] `jac sessions` subcommand lists ids oldest → newest with a "(latest)" marker
+- [x] Greeting shows session id and "(resumed, N prior messages)" / "(new)"
+- [x] `ProcessHistory`-based exchange-aware sliding window (`jac.capabilities.history`) — slices on user-prompt boundaries so tool-call/return pairs stay paired; default cap 40 exchanges
+- [x] History capability included in `_default_tool_capabilities` so every session gets it for free
+- [x] Fail-first when resuming a missing id or `--resume` with no sessions
 
 ## Phase 2 — Project memory ⏸
 

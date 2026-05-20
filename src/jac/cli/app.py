@@ -2,8 +2,11 @@
 
 Multi-command Typer app:
 
-- ``jac``           — start an interactive REPL with Gru.
-- ``jac init``      — interactive setup wizard (provider, model, config write).
+- ``jac``                — start a fresh interactive REPL with Gru.
+- ``jac --resume``       — resume the latest session in this project.
+- ``jac --session ID``   — resume a specific session by id.
+- ``jac init``           — interactive setup wizard (provider, model, config).
+- ``jac sessions``       — list known sessions for this project.
 
 The root callback runs the silent workspace bootstrap on every invocation
 so that ``~/.jac/`` always exists by the time anything tries to read from
@@ -41,6 +44,22 @@ def root(
             help="Override the configured model (e.g. 'anthropic:claude-opus-4-6').",
         ),
     ] = None,
+    resume: Annotated[
+        bool,
+        typer.Option(
+            "--resume",
+            "-r",
+            help="Resume the latest session in this project.",
+        ),
+    ] = False,
+    session: Annotated[
+        str | None,
+        typer.Option(
+            "--session",
+            "-s",
+            help="Resume a specific session by id (see `jac sessions`).",
+        ),
+    ] = None,
 ) -> None:
     """JAC — start an interactive session. Use `jac init` for first-time setup."""
     # Bootstrap on every entry so the workspace exists before anything reads it.
@@ -57,10 +76,10 @@ def root(
         # A subcommand will handle the rest.
         return
 
-    # Default action: start the REPL.
+    # Default action: start the REPL with optional session resume.
     from jac.cli.repl import run_repl
 
-    run_repl(model_override=model)
+    run_repl(model_override=model, resume_latest=resume, resume_id=session)
 
 
 @app.command("init")
@@ -69,6 +88,30 @@ def init_command() -> None:
     from jac.cli.init import run_init
 
     run_init()
+
+
+@app.command("sessions")
+def sessions_command() -> None:
+    """List sessions for this project, oldest → newest."""
+    from jac.runtime.session import Session
+
+    ids = Session.list_ids()
+    if not ids:
+        console.print(
+            "[dim]no sessions yet in this project. "
+            "Start one with [bold]jac[/bold].[/dim]"
+        )
+        return
+
+    console.print("[bold]Sessions[/bold] (oldest → newest):")
+    latest = ids[-1]
+    for sid in ids:
+        marker = " [green](latest)[/green]" if sid == latest else ""
+        console.print(f"  {sid}{marker}")
+    console.print(
+        "\n[dim]resume the latest:[/dim] [bold]jac --resume[/bold]"
+        "  [dim]· resume by id:[/dim] [bold]jac --session <id>[/bold]"
+    )
 
 
 def main() -> None:

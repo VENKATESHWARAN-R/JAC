@@ -19,6 +19,7 @@ from typing import Any
 from pydantic_ai import Agent
 
 from jac.capabilities.filesystem import FilesystemCapability
+from jac.capabilities.history import make_history_capability
 from jac.capabilities.search import SearchCapability
 from jac.capabilities.shell import ShellCapability
 from jac.config import get_settings
@@ -34,11 +35,12 @@ def _compose_instructions() -> str:
 
 
 def _default_tool_capabilities() -> list[Any]:
-    """The standard tool capabilities every interactive JAC session gets."""
+    """The standard tool + history capabilities every interactive JAC session gets."""
     return [
         FilesystemCapability(),
         SearchCapability(),
         ShellCapability(),
+        make_history_capability(),
     ]
 
 
