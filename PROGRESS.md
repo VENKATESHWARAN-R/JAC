@@ -12,6 +12,7 @@ For the *why* see `IDEA.md`. For the *how* see `ARCHITECTURE.md` and `CLAUDE.md`
 | Phase 0 — Skeleton | ✅ Complete | bare CLI + Gru, Logfire wired, no tools |
 | Phase 0.5 — Config foundation | ✅ Complete | workspace, layered config, AGENTS.md, `jac init` |
 | Phase 1 — Solo Gru | ✅ Complete | event bus, tools, HITL, session persistence + resume |
+| Phase 1.5 — Profiles & secrets | ✅ Complete | multi-profile config, keyring/dotenv/env-only backends, `jac profiles`/`jac keys` |
 | Phase 2 — Project memory | ⏸ Queued | richer AGENTS.md write-back via summarizer minion |
 | Phase 3 — Minion factory | ⏸ Queued | spec loader + factory + first templates |
 | Phase 4 — Quality | ⏸ Queued | CodeMode + stuck-loop + tests + docs |
@@ -91,6 +92,23 @@ For the *why* see `IDEA.md`. For the *how* see `ARCHITECTURE.md` and `CLAUDE.md`
 - [x] `ProcessHistory`-based exchange-aware sliding window (`jac.capabilities.history`) — slices on user-prompt boundaries so tool-call/return pairs stay paired; default cap 40 exchanges
 - [x] History capability included in `_default_tool_capabilities` so every session gets it for free
 - [x] Fail-first when resuming a missing id or `--resume` with no sessions
+
+## Phase 1.5 — Profiles & secrets ✅
+
+**Goal:** stop the "re-export every terminal" friction. Let users configure multiple providers as named profiles and store credentials securely.
+
+- [x] `Profile` model + `~/.jac/config.yaml` schema (`profiles:`, `default_profile:`, `secrets.backend:`) (`jac.profiles`)
+- [x] Strict profile-name validation: `[a-z0-9-]+`, no leading/trailing hyphen
+- [x] Provider → required env vars map; auto-inferred from `model:` prefix, overridable
+- [x] Three secrets backends: `keyring` (OS-native, default), `dotenv` (`~/.jac/.env`, chmod 600), `env-only` (read-through, no storage) (`jac.secrets`)
+- [x] Resolution layering: process env > backend > fail-first with actionable message
+- [x] `apply_profile_env(name, profile)` injects `JAC_MODEL` + non-secret env + resolved secrets into `os.environ` before REPL starts
+- [x] `jac init` rewritten: secrets-backend pick (first run), provider, model, name, env-scan-with-explicit-prompt, optional default
+- [x] `jac profiles` / `jac profiles list` / `jac profiles use NAME` / `jac profiles remove NAME`
+- [x] `jac keys` / `jac keys list` / `jac keys set KEY` (interactive prompt, no `--value`) / `jac keys unset KEY`
+- [x] `--profile / -p` flag on the root command; `--model` continues to bypass profile machinery
+- [x] Old top-level `model:` field dropped (hard cutover; YAML rewritten on `jac init`)
+- [x] `keyring>=25.0` added as a hard dep
 
 ## Phase 2 — Project memory ⏸
 

@@ -20,14 +20,27 @@ For the *why*, read `IDEA.md`. For the *how*, read `ARCHITECTURE.md`. When the d
 ## Commands
 
 ```bash
-uv sync                    # install / refresh dependencies
-uv run jac                 # interactive REPL (requires a configured model + provider key)
-uv run jac init            # interactive setup wizard — first-time onboarding
-uv run jac --help          # CLI help
-uv run python -m jac       # equivalent invocation
+uv sync                          # install / refresh dependencies
+uv run jac                       # interactive REPL with the default profile
+uv run jac --profile NAME        # one-shot profile selection
+uv run jac --model PROVIDER:ID   # raw model override (bypasses profiles)
+uv run jac --resume              # resume the latest project session
+uv run jac --session ID          # resume a specific session by id
+
+uv run jac init                  # wizard: backend + profile + key storage
+uv run jac profiles              # list profiles, mark default
+uv run jac profiles use NAME     # set default profile
+uv run jac profiles remove NAME  # delete a profile
+uv run jac keys                  # show required keys with status
+uv run jac keys set KEY          # prompt and store in configured backend
+uv run jac keys unset KEY        # delete from backend
+uv run jac sessions              # list sessions in this project
+
+uv run jac --help                # full CLI help
+uv run python -m jac             # equivalent invocation
 ```
 
-**No required runtime values are defaulted in code.** Set them via `.env`, env vars, layered config files, or the `--model` flag. See `.env.template` for the canonical list of environment variables, and run `jac init` for a guided setup.
+**No required runtime values are defaulted in code.** Set them via `jac init`, env vars, or the `--model` flag. See `.env.template` for env-var examples.
 
 ## Configuration & workspace
 
@@ -49,14 +62,39 @@ uv run python -m jac       # equivalent invocation
 
 ### Layered config precedence (highest → lowest)
 
-1. CLI arguments (`--model anthropic:claude-opus-4-6`)
-2. Environment variables (`JAC_MODEL=...`)
+1. CLI arguments (`--model ...`, `--profile NAME`)
+2. Environment variables (`JAC_MODEL=...`, `JAC_SECRETS__BACKEND=...`)
 3. `.env` file in CWD
 4. Project config (`<repo>/.agents/config.yaml`)
 5. User config (`~/.jac/config.yaml`)
 6. Package defaults (`src/jac/defaults.yaml` — *non-required* values only)
 
 Implementation lives in `jac.workspace.config_loader`. Missing required values raise `JacConfigError` at point of use.
+
+### Profiles & secrets
+
+User-facing config is organized into **profiles**. Each profile binds a model + optional non-secret env (e.g. `OLLAMA_BASE_URL`) and inherits required secret-key names from the model's provider prefix. Schema:
+
+```yaml
+default_profile: claude
+profiles:
+  claude:
+    model: anthropic:claude-sonnet-4-5
+  ollama-local:
+    model: ollama:gemma3:e2b
+    env:
+      OLLAMA_BASE_URL: http://localhost:11434/v1
+secrets:
+  backend: keyring   # keyring | dotenv | env-only
+```
+
+Credentials resolve at REPL startup in this order:
+
+1. Process env (whatever the shell exported wins — direnv / 1Password CLI / CI overrides are honored).
+2. Configured backend: `keyring` (OS keychain, default), `dotenv` (`~/.jac/.env`, chmod 600), or `env-only` (read-through; no storage).
+3. **Fail-first** with an actionable error pointing at `jac keys set KEY`.
+
+Profile activation lives in `jac.secrets.apply_profile_env` and writes `os.environ` so pydantic-ai's normal provider construction stays unchanged — no custom provider plumbing.
 
 ### Workspace layout
 

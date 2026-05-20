@@ -10,14 +10,16 @@ values (no default in code) raise ``JacConfigError`` at the point of use —
 see CLAUDE.md "Fail-first, no hardcoding".
 
 ``Settings()`` is constructed lazily via :func:`get_settings` so that
-:func:`jac.workspace.bootstrap.ensure_user_workspace` can run first and
-create the YAML files this loader will read.
+:func:`jac.workspace.bootstrap.ensure_user_workspace` (and profile activation,
+which sets ``JAC_MODEL``) can run first.
 """
 
 from __future__ import annotations
 
 from functools import cache
+from typing import Literal
 
+from pydantic import BaseModel, Field
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -26,29 +28,41 @@ from pydantic_settings import (
 
 from jac.workspace.config_loader import jac_config_sources
 
+SecretBackendName = Literal["keyring", "dotenv", "env-only"]
+
+
+class SecretsSettings(BaseModel):
+    """Where JAC stores credentials. Configured under ``secrets:`` in YAML."""
+
+    backend: SecretBackendName = "keyring"
+
 
 class Settings(BaseSettings):
     """Top-level JAC configuration.
 
-    Keep this class small. New tunables go here, not into ad-hoc env reads
-    scattered across modules.
+    Profile model selection happens through the ``JAC_MODEL`` env var set by
+    :func:`jac.secrets.apply_profile_env`. See :mod:`jac.profiles` for
+    profile management.
     """
 
     model_config = SettingsConfigDict(
         env_prefix="JAC_",
+        env_nested_delimiter="__",  # JAC_SECRETS__BACKEND=...
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
-        # Allow a field literally named ``model`` without pydantic's
-        # ``model_*`` namespace warning.
+        # Allow a field literally named ``model`` without pydantic's namespace warning.
         protected_namespaces=(),
     )
 
     model: str | None = None
-    """Model identifier (``provider:name``). **Required** — set via ``JAC_MODEL``,
-    the ``--model`` CLI flag, or ``model = "..."`` in any layered config file.
+    """Active model identifier. Normally set by profile activation; can be
+    overridden via ``JAC_MODEL`` env or the ``--model`` CLI flag.
 
     No default is hardcoded (fail-first principle). See ``.env.template``."""
+
+    secrets: SecretsSettings = Field(default_factory=SecretsSettings)
+    """Secrets backend configuration. Defaults to OS keyring."""
 
     @classmethod
     def settings_customise_sources(
@@ -74,8 +88,8 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Return the process-wide Settings singleton.
 
-    Constructed lazily so workspace bootstrap can create missing YAML files
-    first. Tests can call :func:`reset_settings_cache` to force a reload.
+    Constructed lazily so workspace bootstrap and profile activation can
+    write the env first. Tests can call :func:`reset_settings_cache`.
     """
     return Settings()
 

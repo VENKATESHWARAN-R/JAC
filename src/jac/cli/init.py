@@ -1,177 +1,246 @@
-"""``jac init`` — interactive onboarding wizard.
+"""``jac init`` — interactive onboarding / add-a-profile wizard.
 
-Walks the user through provider selection, model choice, and writes
-``~/.jac/config.yaml``. Also ensures the user workspace skeleton exists.
+First run: pick a secrets backend, then add the first profile.
+Subsequent runs: just add another profile (or update an existing one).
 
-Intentionally minimal in Phase 0.5: provider + model + a courtesy API-key
-presence check. Tier-based routing, project-workspace setup, and richer
-preferences are later additions (see ``PROGRESS.md`` v2).
+Honest design notes:
+
+- Profile names are validated against ``[a-z0-9-]+`` (no spaces, shell-safe).
+- When a known env var is already exported, we offer to import it into the
+  chosen backend with an *explicit* prompt — never silent. The user might be
+  on a machine with their employer's API key in env and want to keep their
+  personal key separate.
 """
 
 from __future__ import annotations
 
 import os
+from typing import Any
 
 import yaml
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 
+from jac.errors import JacConfigError
+from jac.profiles import (
+    Profile,
+    add_or_update_profile,
+    list_profiles,
+    validate_profile_name,
+)
+from jac.secrets import SecretBackendName, get_backend
 from jac.workspace import paths
 from jac.workspace.bootstrap import ensure_user_workspace
 
 console = Console()
 
 
-PROVIDERS: dict[str, dict[str, str | None]] = {
-    "anthropic": {
-        "env_key": "ANTHROPIC_API_KEY",
-        "suggested_model": "claude-sonnet-4-5",
-        "format": "anthropic:{model}",
-    },
-    "openai": {
-        "env_key": "OPENAI_API_KEY",
-        "suggested_model": "gpt-5",
-        "format": "openai:{model}",
-    },
-    "google": {
-        "env_key": "GEMINI_API_KEY",
-        "suggested_model": "gemini-2.5-flash",
-        "format": "google-gla:{model}",
-    },
-    "ollama": {
-        "env_key": None,
-        "suggested_model": "gemma3:e2b",
-        "format": "ollama:{model}",
-    },
+PROVIDER_CHOICES: dict[str, dict[str, str]] = {
+    "anthropic": {"suggested_model": "claude-sonnet-4-5", "format": "anthropic:{model}"},
+    "openai": {"suggested_model": "gpt-5", "format": "openai:{model}"},
+    "google": {"suggested_model": "gemini-2.5-flash", "format": "google-gla:{model}"},
+    "ollama": {"suggested_model": "gemma3:e2b", "format": "ollama:{model}"},
     "openrouter": {
-        "env_key": "OPENROUTER_API_KEY",
         "suggested_model": "anthropic/claude-sonnet-4-5",
         "format": "openrouter:{model}",
     },
-    "mistral": {
-        "env_key": "MISTRAL_API_KEY",
-        "suggested_model": "mistral-large-latest",
-        "format": "mistral:{model}",
-    },
-    "pydantic-ai-gateway": {
-        "env_key": "PYDANTIC_AI_GATEWAY_API_KEY",
-        "suggested_model": "gpt-4o",
-        "format": "gateway/{model}",
-    },
+    "mistral": {"suggested_model": "mistral-large-latest", "format": "mistral:{model}"},
+    "pydantic-ai-gateway": {"suggested_model": "gpt-4o", "format": "gateway/{model}"},
 }
 
 
 def run_init() -> None:
-    """Run the interactive setup wizard."""
-    console.print(
-        Panel.fit(
-            "[bold cyan]JAC setup wizard[/bold cyan]\n\n"
-            "I'll walk you through choosing a provider and model, then write\n"
-            f"your config to [bold]{paths.USER_CONFIG_FILE}[/bold].",
-            border_style="cyan",
-        )
+    """Run the wizard. Idempotent: re-runs add or update profiles."""
+    ensure_user_workspace()
+    existing = list_profiles()
+
+    _print_intro(existing)
+    backend_name = _pick_or_load_backend(existing)
+    profile_name, profile = _build_profile_interactive(existing)
+    _maybe_store_secrets(profile_name, profile, backend_name)
+
+    set_as_default = (not existing) or Confirm.ask(
+        f"\nSet [bold]{profile_name}[/bold] as the default profile?",
+        default=not existing,
     )
+    add_or_update_profile(profile_name, profile, set_default=set_as_default)
+    _print_done(profile_name, set_as_default)
 
-    # Step 1: ensure workspace skeleton
-    if ensure_user_workspace():
-        console.print(f"[green]✓[/green] created skeleton at [bold]{paths.USER_WORKSPACE}[/bold]")
+
+# ---------- steps ----------
+
+def _print_intro(existing: dict[str, Profile]) -> None:
+    if existing:
+        console.print(
+            Panel.fit(
+                "[bold cyan]JAC[/bold cyan] — add or update a profile\n"
+                f"[dim]existing:[/dim] {', '.join(existing)}",
+                border_style="cyan",
+            )
+        )
     else:
-        console.print(f"[dim]workspace already exists at {paths.USER_WORKSPACE}[/dim]")
+        console.print(
+            Panel.fit(
+                "[bold cyan]JAC setup wizard[/bold cyan]\n\n"
+                "Let's set up your first profile.\n"
+                f"Config will be written to [bold]{paths.USER_CONFIG_FILE}[/bold].",
+                border_style="cyan",
+            )
+        )
 
-    # Step 2: confirm overwrite if a non-template config already exists
-    if _config_has_user_content():
-        if not Confirm.ask(
-            f"\n[yellow]warning:[/yellow] {paths.USER_CONFIG_FILE} already has content. Overwrite?",
-            default=False,
-        ):
-            console.print("[dim]aborted[/dim]")
-            return
 
-    # Step 3: provider
+def _pick_or_load_backend(existing: dict[str, Profile]) -> SecretBackendName:
+    """First run: ask which secrets backend to use. Subsequent runs: keep current."""
+    from jac.config import get_settings, reset_settings_cache
+
+    if existing:
+        # Backend already chosen; just report.
+        current = get_settings().secrets.backend
+        console.print(f"[dim]secrets backend:[/dim] [bold]{current}[/bold]")
+        return current
+
+    backend_name: SecretBackendName = Prompt.ask(
+        "\n[bold]Where should JAC store API keys?[/bold]\n"
+        "  [bold]keyring[/bold]  — OS keychain (recommended)\n"
+        "  [bold]dotenv[/bold]   — ~/.jac/.env, plaintext, chmod 600\n"
+        "  [bold]env-only[/bold] — JAC won't store; you'll manage via shell\n"
+        "choice",
+        choices=["keyring", "dotenv", "env-only"],
+        default="keyring",
+    )  # type: ignore[assignment]
+    _write_backend_choice(backend_name)
+    reset_settings_cache()
+    return backend_name
+
+
+def _build_profile_interactive(existing: dict[str, Profile]) -> tuple[str, Profile]:
+    """Collect provider/model/name/env from the user; return ``(name, profile)``."""
     provider = Prompt.ask(
-        "\nWhich [bold]provider[/bold]?",
-        choices=list(PROVIDERS.keys()),
+        "\n[bold]Provider[/bold]",
+        choices=list(PROVIDER_CHOICES),
         default="anthropic",
     )
-    p = PROVIDERS[provider]
+    pc = PROVIDER_CHOICES[provider]
+    model_name = Prompt.ask(f"[bold]{provider}[/bold] model", default=pc["suggested_model"])
+    model_id = pc["format"].format(model=model_name)
 
-    # Step 4: model
-    suggested = p["suggested_model"]
-    assert suggested is not None  # all entries have one
-    model_name = Prompt.ask(
-        f"Which {provider} [bold]model[/bold]?",
-        default=suggested,
-    )
-    fmt = p["format"]
-    assert fmt is not None
-    model_id = fmt.format(model=model_name)
+    # Profile name — validated, with friendly retry.
+    suggested = provider if provider not in existing else f"{provider}-{model_name.split('/')[-1].split(':')[0]}"
+    while True:
+        candidate = Prompt.ask("[bold]Profile name[/bold]", default=suggested).strip().lower()
+        try:
+            validate_profile_name(candidate)
+        except JacConfigError as exc:
+            console.print(f"  [red]{exc}[/red]")
+            continue
+        if candidate in existing:
+            if not Confirm.ask(
+                f"  [yellow]profile {candidate!r} exists — overwrite?[/yellow]",
+                default=False,
+            ):
+                continue
+        profile_name = candidate
+        break
 
-    # Step 5: API-key presence check (informational only — don't block)
-    env_key = p["env_key"]
-    if env_key:
-        if os.environ.get(env_key):
-            console.print(f"[green]✓[/green] {env_key} found in environment")
-        else:
-            console.print(
-                f"[yellow]![/yellow] {env_key} is [bold]not[/bold] set. "
-                f"Add it to your shell or [bold].env[/bold] file before running [bold]jac[/bold]."
-            )
-    elif provider == "ollama":
-        base_url = os.environ.get("OLLAMA_BASE_URL")
-        if base_url:
-            console.print(f"[green]✓[/green] OLLAMA_BASE_URL = {base_url}")
-        else:
-            console.print(
-                "[yellow]![/yellow] OLLAMA_BASE_URL is not set. "
-                "JAC will try the default ([bold]http://localhost:11434/v1[/bold]). "
-                "Set the env var if your Ollama lives elsewhere."
-            )
-            os.environ["OLLAMA_BASE_URL"] = "http://localhost:11434/v1"
+    # Non-secret env (Ollama base URL is the canonical example).
+    profile_env: dict[str, str] = {}
+    if provider == "ollama":
+        existing_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+        url = Prompt.ask("[bold]Ollama base URL[/bold]", default=existing_url)
+        profile_env["OLLAMA_BASE_URL"] = url
 
-    # Step 6: preview + confirm + write
-    config_data = {"model": model_id}
-    yaml_body = yaml.safe_dump(config_data, default_flow_style=False, sort_keys=False)
-    payload = (
-        "# JAC user-level configuration. Written by `jac init`.\n"
-        '# See CLAUDE.md "Configuration & workspace" for the layering rules.\n\n'
-        f"{yaml_body}"
-    )
+    return profile_name, Profile(model=model_id, env=profile_env)
 
-    console.print("\n[bold]Will write:[/bold]")
-    console.print(Panel(payload.rstrip(), border_style="dim"))
 
-    if not Confirm.ask(f"Write to {paths.USER_CONFIG_FILE}?", default=True):
-        console.print("[dim]aborted (no file written)[/dim]")
+def _maybe_store_secrets(
+    profile_name: str, profile: Profile, backend_name: SecretBackendName
+) -> None:
+    """For each required env var, optionally store it in the chosen backend."""
+    required = profile.required_env_keys()
+    if not required:
         return
 
-    paths.USER_CONFIG_FILE.write_text(payload, encoding="utf-8")
-    console.print(f"[green]✓[/green] wrote [bold]{paths.USER_CONFIG_FILE}[/bold]")
+    console.print()
+    backend = get_backend(backend_name)
 
-    # Step 7: next steps
-    next_steps_lines = [
+    for key in required:
+        # Already stored?
+        try:
+            already = backend.get(key)
+        except Exception:  # noqa: BLE001 — backend may be unavailable; treat as missing
+            already = None
+        if already:
+            console.print(f"  [green]✓[/green] {key} already in [bold]{backend_name}[/bold]")
+            continue
+
+        env_value = os.environ.get(key)
+        if env_value:
+            if backend_name == "env-only":
+                console.print(f"  [green]✓[/green] {key} present in environment")
+                continue
+            # Explicit prompt — never silent. The user might be on a machine
+            # with employer credentials in env and want to keep them out of
+            # their personal JAC store.
+            if Confirm.ask(
+                f"  [yellow]I see {key} in your environment.[/yellow] "
+                f"Import into [bold]{backend_name}[/bold]?",
+                default=True,
+            ):
+                backend.set(key, env_value)
+                console.print(f"    [green]✓ imported {key}[/green]")
+            else:
+                console.print(
+                    f"    [dim]skipped — JAC will keep reading {key} from env[/dim]"
+                )
+            continue
+
+        # Not in env or backend — prompt or warn depending on backend.
+        if backend_name == "env-only":
+            console.print(
+                f"  [yellow]![/yellow] {key} not set. "
+                f"Export it in your shell before running [bold]jac[/bold]."
+            )
+            continue
+
+        value = Prompt.ask(f"  Enter [bold]{key}[/bold]", password=True)
+        if not value:
+            console.print(f"    [dim]skipped {key}[/dim]")
+            continue
+        backend.set(key, value)
+        console.print(f"    [green]✓ stored {key} in {backend_name}[/green]")
+
+
+def _write_backend_choice(name: SecretBackendName) -> None:
+    """Persist the chosen secrets backend in ~/.jac/config.yaml."""
+    raw: dict[str, Any] = {}
+    if paths.USER_CONFIG_FILE.is_file():
+        text = paths.USER_CONFIG_FILE.read_text(encoding="utf-8")
+        if text.strip():
+            loaded = yaml.safe_load(text)
+            if isinstance(loaded, dict):
+                raw = loaded
+    raw.setdefault("secrets", {})
+    raw["secrets"]["backend"] = name
+    body = yaml.safe_dump(raw, default_flow_style=False, sort_keys=False)
+    header = (
+        "# JAC user-level configuration.\n"
+        '# See CLAUDE.md "Configuration & workspace" for the layering rules.\n\n'
+    )
+    paths.USER_CONFIG_FILE.write_text(header + body, encoding="utf-8")
+
+
+def _print_done(profile_name: str, set_as_default: bool) -> None:
+    lines = [
         "[bold green]Done![/bold green]",
         "",
-        "Next steps:",
+        f"profile [bold]{profile_name}[/bold] saved to {paths.USER_CONFIG_FILE}.",
     ]
-    if env_key:
-        next_steps_lines.append(f"  1. Make sure [bold]{env_key}[/bold] is set in your environment")
-        next_steps_lines.append("  2. Run [bold]jac[/bold] to start a session")
+    if set_as_default:
+        lines.append(f"set as default — [bold]jac[/bold] will use it.")
     else:
-        next_steps_lines.append("  1. Run [bold]jac[/bold] to start a session")
-    next_steps_lines.append(
-        "  3. Optional: add an [bold]AGENTS.md[/bold] at your repo root for project context"
-    )
-
-    console.print(Panel.fit("\n".join(next_steps_lines), border_style="green"))
-
-
-def _config_has_user_content() -> bool:
-    """True if ``~/.jac/config.yaml`` has anything beyond the template comment header."""
-    if not paths.USER_CONFIG_FILE.exists():
-        return False
-    for line in paths.USER_CONFIG_FILE.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if stripped and not stripped.startswith("#"):
-            return True
-    return False
+        lines.append(f"use it explicitly: [bold]jac --profile {profile_name}[/bold]")
+    lines.append("")
+    lines.append("Run [bold]jac init[/bold] again to add another profile.")
+    lines.append("Run [bold]jac keys[/bold] to inspect stored credentials.")
+    console.print(Panel.fit("\n".join(lines), border_style="green"))

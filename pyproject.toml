@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "fasta2a[pydantic-ai]>=0.6.1",
+    "keyring>=25.0",
     "logfire>=4.33.0",
     "prompt-toolkit>=3.0.52",
     "pydantic>=2.13.4",

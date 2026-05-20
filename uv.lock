@@ -738,6 +738,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "fasta2a", extra = ["pydantic-ai"] },
+    { name = "keyring" },
     { name = "logfire" },
     { name = "prompt-toolkit" },
     { name = "pydantic" },
@@ -755,6 +756,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fasta2a", extras = ["pydantic-ai"], specifier = ">=0.6.1" },
+    { name = "keyring", specifier = ">=25.0" },
     { name = "logfire", specifier = ">=4.33.0" },
     { name = "prompt-toolkit", specifier = ">=3.0.52" },
     { name = "pydantic", specifier = ">=2.13.4" },
