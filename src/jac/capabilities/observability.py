@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import logfire
 
+from jac import __version__
+
 
 def setup_observability() -> None:
     """Configure Logfire once at process startup.
@@ -22,7 +24,7 @@ def setup_observability() -> None:
     logfire.configure(
         send_to_logfire="if-token-present",
         service_name="jac",
-        service_version="0.1.0",
+        service_version=__version__,
         # Local-first: the user owns their machine and their logs. Don't
         # silently redact things they might want to see.
         scrubbing=False,

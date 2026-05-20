@@ -7,7 +7,7 @@ own: persistent memory, tools, human-in-the-loop gates, multi-provider
 credentials, and session continuity. It runs entirely on your machine — your
 keys, your files, your context, no cloud relay.
 
-> **Status:** early personal project. Phase 1.5 of the roadmap is shipped —
+> **Status:** **v0.1.0 alpha** (pre-release). Phase 1.5 of the roadmap is shipped —
 > chat, file/search/shell tools, HITL approval, session persistence + resume,
 > and multi-provider profile management. Project memory and the minion factory
 > are next. See [`PROGRESS.md`](PROGRESS.md) for the current state.
