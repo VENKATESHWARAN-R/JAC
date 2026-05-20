@@ -4,18 +4,28 @@ The renderer owns no runtime state and makes no decisions about what the
 agent should do. It only observes events and renders them. This separation
 is what lets us add a TUI or web surface later without changing the
 runtime: drop in a different renderer with the same bus interface.
+
+Approval flow: when an :class:`ApprovalRequest` arrives, the renderer
+pauses the status spinner, prompts the user via ``rich``'s Confirm, and
+resolves the request's future. The runtime's approval handler awaits that
+future before continuing the agent loop.
 """
 
 from __future__ import annotations
 
+import asyncio
 import random
 from typing import Any
 
 from rich.console import Console
 from rich.markdown import Markdown
+from rich.panel import Panel
+from rich.prompt import Confirm
 
 from jac.runtime.bus import EventBus
 from jac.runtime.events import (
+    ApprovalRequest,
+    ApprovalResponse,
     JacEvent,
     ModelRequestCompleted,
     ModelRequestStarted,
@@ -55,6 +65,8 @@ _THINKING_LABELS: tuple[str, ...] = (
     "para tú…",
 )
 
+_ARG_VALUE_TRUNCATE_AT = 300
+
 
 def _thinking_label() -> str:
     return f"[dim]{random.choice(_THINKING_LABELS)}[/dim]"
@@ -79,6 +91,12 @@ class CliRenderer:
         """Render events until a terminal event arrives, then return."""
         with self.console.status(_thinking_label(), spinner="dots") as status:
             async for event in bus.stream():
+                if isinstance(event, ApprovalRequest):
+                    status.stop()
+                    response = await self._prompt_approval(event)
+                    event.response_future.set_result(response)
+                    status.start()
+                    continue
                 self._handle(event, status)
                 if is_terminal(event):
                     return
@@ -105,6 +123,28 @@ class CliRenderer:
             self.final_output = event.output
         elif isinstance(event, RunFailed):
             self.error = event.error
+
+    async def _prompt_approval(self, event: ApprovalRequest) -> ApprovalResponse:
+        """Render the approval panel and ask the user."""
+        body: list[str] = [f"[bold]{event.tool_name}[/bold]"]
+        if event.reason:
+            body.append(f"[dim]reason:[/dim] {event.reason}")
+        for key, value in event.args.items():
+            if key == "reason":
+                continue
+            value_str = str(value)
+            if len(value_str) > _ARG_VALUE_TRUNCATE_AT:
+                value_str = value_str[: _ARG_VALUE_TRUNCATE_AT - 1] + "…"
+            body.append(f"[dim]{key}:[/dim] {value_str}")
+
+        self.console.print()
+        self.console.print(
+            Panel("\n".join(body), title="approval needed", border_style="yellow")
+        )
+        approved: bool = await asyncio.to_thread(
+            Confirm.ask, "Approve?", default=False, console=self.console
+        )
+        return ApprovalResponse(approved=approved)
 
     def print_final(self) -> None:
         """Render the final turn output (or error) after :meth:`consume` returns."""

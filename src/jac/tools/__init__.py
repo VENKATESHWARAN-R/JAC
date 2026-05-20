@@ -9,5 +9,6 @@ search) arrive in subsequent steps and live as sibling modules here.
 """
 
 from jac.tools.decorator import is_jac_tool, jac_tool
+from jac.tools.toolset import jac_function_toolset
 
-__all__ = ["jac_tool", "is_jac_tool"]
+__all__ = ["jac_tool", "is_jac_tool", "jac_function_toolset"]

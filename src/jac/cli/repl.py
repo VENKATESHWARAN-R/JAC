@@ -23,6 +23,7 @@ from rich.console import Console
 from rich.panel import Panel
 from pydantic_ai import Agent, AgentRunResult
 
+from jac.capabilities.approval import make_approval_handler
 from jac.capabilities.hooks import make_hooks
 from jac.cli.renderer import CliRenderer
 from jac.config import get_settings
@@ -88,7 +89,11 @@ async def _repl_loop(model_override: str | None = None) -> None:
     try:
         bus = EventBus()
         hooks = make_hooks(bus)
-        gru = build_gru(model_override=model_override, extra_capabilities=[hooks])
+        approval = make_approval_handler(bus)
+        gru = build_gru(
+            model_override=model_override,
+            extra_capabilities=[hooks, approval],
+        )
     except JacConfigError as exc:
         console.print(f"[red]config error:[/red] {exc}")
         return

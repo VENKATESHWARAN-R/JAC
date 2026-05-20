@@ -14,10 +14,15 @@ runtime changes.
 Per-turn boundaries: every turn ends with a terminal event,
 :class:`RunCompleted` or :class:`RunFailed`. Consumers should treat the
 arrival of either as "stop reading until the next turn starts."
+
+:class:`ApprovalRequest` is special: it carries a Future the consumer is
+expected to resolve. The runtime awaits that Future before continuing the
+agent loop — see :mod:`jac.capabilities.approval`.
 """
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Any
 
@@ -63,6 +68,31 @@ class ToolCallFailed(JacEvent):
 
 
 @dataclass(frozen=True, slots=True)
+class ApprovalRequest(JacEvent):
+    """A deferred tool call needs human approval.
+
+    The consumer (renderer) is expected to resolve ``response_future`` with
+    an :class:`ApprovalResponse`. The approval handler awaits the future
+    before deciding what to send back to the agent loop.
+    """
+
+    tool_call_id: str
+    tool_name: str
+    reason: str | None
+    args: dict[str, Any]
+    response_future: "asyncio.Future[ApprovalResponse]"
+
+
+@dataclass(frozen=True, slots=True)
+class ApprovalResponse:
+    """Result of an :class:`ApprovalRequest`, supplied by the consumer."""
+
+    approved: bool
+    deny_message: str | None = None
+    """Optional message sent back to the model when ``approved`` is False."""
+
+
+@dataclass(frozen=True, slots=True)
 class RunCompleted(JacEvent):
     """Terminal: ``agent.run()`` completed normally. Carries the final output."""
 
@@ -82,6 +112,7 @@ type JacEventT = (
     | ToolCallStarted
     | ToolCallCompleted
     | ToolCallFailed
+    | ApprovalRequest
     | RunCompleted
     | RunFailed
 )
@@ -89,5 +120,5 @@ type JacEventT = (
 
 
 def is_terminal(event: JacEvent) -> bool:
-    """True if ``event`` ends the current turn."""
+    """True if ``event`` ends the current turn (``RunCompleted`` / ``RunFailed``)."""
     return isinstance(event, (RunCompleted, RunFailed))

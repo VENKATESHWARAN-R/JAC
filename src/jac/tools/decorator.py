@@ -13,6 +13,7 @@ decorator, catching tools registered via other paths.
 from __future__ import annotations
 
 import inspect
+import typing
 from collections.abc import Callable
 from typing import TypeVar
 
@@ -21,16 +22,29 @@ F = TypeVar("F", bound=Callable[..., object])
 _JAC_TOOL_MARKER = "__jac_tool__"
 
 
+def _resolve_annotation(func: Callable[..., object], name: str, raw: object) -> object:
+    """Resolve a parameter annotation that may be a string (PEP 563)."""
+    if raw is inspect.Parameter.empty:
+        return raw
+    # When ``from __future__ import annotations`` is in effect, annotations are
+    # strings. Try to evaluate them against the function's module globals.
+    try:
+        resolved = typing.get_type_hints(func)
+    except Exception:  # NameError, etc. — fall back to the raw value
+        return raw
+    return resolved.get(name, raw)
+
+
 def jac_tool(func: F) -> F:
     """Mark ``func`` as a JAC tool and validate its signature.
 
     The first parameter (or first parameter after a leading ``ctx``) must
-    be named ``reason`` and annotated ``str``. Validation is at decoration
-    time, so the error surfaces when the module loads, not at runtime.
+    be named ``reason`` and annotated ``str``. Validation runs at decoration
+    time, so any breach surfaces when the module loads, not at runtime.
 
     Raises:
-        TypeError: if ``func`` is missing the ``reason: str`` parameter or
-            it isn't where expected.
+        TypeError: if ``func`` is missing the ``reason: str`` parameter
+            or it isn't where expected.
     """
     sig = inspect.signature(func)
     params = list(sig.parameters.values())
@@ -51,10 +65,11 @@ def jac_tool(func: F) -> F:
             f"@jac_tool {func.__qualname__}: first non-ctx parameter must be named "
             f"`reason`, got `{first.name}`. See ARCHITECTURE.md §6a."
         )
-    if first.annotation is not str:
+    annotation = _resolve_annotation(func, first.name, first.annotation)
+    if annotation is not str:
         raise TypeError(
             f"@jac_tool {func.__qualname__}: `reason` must be annotated `str`, "
-            f"got `{first.annotation!r}`. See ARCHITECTURE.md §6a."
+            f"got `{annotation!r}`. See ARCHITECTURE.md §6a."
         )
 
     setattr(func, _JAC_TOOL_MARKER, True)

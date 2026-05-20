@@ -66,14 +66,19 @@ For the *why* see `IDEA.md`. For the *how* see `ARCHITECTURE.md` and `CLAUDE.md`
 - [x] `build_gru(extra_capabilities=...)` parameter so the CLI wires hooks without touching the function's defaults
 - [x] `@jac_tool` decorator enforcing `reason: str` as the first non-ctx parameter (fail at decoration time)
 
-### Step 2: first tools + HITL ⏳ next
+### Step 2: first tools + HITL ✅
 
-- [ ] `JacToolset` wrapper toolset that rejects tools missing `@jac_tool` at agent construction (catches tools registered via other paths)
-- [ ] Filesystem capability: `read_file`, `write_file`, `edit_file`, `list_dir`
-- [ ] Shell capability: `run_shell` (HITL-gated)
-- [ ] Search capability: `grep`, `glob`
-- [ ] `ApprovalRequiredToolset` wired for risky tools (shell + write/edit)
-- [ ] Approval prompt UI in CLI (renders `reason` alongside args; surfaced via `deferred_tool_calls` hook → bus → renderer)
+- [x] `jac_function_toolset` enforces `@jac_tool` on every member at construction (`jac.tools.toolset`)
+- [x] `@jac_tool` resolves PEP 563 string annotations (`from __future__ import annotations` no longer fools it)
+- [x] Filesystem capability: `read_file`, `write_file`, `edit_file`, `list_dir` — write + edit are approval-required (`jac.capabilities.filesystem`)
+- [x] Search capability: `grep`, `glob` — read-only (`jac.capabilities.search`)
+- [x] Shell capability: `run_shell` — always approval-required (`jac.capabilities.shell`)
+- [x] `resolve_under_project` helper — project-relative paths anchor to the git root
+- [x] `HandleDeferredToolCalls`-based approval handler that emits `ApprovalRequest` events with embedded futures (`jac.capabilities.approval`)
+- [x] `ApprovalRequest` / `ApprovalResponse` event types; bus is now bidirectional via the future
+- [x] CLI renderer prompts for approval inline (panel with `reason` + args; pauses spinner)
+- [x] `build_gru` ships default tool capabilities (fs / search / shell) with an `include_default_tools=False` escape hatch
+- [x] Updated `gru_system.md` so Gru knows what tools it has and the discipline around `reason`
 
 ### Step 3: persistence
 

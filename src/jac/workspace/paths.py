@@ -78,6 +78,19 @@ def project_sessions_dir() -> Path:
     return project_workspace() / "sessions"
 
 
+def resolve_under_project(path: str | Path) -> Path:
+    """Resolve ``path`` to an absolute path.
+
+    Absolute paths are returned as-is. Relative paths are anchored to the
+    project root (``<repo>/``), so an agent can say ``"src/foo.py"`` without
+    needing to know the absolute path or even the current working directory.
+    """
+    p = Path(path)
+    if p.is_absolute():
+        return p
+    return find_project_root() / p
+
+
 # --- Package defaults ---------------------------------------------
 
 @cache
