@@ -27,8 +27,12 @@ from pydantic_ai import Agent, AgentRunResult
 from rich.console import Console
 from rich.panel import Panel
 
+from jac import __version__
 from jac.capabilities.approval import make_approval_handler
+from jac.capabilities.clarify import make_clarify_capability
 from jac.capabilities.hooks import make_hooks
+from jac.capabilities.plan import make_plan_capability
+from jac.capabilities.process import make_process_capability
 from jac.cli.renderer import CliRenderer
 from jac.config import get_settings
 from jac.errors import JacConfigError
@@ -55,7 +59,7 @@ def _make_prompt_session() -> PromptSession[str]:
 
 def _greet(*, model_id: str, session: Session, resumed: bool) -> None:
     lines = [
-        "[bold cyan]JAC[/bold cyan] — phase 1 shell",
+        f"[bold cyan]JAC[/bold cyan] [dim]v{__version__}[/dim]",
         f"[dim]model:[/dim] {model_id}",
     ]
     if resumed:
@@ -128,9 +132,18 @@ async def _repl_loop(
         bus = EventBus()
         hooks = make_hooks(bus)
         approval = make_approval_handler(bus)
+        plan_capability = make_plan_capability(bus)
+        process_capability = make_process_capability(bus)
+        clarify_capability = make_clarify_capability(bus)
         gru = build_gru(
             model_override=model_override,
-            extra_capabilities=[hooks, approval],
+            extra_capabilities=[
+                hooks,
+                approval,
+                plan_capability,
+                process_capability,
+                clarify_capability,
+            ],
         )
     except JacConfigError as exc:
         console.print(f"[red]config error:[/red] {exc}")
@@ -141,26 +154,34 @@ async def _repl_loop(
     _greet(model_id=model_id, session=session, resumed=resumed)
 
     message_history: list = list(session.message_history)
-    while True:
-        try:
-            text = await prompt_session.prompt_async("» ")
-        except (EOFError, KeyboardInterrupt):
-            console.print("\n[dim]bye[/dim]")
-            return
+    try:
+        while True:
+            try:
+                text = await prompt_session.prompt_async("» ")
+            except (EOFError, KeyboardInterrupt):
+                console.print("\n[dim]bye[/dim]")
+                return
 
-        text = text.strip()
-        if not text:
-            continue
-        if text.lower() in _EXIT_WORDS:
-            console.print("[dim]bye[/dim]")
-            return
+            text = text.strip()
+            if not text:
+                continue
+            if text.lower() in _EXIT_WORDS:
+                console.print("[dim]bye[/dim]")
+                return
 
-        message_history = await _run_turn(gru, bus, text, message_history)
-        # Persist after every completed turn so kills mid-turn don't lose prior turns.
+            message_history = await _run_turn(gru, bus, text, message_history)
+            # Persist after every completed turn so kills mid-turn don't lose prior turns.
+            try:
+                session.save(message_history)
+            except OSError as exc:
+                console.print(f"[yellow]warning:[/yellow] session save failed: {exc}")
+    finally:
+        # Reap any still-running background processes (dev servers, watchers, …).
+        # Best-effort: never raise from cleanup, the REPL is already exiting.
         try:
-            session.save(message_history)
-        except OSError as exc:
-            console.print(f"[yellow]warning:[/yellow] session save failed: {exc}")
+            await process_capability.shutdown()
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"[yellow]warning:[/yellow] process shutdown: {exc}")
 
 
 def run_repl(

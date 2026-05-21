@@ -20,15 +20,23 @@ from typing import Any
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
-from rich.prompt import Confirm
+from rich.prompt import Confirm, IntPrompt
 
 from jac.runtime.bus import EventBus
 from jac.runtime.events import (
     ApprovalRequest,
     ApprovalResponse,
+    ClarifyRequest,
+    ClarifyResponse,
     JacEvent,
     ModelRequestCompleted,
     ModelRequestStarted,
+    PlanReplaced,
+    PlanStepStatus,
+    PlanStepUpdated,
+    PlanStepView,
+    ProcessExited,
+    ProcessStarted,
     RunCompleted,
     RunFailed,
     ToolCallCompleted,
@@ -67,9 +75,32 @@ _THINKING_LABELS: tuple[str, ...] = (
 
 _ARG_VALUE_TRUNCATE_AT = 300
 
+_PLAN_GLYPH: dict[PlanStepStatus, str] = {
+    "pending": "[dim]○[/dim]",
+    "in_progress": "[yellow]◐[/yellow]",
+    "completed": "[green]●[/green]",
+}
+
 
 def _thinking_label() -> str:
     return f"[dim]{random.choice(_THINKING_LABELS)}[/dim]"
+
+
+def _render_plan(steps: tuple[PlanStepView, ...]) -> Panel:
+    if not steps:
+        body = "[dim](empty plan)[/dim]"
+    else:
+        lines: list[str] = []
+        for step in steps:
+            glyph = _PLAN_GLYPH[step.status]
+            text = step.text
+            if step.status == "completed":
+                text = f"[dim]{text}[/dim]"
+            elif step.status == "in_progress":
+                text = f"[bold]{text}[/bold]"
+            lines.append(f"{glyph} {step.index}. {text}")
+        body = "\n".join(lines)
+    return Panel(body, title="plan", border_style="cyan", padding=(0, 1))
 
 
 class CliRenderer:
@@ -86,6 +117,7 @@ class CliRenderer:
         self.console = console
         self.final_output: str | None = None
         self.error: str | None = None
+        self._plan: tuple[PlanStepView, ...] = ()
 
     async def consume(self, bus: EventBus) -> None:
         """Render events until a terminal event arrives, then return."""
@@ -94,6 +126,12 @@ class CliRenderer:
                 if isinstance(event, ApprovalRequest):
                     status.stop()
                     response = await self._prompt_approval(event)
+                    event.response_future.set_result(response)
+                    status.start()
+                    continue
+                if isinstance(event, ClarifyRequest):
+                    status.stop()
+                    response = await self._prompt_clarify(event)
                     event.response_future.set_result(response)
                     status.start()
                     continue
@@ -119,10 +157,73 @@ class CliRenderer:
             self.console.print(
                 f"[yellow]tool {event.tool_name} failed:[/yellow] {event.error}"
             )
+        elif isinstance(event, PlanReplaced):
+            self._plan = event.steps
+            status.stop()
+            self.console.print(_render_plan(self._plan))
+            status.start()
+        elif isinstance(event, PlanStepUpdated):
+            self._plan = tuple(
+                PlanStepView(
+                    index=s.index,
+                    text=s.text,
+                    status=event.status if s.index == event.index else s.status,
+                )
+                for s in self._plan
+            )
+            status.stop()
+            self.console.print(_render_plan(self._plan))
+            status.start()
+        elif isinstance(event, ProcessStarted):
+            label = f" ({event.name})" if event.name else ""
+            self.console.print(
+                f"[cyan]▶ process[/cyan] {event.task_id}{label}: "
+                f"[dim]{event.command}[/dim]"
+            )
+        elif isinstance(event, ProcessExited):
+            color = (
+                "green"
+                if event.exit_code == 0
+                else ("red" if event.exit_code < 0 else "yellow")
+            )
+            self.console.print(
+                f"[{color}]■ process[/{color}] {event.task_id} "
+                f"exited [dim](code={event.exit_code})[/dim]"
+            )
         elif isinstance(event, RunCompleted):
             self.final_output = event.output
         elif isinstance(event, RunFailed):
             self.error = event.error
+
+    async def _prompt_clarify(self, event: ClarifyRequest) -> ClarifyResponse:
+        """Render the clarify panel and ask the user to pick an option."""
+        body: list[str] = [event.question, ""]
+        for i, opt in enumerate(event.options, start=1):
+            body.append(f"  [bold cyan]{i}[/bold cyan]. {opt}")
+        self.console.print()
+        self.console.print(
+            Panel("\n".join(body), title="clarify", border_style="cyan")
+        )
+        choices = [str(i) for i in range(1, len(event.options) + 1)]
+        try:
+            picked = await asyncio.to_thread(
+                IntPrompt.ask,
+                "Pick one",
+                choices=choices,
+                show_choices=False,
+                console=self.console,
+            )
+        except (KeyboardInterrupt, EOFError):
+            self.console.print("[dim]cancelled[/dim]")
+            return ClarifyResponse(
+                selected_index=None, selected_text=None, cancelled=True
+            )
+        index = int(picked)
+        return ClarifyResponse(
+            selected_index=index,
+            selected_text=event.options[index - 1],
+            cancelled=False,
+        )
 
     async def _prompt_approval(self, event: ApprovalRequest) -> ApprovalResponse:
         """Render the approval panel and ask the user."""

@@ -24,6 +24,7 @@ from jac.capabilities.history import make_history_capability
 from jac.capabilities.memory import MemoryCapability
 from jac.capabilities.search import SearchCapability
 from jac.capabilities.shell import ShellCapability
+from jac.capabilities.web import WebCapability
 from jac.config import get_settings
 from jac.errors import JacConfigError
 from jac.workspace.context import load_session_context
@@ -43,6 +44,7 @@ def _default_tool_capabilities() -> list[Any]:
         SearchCapability(),
         ShellCapability(),
         MemoryCapability(),
+        WebCapability(),
         make_history_capability(),
     ]
 

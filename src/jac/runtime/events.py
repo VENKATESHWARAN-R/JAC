@@ -24,12 +24,28 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 
 @dataclass(frozen=True, slots=True)
 class JacEvent:
     """Base class. Don't instantiate directly; use one of the subclasses."""
+
+
+PlanStepStatus = Literal["pending", "in_progress", "completed"]
+
+
+@dataclass(frozen=True, slots=True)
+class PlanStepView:
+    """Snapshot of one plan step. Emitted as part of plan events.
+
+    ``index`` is 1-based to match what the tool surface exposes to Gru and
+    what the user sees in the rendered checklist.
+    """
+
+    index: int
+    text: str
+    status: PlanStepStatus
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +109,82 @@ class ApprovalResponse:
 
 
 @dataclass(frozen=True, slots=True)
+class ClarifyRequest(JacEvent):
+    """The agent needs the user to pick between explicit options.
+
+    Parallels :class:`ApprovalRequest`: the consumer (renderer) prompts
+    the user and resolves ``response_future`` with a
+    :class:`ClarifyResponse`. The agent loop awaits that future before
+    continuing. Unlike approval, the *act* of asking is the side effect —
+    no separate HITL gate is layered on top.
+    """
+
+    question: str
+    options: tuple[str, ...]
+    response_future: "asyncio.Future[ClarifyResponse]"
+
+
+@dataclass(frozen=True, slots=True)
+class ClarifyResponse:
+    """Result of a :class:`ClarifyRequest`, supplied by the consumer.
+
+    ``selected_index`` is 1-based to match how the user sees options in
+    the prompt; ``selected_text`` is the literal option string. When the
+    user cancels (Ctrl-C / empty input), ``cancelled`` is ``True`` and
+    both index/text are ``None``.
+    """
+
+    selected_index: int | None
+    selected_text: str | None
+    cancelled: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ProcessStarted(JacEvent):
+    """A background process started running.
+
+    The renderer prints these as muted single-line notifications. Process
+    output is NOT streamed onto the bus (it would flood the renderer); Gru
+    pulls log lines via ``tail_process`` instead.
+    """
+
+    task_id: str
+    command: str
+    name: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ProcessExited(JacEvent):
+    """A background process exited.
+
+    Carries the exit code so the renderer can color the notification
+    (green ==0, yellow nonzero, red for negative — signals).
+    """
+
+    task_id: str
+    exit_code: int
+
+
+@dataclass(frozen=True, slots=True)
+class PlanReplaced(JacEvent):
+    """Gru replaced its current plan with a fresh step list.
+
+    The renderer redraws the checklist panel from scratch on this event.
+    """
+
+    steps: tuple[PlanStepView, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class PlanStepUpdated(JacEvent):
+    """Gru flipped one step's status. ``index`` is 1-based."""
+
+    index: int
+    status: PlanStepStatus
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
 class RunCompleted(JacEvent):
     """Terminal: ``agent.run()`` completed normally. Carries the final output."""
 
@@ -113,6 +205,11 @@ type JacEventT = (
     | ToolCallCompleted
     | ToolCallFailed
     | ApprovalRequest
+    | ClarifyRequest
+    | PlanReplaced
+    | PlanStepUpdated
+    | ProcessStarted
+    | ProcessExited
     | RunCompleted
     | RunFailed
 )
