@@ -2,5 +2,5 @@
 
 The CLI is a thin presenter. All runtime logic lives in capabilities; this
 package handles command parsing, the interactive input loop, and rendering.
-See ARCHITECTURE.md §7.
+See docs/architecture.md §7.
 """

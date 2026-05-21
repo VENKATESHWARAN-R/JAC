@@ -4,9 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-See `PROGRESS.md` for what's implemented, what's in flight, and what's queued. **Update it as work lands.**
+See `docs/progress.md` for what's implemented, what's in flight, and what's queued. **Update it as work lands.**
 
-For the *why*, read `IDEA.md`. For the *how*, read `ARCHITECTURE.md`. When the design is ambiguous, **`ARCHITECTURE.md` is the source of truth for *how* JAC is built**; **`IDEA.md` is the source of truth for *what it is and is not*.** If you deviate from either, update the doc in the same change.
+For the *why*, read `docs/idea.md`. For the *how*, read `docs/architecture.md`. When the design is ambiguous, **`docs/architecture.md` is the source of truth for *how* JAC is built**; **`docs/idea.md` is the source of truth for *what it is and is not*.** If you deviate from either, update the doc in the same change.
+
+All long-form design docs live under [`docs/`](docs/) and are published as a Zensical site (`just docs-serve`). `README.md`, `CLAUDE.md`, and `LICENSE` stay at the repo root.
 
 ## Stack
 
@@ -18,6 +20,11 @@ For the *why*, read `IDEA.md`. For the *how*, read `ARCHITECTURE.md`. When the d
 - **pydantic-settings[yaml]** for layered config.
 
 ## Commands
+
+Day-to-day commands are wrapped in a [`justfile`](justfile) — `just` to list
+recipes, `just check`, `just fix`, `just typecheck`, `just docs-serve`,
+`just docs-build`, `just run -- <args>` (passes through to `uv run --env-file
+.env jac`). The raw equivalents:
 
 ```bash
 uv sync                          # install / refresh dependencies
@@ -128,7 +135,7 @@ See `.env.template` for the canonical list of environment variables — keep it 
 
 ## Architecture — non-negotiables
 
-Structural rules every change must respect. Full rationale in `ARCHITECTURE.md`; this is the cheat sheet.
+Structural rules every change must respect. Full rationale in `docs/architecture.md`; this is the cheat sheet.
 
 ### Fail-first, no hardcoding
 
@@ -139,7 +146,7 @@ Structural rules every change must respect. Full rationale in `ARCHITECTURE.md`;
 
 ### Capabilities are the atom of the system
 
-Almost every cross-cutting concern is a Pydantic AI `Capability`, not a hand-rolled class. Tools, memory tiers, telemetry, the minion factory, sandboxing, even the CLI event bus — all capabilities. **If you find yourself writing a class that hooks into the agent lifecycle without being a Capability, you are probably wrong.** See ARCHITECTURE.md §2.
+Almost every cross-cutting concern is a Pydantic AI `Capability`, not a hand-rolled class. Tools, memory tiers, telemetry, the minion factory, sandboxing, even the CLI event bus — all capabilities. **If you find yourself writing a class that hooks into the agent lifecycle without being a Capability, you are probably wrong.** See docs/architecture.md §2.
 
 ### Hooks are the runtime event bus, not a logging detail
 
@@ -209,7 +216,7 @@ If a task seems to require any of these, stop and ask before scaffolding:
 - Agent-authored reusable skills
 - Richer onboarding (tier-based models, per-project setup) — v1 `jac init` does just provider + model
 
-The full roadmap is `ARCHITECTURE.md` §9; the live tracker is `PROGRESS.md`.
+The full roadmap is `docs/architecture.md` §9; the live tracker is `docs/progress.md`.
 
 ## Reference projects (read-only, for inspiration)
 
@@ -226,7 +233,7 @@ Cloned to `~/Projects/personal/JAC-research/` — peer to this repo, not inside 
 
 This project will outlive any single session. The design docs are how it survives long gaps.
 
-- When you make a structural decision, **update `ARCHITECTURE.md` in the same change** — preferably by extending the decisions table in §11.
-- When the vision or scope shifts, **update `IDEA.md`**.
-- When you start or finish a piece of work, **update `PROGRESS.md`**.
+- When you make a structural decision, **update `docs/architecture.md` in the same change** — preferably by extending the decisions table in §11.
+- When the vision or scope shifts, **update `docs/idea.md`**.
+- When you start or finish a piece of work, **update `docs/progress.md`**.
 - Don't accumulate undocumented architectural debt.

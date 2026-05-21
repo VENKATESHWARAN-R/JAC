@@ -6,7 +6,7 @@ active for a session. Required credentials are inferred from the model's
 provider prefix and resolved at startup by :mod:`jac.secrets`.
 
 Profile names must match ``[a-z0-9-]+`` so they're safe in shell args and
-file paths. See ARCHITECTURE.md §11 D13.
+file paths. See docs/architecture.md §11 D13.
 """
 
 from __future__ import annotations

@@ -15,7 +15,7 @@ no default; the tool forces the model to make the call. ``scope="project"``
 outside a git repo is a hard error (we don't silently scribble into a
 random CWD).
 
-Design decisions (ARCHITECTURE.md §11 D14):
+Design decisions (docs/architecture.md §11 D14):
 
 - **JAC-owned files, not ``AGENTS.md``.** We never mutate user-authored
   context files. ``memory.md`` is a separate file at both scopes.

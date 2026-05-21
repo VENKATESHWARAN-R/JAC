@@ -12,8 +12,8 @@ keys, your files, your context, no cloud relay.
 > + resume, multi-provider profile management, and a two-scope memory system
 > (`remember` / `forget` writing to `~/.jac/memory.md` or
 > `<repo>/.agents/memory.md` under HITL approval). The summarizer minion and
-> the wider minion factory are next. See [`PROGRESS.md`](PROGRESS.md) for the
-> current state.
+> the wider minion factory are next. See [`docs/progress.md`](docs/progress.md)
+> for the current state.
 
 ## What it does today
 
@@ -238,13 +238,16 @@ overrides keep working unchanged.
 
 The architecture is documented in detail:
 
-- **[`IDEA.md`](IDEA.md)** — why JAC exists, what it is and what it isn't.
-- **[`ARCHITECTURE.md`](ARCHITECTURE.md)** — system design with diagrams,
-  locked decisions, the phased roadmap.
+- **[`docs/idea.md`](docs/idea.md)** — why JAC exists, what it is and what it isn't.
+- **[`docs/architecture.md`](docs/architecture.md)** — system design with
+  diagrams, locked decisions, the phased roadmap.
 - **[`CLAUDE.md`](CLAUDE.md)** — guidance for Claude Code working in this
   repo, and a good developer reference for contributors.
-- **[`PROGRESS.md`](PROGRESS.md)** — current implementation state, phase by
-  phase.
+- **[`docs/progress.md`](docs/progress.md)** — current implementation state,
+  phase by phase.
+
+The same documents are also published as a static site (Zensical) — see
+[Documentation site](#documentation-site) below.
 
 ### Core ideas
 
@@ -274,8 +277,41 @@ The architecture is documented in detail:
   YOLO sandbox (Monty + `sandbox-exec` / `bwrap`), user-tier predict-calibrate
   memory.
 
-Full roadmap in [`ARCHITECTURE.md`](ARCHITECTURE.md) §9 and
-[`PROGRESS.md`](PROGRESS.md).
+Full roadmap in [`docs/architecture.md`](docs/architecture.md) §9 and
+[`docs/progress.md`](docs/progress.md).
+
+## Development
+
+Day-to-day commands are wrapped in a [`justfile`](justfile). Install
+[`just`](https://just.systems) (e.g. `brew install just`) and run:
+
+```bash
+just                 # list recipes
+just sync            # uv sync (mirror of `uv sync`)
+just run --help      # uv run --env-file .env jac --help — pass args after `run`
+just check           # ruff format + ruff lint + ty typecheck (no fixes)
+just fix             # ruff format + ruff lint --fix (no typecheck)
+just lint            # ruff check
+just lint-fix        # ruff check --fix
+just fmt             # ruff format --check
+just fmt-fix         # ruff format
+just typecheck       # ty check src/
+just docs-serve      # zensical serve (live-reload)
+just docs-build      # zensical build (writes ./site)
+```
+
+All recipes go through `uv run`, so they work without an activated venv.
+
+## Documentation site
+
+The Markdown under [`docs/`](docs/) is published with
+[Zensical](https://zensical.org/) (a modern static site generator by the
+Material for MkDocs team). Configuration lives in [`zensical.toml`](zensical.toml).
+
+```bash
+just docs-serve    # http://127.0.0.1:8000 with live reload
+just docs-build    # static output under ./site
+```
 
 ## Built on / inspired by
 

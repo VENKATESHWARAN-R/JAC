@@ -3,9 +3,9 @@
 > **Updated:** 2026-05-22 · keep this in sync as work lands.
 
 This file tracks **what is implemented**, **what is in flight**, and **what is queued**.
-For the *why* see `IDEA.md`. For the *how* see `ARCHITECTURE.md` and `CLAUDE.md`.
+For the *why* see `idea.md`. For the *how* see `architecture.md` and `CLAUDE.md`.
 
-Each phase block leads with **Goal** + **why/what/how** before the checklist. This is intentional — phases get revisited after long gaps and the rationale must survive without re-derivation. Architectural decisions live in `ARCHITECTURE.md §11`; this file is the *what*, but each phase here should hand you enough *why* that the *how* makes sense.
+Each phase block leads with **Goal** + **why/what/how** before the checklist. This is intentional — phases get revisited after long gaps and the rationale must survive without re-derivation. Architectural decisions live in `architecture.md §11`; this file is the *what*, but each phase here should hand you enough *why* that the *how* makes sense.
 
 ## Status summary
 
@@ -55,7 +55,7 @@ Each phase block leads with **Goal** + **why/what/how** before the checklist. Th
 - [x] Multi-command Typer app (`jac`, `jac init`)
 - [x] Settings made lazy via `get_settings()` so bootstrap can run first
 - [x] History file moved under `~/.jac/history` (was already there via prompt-toolkit; now path-resolved)
-- [x] Docs updated: CLAUDE.md, ARCHITECTURE.md §11 (D4, D10, D11), PROGRESS.md
+- [x] Docs updated: CLAUDE.md, architecture.md §11 (D4, D10, D11), progress.md
 
 ---
 
@@ -161,7 +161,7 @@ Each phase block leads with **Goal** + **why/what/how** before the checklist. Th
 - Every new tool carries `reason: str` and goes through `@jac_tool`.
 - Mutating tools are HITL-gated through the existing approval flow — no new approval channel.
 - New event types extend `JacEventT` in `jac.runtime.events` and the renderer learns to draw them; no other surface changes are needed.
-- Anything that needs a new architectural decision gets a D-number in `ARCHITECTURE.md §11` *in the same change*.
+- Anything that needs a new architectural decision gets a D-number in `architecture.md §11` *in the same change*.
 - No tool may import another tool's capability — each capability is self-contained.
 
 ### Phase 1.6.a — `PlanCapability` (plan + update_plan) ✅
@@ -186,7 +186,7 @@ Each phase block leads with **Goal** + **why/what/how** before the checklist. Th
 - [x] CLI renderer keeps a copy of the current plan and re-draws a Rich panel (○ pending / ◐ in_progress / ● completed) on every plan event
 - [x] `gru_system.md` updated with "When to call `plan`" discipline + tool listings reordered
 - [x] Wired into the REPL alongside hooks + approval; not added to `_default_tool_capabilities` so headless callers don't accidentally pick up a no-bus instance
-- [x] ARCHITECTURE.md §11 D15 recorded
+- [x] architecture.md §11 D15 recorded
 
 ### Phase 1.6.b — `ProcessCapability` (background commands) ✅
 
@@ -215,7 +215,7 @@ Each phase block leads with **Goal** + **why/what/how** before the checklist. Th
 - [x] `ProcessStarted` / `ProcessExited` added to `jac.runtime.events`; `JacEventT` union extended
 - [x] CLI renderer prints muted ▶/■ lines with exit-code coloring
 - [x] `gru_system.md` updated with the `run_shell` vs `start_process` discipline + tool listings
-- [x] ARCHITECTURE.md §11 D16 recorded
+- [x] architecture.md §11 D16 recorded
 
 ### Phase 1.6.c — Filesystem & grep upgrades ✅
 
@@ -256,7 +256,7 @@ Each phase block leads with **Goal** + **why/what/how** before the checklist. Th
 - [x] Validation paths: empty query / out-of-range max_results / empty URL rejected with actionable messages
 - [x] Live smoke test: search for "pydantic ai documentation" returns three real hits, fetch_url on the top result returns ~50k chars of Markdown
 - [x] `gru_system.md` updated with `web_search` / `fetch_url` tool listings
-- [x] ARCHITECTURE.md §11 D18 recorded
+- [x] architecture.md §11 D18 recorded
 
 ### Phase 1.6.e — `clarify` tool (structured multi-choice prompt) ✅
 
@@ -278,7 +278,7 @@ Each phase block leads with **Goal** + **why/what/how** before the checklist. Th
 - [x] Renderer learned `_prompt_clarify` parallel to `_prompt_approval` (pause spinner, Rich-numbered panel, `IntPrompt.ask` on thread, Ctrl-C → cancelled response)
 - [x] Wired into the REPL alongside hooks + approval + plan + process
 - [x] `gru_system.md` updated with "When to call `clarify`" discipline
-- [x] ARCHITECTURE.md §11 D17 recorded
+- [x] architecture.md §11 D17 recorded
 
 ---
 
@@ -322,4 +322,4 @@ The "first minion." Built on top of Phase 3 infra so we don't paint ourselves in
 - When you start a task, change `- [ ]` to `- [~]` (in flight).
 - When you finish, `- [x]` and a one-line note if anything deviated from the plan.
 - When a new task surfaces, add it to the relevant phase or "v2" — don't let it float.
-- Architectural decisions go in `ARCHITECTURE.md §11`, not here. This file is *what*, not *why*.
+- Architectural decisions go in `architecture.md §11`, not here. This file is *what*, not *why*.

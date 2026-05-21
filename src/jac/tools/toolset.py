@@ -3,7 +3,7 @@
 :func:`jac_function_toolset` is the **only** sanctioned way to assemble a
 ``FunctionToolset`` of JAC tools. It asserts that every function went through
 :func:`jac.tools.decorator.jac_tool` — catching tools registered via other
-paths at construction time, not runtime. See ARCHITECTURE.md §6a.
+paths at construction time, not runtime. See docs/architecture.md §6a.
 """
 
 from __future__ import annotations
@@ -30,6 +30,6 @@ def jac_function_toolset(*funcs: Callable[..., Any]) -> FunctionToolset:
         if not is_jac_tool(f):
             raise TypeError(
                 f"{f.__qualname__} is not decorated with @jac_tool. "
-                "Every JAC tool must justify its call. See ARCHITECTURE.md §6a."
+                "Every JAC tool must justify its call. See docs/architecture.md §6a."
             )
     return FunctionToolset(tools=list(funcs))

@@ -11,7 +11,7 @@ access to the open web:
 
 Why we wrap the upstream tools instead of using them directly: every
 JAC tool must accept ``reason: str`` as its first parameter
-(ARCHITECTURE.md §6a). ``duckduckgo_search_tool()`` and ``web_fetch_tool()``
+(docs/architecture.md §6a). ``duckduckgo_search_tool()`` and ``web_fetch_tool()``
 ship as bare ``Tool`` objects without that contract, so we re-implement
 the small surface and delegate to the upstream pieces for the heavy
 lifting.

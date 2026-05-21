@@ -2,7 +2,7 @@
 
 Every tool exposed to Gru or a minion **must** be decorated with
 :func:`jac.tools.decorator.jac_tool`, which enforces the ``reason: str``
-first-argument requirement. See ARCHITECTURE.md §6a.
+first-argument requirement. See docs/architecture.md §6a.
 
 Phase 1 step 1 ships only the decorator; concrete tools (filesystem, shell,
 search) arrive in subsequent steps and live as sibling modules here.

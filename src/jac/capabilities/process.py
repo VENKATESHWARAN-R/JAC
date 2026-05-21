@@ -27,7 +27,7 @@ Design notes:
 - **Bus is optional** (mirrors plan capability). Pass one to get the
   ``ProcessStarted`` / ``ProcessExited`` notifications on the renderer.
 
-Architecture decision: ARCHITECTURE.md §11 D16.
+Architecture decision: docs/architecture.md §11 D16.
 """
 
 from __future__ import annotations

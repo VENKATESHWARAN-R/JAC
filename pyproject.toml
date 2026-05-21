@@ -28,5 +28,47 @@ packages = ["src/jac"]
 
 [dependency-groups]
 dev = [
+    "ruff>=0.8",
+    "ty>=0.0.1a8",
     "types-pyyaml>=6.0.12.20260518",
+    "zensical>=0.0.43",
 ]
+
+# ---------------------------------------------------------------------------
+# ruff — linter + formatter
+# ---------------------------------------------------------------------------
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+extend-exclude = [".agents", "site"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+    "SIM", # flake8-simplify
+    "RUF", # ruff-specific
+]
+ignore = [
+    "E501", # line length handled by formatter
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["B"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+# ---------------------------------------------------------------------------
+# ty — Astral's type checker
+# ---------------------------------------------------------------------------
+[tool.ty.src]
+root = "./src"
+
+[tool.ty.environment]
+python-version = "3.13"

@@ -2,7 +2,7 @@
 
 Installing this capability is how the CLI (or any other surface) learns
 what the agent is doing — model requests starting/finishing, tool calls
-firing, errors. See ARCHITECTURE.md §7.
+firing, errors. See docs/architecture.md §7.
 
 Phase 1 step 1 wires model-request and tool-call hooks. Streaming text
 deltas and approval surfacing land alongside tools in subsequent steps.
