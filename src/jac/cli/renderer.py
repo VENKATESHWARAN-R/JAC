@@ -74,6 +74,7 @@ _THINKING_LABELS: tuple[str, ...] = (
 )
 
 _ARG_VALUE_TRUNCATE_AT = 300
+_TOOL_ARG_INLINE_TRUNCATE_AT = 60
 
 _PLAN_GLYPH: dict[PlanStepStatus, str] = {
     "pending": "[dim]○[/dim]",
@@ -84,6 +85,24 @@ _PLAN_GLYPH: dict[PlanStepStatus, str] = {
 
 def _thinking_label() -> str:
     return f"[dim]{random.choice(_THINKING_LABELS)}[/dim]"
+
+
+def _summarize_tool_args(args: dict[str, Any]) -> str:
+    """One-line summary of tool args for the persistent scrollback log.
+
+    Skips ``reason`` (already shown separately), takes the first remaining
+    arg as the most-meaningful one, and truncates aggressively. Full args
+    still appear in the approval panel for gated tools.
+    """
+    items = [(k, v) for k, v in args.items() if k != "reason"]
+    if not items:
+        return ""
+    key, value = items[0]
+    text = str(value).replace("\n", " ")
+    if len(text) > _TOOL_ARG_INLINE_TRUNCATE_AT:
+        text = text[: _TOOL_ARG_INLINE_TRUNCATE_AT - 1] + "…"
+    suffix = f" · +{len(items) - 1} more" if len(items) > 1 else ""
+    return f"{key}={text}{suffix}"
 
 
 def _render_plan(steps: tuple[PlanStepView, ...]) -> Panel:
@@ -100,7 +119,7 @@ def _render_plan(steps: tuple[PlanStepView, ...]) -> Panel:
                 text = f"[bold]{text}[/bold]"
             lines.append(f"{glyph} {step.index}. {text}")
         body = "\n".join(lines)
-    return Panel(body, title="plan", border_style="cyan", padding=(0, 1))
+    return Panel(body, title="plan", border_style="yellow", padding=(0, 1))
 
 
 class CliRenderer:
@@ -150,12 +169,23 @@ class CliRenderer:
             if event.reason:
                 label = f"{label} — {event.reason}"
             status.update(f"[dim]→ {label}[/dim]")
+            # Also leave a persistent trace in scrollback. The status line is
+            # transient; this line is what the user sees on scroll-back.
+            # highlight=False — args often contain paths/numbers we don't want
+            # Rich's auto-highlighter to rainbow-paint.
+            arg_summary = _summarize_tool_args(event.args)
+            tail = f" [dim]{arg_summary}[/dim]" if arg_summary else ""
+            self.console.print(
+                f"[yellow]→[/yellow] [bold]{event.tool_name}[/bold]{tail}",
+                highlight=False,
+            )
         elif isinstance(event, ToolCallCompleted):
             status.update(_thinking_label())
         elif isinstance(event, ToolCallFailed):
             # Print errors inline; the agent loop may recover.
             self.console.print(
-                f"[yellow]tool {event.tool_name} failed:[/yellow] {event.error}"
+                f"[red]✗[/red] [bold]{event.tool_name}[/bold] [dim]failed:[/dim] {event.error}",
+                highlight=False,
             )
         elif isinstance(event, PlanReplaced):
             self._plan = event.steps
@@ -177,14 +207,11 @@ class CliRenderer:
         elif isinstance(event, ProcessStarted):
             label = f" ({event.name})" if event.name else ""
             self.console.print(
-                f"[cyan]▶ process[/cyan] {event.task_id}{label}: "
-                f"[dim]{event.command}[/dim]"
+                f"[yellow]▶ process[/yellow] {event.task_id}{label}: [dim]{event.command}[/dim]"
             )
         elif isinstance(event, ProcessExited):
             color = (
-                "green"
-                if event.exit_code == 0
-                else ("red" if event.exit_code < 0 else "yellow")
+                "green" if event.exit_code == 0 else ("red" if event.exit_code < 0 else "yellow")
             )
             self.console.print(
                 f"[{color}]■ process[/{color}] {event.task_id} "
@@ -199,11 +226,9 @@ class CliRenderer:
         """Render the clarify panel and ask the user to pick an option."""
         body: list[str] = [event.question, ""]
         for i, opt in enumerate(event.options, start=1):
-            body.append(f"  [bold cyan]{i}[/bold cyan]. {opt}")
+            body.append(f"  [bold yellow]{i}[/bold yellow]. {opt}")
         self.console.print()
-        self.console.print(
-            Panel("\n".join(body), title="clarify", border_style="cyan")
-        )
+        self.console.print(Panel("\n".join(body), title="clarify", border_style="yellow"))
         choices = [str(i) for i in range(1, len(event.options) + 1)]
         try:
             picked = await asyncio.to_thread(
@@ -215,9 +240,7 @@ class CliRenderer:
             )
         except (KeyboardInterrupt, EOFError):
             self.console.print("[dim]cancelled[/dim]")
-            return ClarifyResponse(
-                selected_index=None, selected_text=None, cancelled=True
-            )
+            return ClarifyResponse(selected_index=None, selected_text=None, cancelled=True)
         index = int(picked)
         return ClarifyResponse(
             selected_index=index,
@@ -239,9 +262,7 @@ class CliRenderer:
             body.append(f"[dim]{key}:[/dim] {value_str}")
 
         self.console.print()
-        self.console.print(
-            Panel("\n".join(body), title="approval needed", border_style="yellow")
-        )
+        self.console.print(Panel("\n".join(body), title="approval needed", border_style="yellow"))
         approved: bool = await asyncio.to_thread(
             Confirm.ask, "Approve?", default=False, console=self.console
         )
@@ -250,6 +271,10 @@ class CliRenderer:
     def print_final(self) -> None:
         """Render the final turn output (or error) after :meth:`consume` returns."""
         if self.final_output is not None:
+            self.console.print()
+            self.console.print("[bold yellow]✦ Gru[/bold yellow]")
             self.console.print(Markdown(self.final_output))
+            self.console.print()
         if self.error is not None:
             self.console.print(f"[red]error:[/red] {self.error}")
+            self.console.print()

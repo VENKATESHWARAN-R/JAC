@@ -28,6 +28,6 @@ def setup_observability() -> None:
         # Local-first: the user owns their machine and their logs. Don't
         # silently redact things they might want to see.
         scrubbing=False,
-        # console=logfire.ConsoleOptions(include_timestamps=False, span_style="simple")
+        console=False
     )
     logfire.instrument_pydantic_ai()

@@ -22,10 +22,10 @@ import asyncio
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
+from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import FileHistory
 from pydantic_ai import Agent, AgentRunResult
 from rich.console import Console
-from rich.panel import Panel
 
 from jac import __version__
 from jac.capabilities.approval import make_approval_handler
@@ -45,6 +45,16 @@ from jac.workspace import paths
 
 _EXIT_WORDS = {"exit", "quit", ":q", ":quit"}
 
+# Compact 5-line block-letter "JAC". Kept hard-coded so we don't take a
+# runtime dep on figlet; backslashes are literal — raw triple-quoted string.
+_BANNER = r"""     _    _    ____
+    | |  / \  / ___|
+ _  | | / _ \| |
+| |_| |/ ___ \ |___
+ \___//_/   \_\____|"""
+
+_BANNER_MIN_WIDTH = 30
+
 console = Console()
 
 
@@ -58,24 +68,36 @@ def _make_prompt_session() -> PromptSession[str]:
 
 
 def _greet(*, model_id: str, session: Session, resumed: bool) -> None:
-    lines = [
-        f"[bold cyan]JAC[/bold cyan] [dim]v{__version__}[/dim]",
-        f"[dim]model:[/dim] {model_id}",
-    ]
+    # TTY + width gate: don't dump a banner into pipes / CI / cramped panes.
+    # highlight=False disables Rich's auto-highlighter so the model id and
+    # session timestamp aren't rainbow-painted as if they were URLs/numbers.
+    show_banner = console.is_terminal and console.width >= _BANNER_MIN_WIDTH
+    if show_banner:
+        console.print(f"[bold yellow]{_BANNER}[/bold yellow]", highlight=False)
+        console.print(f"[dim]v{__version__}[/dim]", highlight=False)
+        console.print()
+    else:
+        console.print(
+            f"[bold yellow]JAC[/bold yellow] [dim]v{__version__}[/dim]",
+            highlight=False,
+        )
+
+    console.print(f"[dim]model:[/dim]   {model_id}", highlight=False)
     if resumed:
-        lines.append(
+        console.print(
             f"[dim]session:[/dim] {session.session_id} "
-            f"[yellow](resumed, {len(session.message_history)} prior messages)[/yellow]"
+            f"[yellow](resumed, {len(session.message_history)} prior messages)[/yellow]",
+            highlight=False,
         )
     else:
-        lines.append(f"[dim]session:[/dim] {session.session_id} [green](new)[/green]")
-    lines.append("[dim]type 'exit' or Ctrl-D to quit[/dim]")
-    console.print(Panel.fit("\n".join(lines), border_style="cyan"))
+        console.print(
+            f"[dim]session:[/dim] {session.session_id} [green](new)[/green]",
+            highlight=False,
+        )
+    console.print("[dim]type 'exit' or Ctrl-D to quit[/dim]", highlight=False)
 
 
-async def _run_turn(
-    gru: Agent, bus: EventBus, text: str, message_history: list
-) -> list:
+async def _run_turn(gru: Agent, bus: EventBus, text: str, message_history: list) -> list:
     """Run one agent turn through the bus. Returns the updated message history."""
     renderer = CliRenderer(console)
 
@@ -154,10 +176,11 @@ async def _repl_loop(
     _greet(model_id=model_id, session=session, resumed=resumed)
 
     message_history: list = list(session.message_history)
+    user_prompt = HTML("<ansiyellow><b>» </b></ansiyellow>")
     try:
         while True:
             try:
-                text = await prompt_session.prompt_async("» ")
+                text = await prompt_session.prompt_async(user_prompt)
             except (EOFError, KeyboardInterrupt):
                 console.print("\n[dim]bye[/dim]")
                 return
