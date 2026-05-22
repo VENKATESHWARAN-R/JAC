@@ -20,7 +20,7 @@ Each phase block leads with **Goal** + **why/what/how** before the checklist. Th
 | Phase 2a — `remember` tool | ✅ Complete | HITL-gated `remember`, JAC-owned `.agents/memory.md`, fixed category enum, auto-injected into Gru's context |
 | Phase 2a.1 — User scope + `forget` | ✅ Complete | `~/.jac/memory.md`, scope-aware `remember`/`forget`, session-id audit trail, soft size warning, fail-first on no-repo |
 | Phase 1.6 — Tool surface polish | ✅ Complete | plan, background processes, fs/grep upgrades, web search, clarify (all landed 2026-05-22 after a tool retrospective) |
-| **Phase 1.7 — Coworker experience** | ⏳ **In flight** | umbrella for compaction, status bar, slash commands, plan mode, budgets, feedback channels — see sub-phases below. **Complete:** 1.7.c (D22 schema + slash scaffolding + `/model` + `/profile` + `jac profiles edit`), 1.7.a (token-aware compaction with user-configurable 200k default budget). **Next:** 1.7.b status bar. |
+| **Phase 1.7 — Coworker experience** | ⏳ **In flight** | umbrella for compaction, status bar, slash commands, plan mode, budgets, feedback channels — see sub-phases below. **Complete:** 1.7.c (D22 schema + slash scaffolding + `/model` + `/profile` + `jac profiles edit`), 1.7.a (token-aware compaction, 200k default budget), 1.7.b (bottom-toolbar status bar). **Next:** 1.7.d approval/clarify feedback, then 1.7.e Plan Mode. |
 | Phase 2b — Summarizer minion | ⛔ Superseded | rolled into Phase 1.7.a (token-aware compaction). No separate minion. |
 | Phase 3 — Skills (D21) | ⏸ Queued | community-format skill loader + inline mode (replaces old bespoke minion factory plan) |
 | Phase 4 — A2A (D24) | ⏸ Queued | inbound server + outbound client — moved up from v2 |
@@ -325,28 +325,26 @@ Each phase block leads with **Goal** + **why/what/how** before the checklist. Th
 
 **Refinement vs the original D20:** the budget is *user-configurable*, not "the active model's context window". A 1M model with a 200k budget compacts at 140k (70% of budget), not 700k — matching the actual useful context envelope rather than the marketing one. Users on smaller / cheaper models can lower it; users who trust their model with more can raise it.
 
-### Phase 1.7.b — Status bar (depends on D22 schema) 🚧
+### Phase 1.7.b — Status bar ✅
 
-**Why:** the user has no persistent visibility into what model / tier / profile / session / branch / context usage is active. Every modern CLI agent shows this. It's the cheapest meaningful UX win.
+**Why:** the user had no persistent visibility into what model / tier / profile / session / branch / context usage is active. Every modern CLI agent shows this. Cheapest meaningful UX win.
 
-**What:** single-line `prompt_toolkit` `bottom_toolbar` that always shows:
+**What:** single-line `prompt_toolkit` `bottom_toolbar`, always visible:
 
 ```
-profile:claude  tier:medium (sonnet-4-5)  branch:main*  ctx:34%/200k  session:20260522-1430
+ profile:claude  tier:medium (claude-sonnet-4-5)  branch:main*  ctx:34%/200k  session:20260523T20-00-00
 ```
 
-**How:**
-- New `jac.cli.statusbar` module — exposes a callable returning the toolbar string
-- Branch lookup is `git symbolic-ref --short HEAD` debounced to once per 5 seconds (don't shell on every keystroke); `*` if working tree is dirty
-- Context % comes from cumulative `RunUsage.input_tokens` / active model window
-- Tier comes from `jac.profiles.active_profile().active_tier`; model short name is the part after the last `:` in the tier's default model
-- Single-line by design — Rich `Live` multi-region was considered and rejected (more code, fights with approval/plan panels for vertical space)
+**Landed (2026-05-23):**
+- [x] `jac.cli.statusbar` — `StatusState` dataclass (mutable bag the REPL keeps fresh), `_BranchCache` (5s-debounced git shellout, fails-quiet on no-git), `tier_for_model` / `short_model` pure helpers, `format_toolbar(state)` returning a prompt-toolkit `HTML`.
+- [x] Ctx % is measured against `compaction.max_context_tokens` (the user-configurable budget from 1.7.a) and color-flips through the same ladder — neutral / yellow at warn_pct / orange at auto_compact_pct / red at refuse_pct. Single source of truth.
+- [x] Wired into `_make_prompt_session` via `bottom_toolbar=lambda: format_toolbar(state)`. State updates on every turn (`message_history`), `/clear` + `/resume` (`session_id`), and `/model` + `/profile` rebuilds (`model_id`, `profile_name`, `profile`).
+- [x] Branch shown only when we're in a git repo; `*` suffix when the working tree is dirty.
+- [x] When the running model isn't in any tier of the active profile (ad-hoc `/model PROVIDER:ID`), the segment becomes `model:short-name` instead of `tier:NAME (...)` so what's running is always visible at a glance.
+- [x] Profile/tier fields hidden entirely when the REPL is started with `--model` (no profile).
+- [x] 20 tests: helper coverage (tier lookup, short-model splits), branch-cache debounce + no-git + dirty, ctx-color thresholds, toolbar rendering across profile/ad-hoc/no-git/dirty branches.
 
-- [ ] `jac.cli.statusbar.format_toolbar()` pure function
-- [ ] Debounced git branch lookup
-- [ ] Wire `bottom_toolbar=` on the prompt-toolkit session in `repl.py`
-- [ ] Re-render on `CompactionWarning` (yellow), `BudgetWarning` (yellow), `BudgetHardStop` (red)
-- [ ] Renderer tests cover: no-git-repo, dirty tree, missing token usage, missing profile
+**Deferred:** `BudgetWarning` / `BudgetHardStop` re-render hooks live with their owning phase (1.7.f token budgets) — those events don't exist yet. The ctx-color path already covers what we can compute today.
 
 ### Phase 1.7.c — Slash commands + tiered profile schema (D22) 🚧
 

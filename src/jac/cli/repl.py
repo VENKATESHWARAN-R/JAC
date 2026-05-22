@@ -45,6 +45,7 @@ from jac.cli.slash import (
     command_names,
     dispatch,
 )
+from jac.cli.statusbar import StatusState, format_toolbar
 from jac.config import get_settings
 from jac.errors import JacConfigError
 from jac.profiles import Profile, get_profile
@@ -77,7 +78,7 @@ _BANNER_MIN_WIDTH = 30
 console = Console()
 
 
-def _make_prompt_session() -> PromptSession[str]:
+def _make_prompt_session(status: StatusState) -> PromptSession[str]:
     paths.USER_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
     # WordCompleter offers slash-command names when the user types `/`.
     # Non-slash input falls through unchanged — no completer matches.
@@ -90,6 +91,7 @@ def _make_prompt_session() -> PromptSession[str]:
         history=FileHistory(str(paths.USER_HISTORY_FILE)),
         auto_suggest=AutoSuggestFromHistory(),
         completer=completer,
+        bottom_toolbar=lambda: format_toolbar(status),
         multiline=False,
     )
 
@@ -212,7 +214,20 @@ async def _repl_loop(
             return
 
     model_id = model_override or get_settings().model or "unknown"
-    prompt_session = _make_prompt_session()
+    message_history: list = list(session.message_history)
+
+    # Status bar — the toolbar callable reads from this on every render.
+    # We keep the same reference across the session and mutate fields in
+    # place; prompt-toolkit doesn't need a redraw kick.
+    status = StatusState(
+        model_id=model_id,
+        session_id=session.session_id,
+        profile_name=profile_name,
+        profile=active_profile,
+        message_history=message_history,
+    )
+
+    prompt_session = _make_prompt_session(status)
     _greet(model_id=model_id, session=session, resumed=resumed)
 
     persisted_capabilities = [
@@ -222,8 +237,6 @@ async def _repl_loop(
         process_capability,
         clarify_capability,
     ]
-
-    message_history: list = list(session.message_history)
     user_prompt = HTML("<ansiyellow><b>» </b></ansiyellow>")
     try:
         while True:
@@ -262,6 +275,8 @@ async def _repl_loop(
                     return
                 if isinstance(result, SwitchSession):
                     session, message_history = _switch_session(session, result.session)
+                    status.session_id = session.session_id
+                    status.message_history = message_history
                 elif isinstance(result, RebuildGru):
                     rebuilt = _rebuild_gru(
                         new_model_id=result.new_model_id,
@@ -273,12 +288,16 @@ async def _repl_loop(
                     )
                     if rebuilt is not None:
                         gru, model_id, profile_name, active_profile = rebuilt
+                        status.model_id = model_id
+                        status.profile_name = profile_name
+                        status.profile = active_profile
                 continue
 
             if await _refuse_if_over_budget(bus, message_history, text):
                 continue
 
             message_history = await _run_turn(gru, bus, text, message_history)
+            status.message_history = message_history
             # Persist after every completed turn so kills mid-turn don't lose prior turns.
             try:
                 session.save(message_history)
