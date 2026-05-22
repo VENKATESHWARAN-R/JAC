@@ -9,3 +9,6 @@
 #
 # Add non-required tunables here as they emerge. Keep this file small;
 # anything that lives here is something every user inherits by default.
+
+secrets:
+  backend: keyring

@@ -55,8 +55,12 @@ fmt-fix:
 typecheck:
     uv run ty check src
 
+# pytest
+test:
+    uv run pytest tests/ -q
+
 # aggregate: format check + lint + typecheck (CI-style, no writes)
-check: fmt lint typecheck
+check: fmt lint typecheck test
 
 # aggregate: format + lint --fix (typecheck still read-only)
 fix: fmt-fix lint-fix typecheck
@@ -91,4 +95,4 @@ version:
 
 # remove caches and build artefacts
 clean: docs-clean
-    rm -rf .ruff_cache .pytest_cache build dist
+    rm -rf .ruff_cache .pytest_cache build dist .cache

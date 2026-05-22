@@ -7,7 +7,7 @@ Precedence (highest to lowest):
 3. ``.env`` file in CWD
 4. Project config: ``<project_root>/.agents/config.yaml``
 5. User config: ``~/.jac/config.yaml``
-6. Package defaults: ``<package>/defaults.yaml``
+6. Package defaults: ``<package>/data/defaults.yaml``
 7. file-secret-settings (pydantic-settings built-in)
 
 Missing YAML files are tolerated (we substitute an empty source). Missing

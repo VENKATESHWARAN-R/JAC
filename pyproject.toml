@@ -28,6 +28,7 @@ packages = ["src/jac"]
 
 [dependency-groups]
 dev = [
+    "pytest>=8.0",
     "ruff>=0.8",
     "ty>=0.0.1a8",
     "types-pyyaml>=6.0.12.20260518",

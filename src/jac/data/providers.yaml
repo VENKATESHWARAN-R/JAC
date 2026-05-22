@@ -1,0 +1,94 @@
+# JAC provider catalog — package defaults.
+#
+# User overrides: ~/.jac/providers.yaml (deep-merges over this file).
+# See docs/architecture.md §11 D19.
+#
+# Do NOT put a default active model here — runtime model selection stays in
+# profiles (~/.jac/config.yaml) and remains fail-first.
+
+version: 1
+
+init:
+  default_wizard_provider: anthropic
+  default_secrets_backend: keyring
+  env_defaults:
+    OLLAMA_BASE_URL: http://localhost:11434/v1
+
+providers:
+  anthropic:
+    prefix: anthropic
+    required_env:
+      - ANTHROPIC_API_KEY
+    wizard:
+      label: Anthropic
+      suggested_model: claude-sonnet-4-6
+      model_format: "anthropic:{model}"
+
+  openai:
+    prefix: openai
+    required_env:
+      - OPENAI_API_KEY
+    wizard:
+      label: OpenAI
+      suggested_model: gpt-5
+      model_format: "openai:{model}"
+
+  google:
+    prefix: google-gla
+    required_env:
+      - GEMINI_API_KEY
+    wizard:
+      label: Google (Gemini API)
+      suggested_model: gemini-3.5-flash
+      model_format: "google-gla:{model}"
+
+  ollama:
+    prefix: ollama
+    required_env: []
+    profile_env_keys:
+      - OLLAMA_BASE_URL
+    wizard:
+      label: Ollama (local)
+      suggested_model: gemma4:31b-cloud
+      model_format: "ollama:{model}"
+
+  openrouter:
+    prefix: openrouter
+    required_env:
+      - OPENROUTER_API_KEY
+    wizard:
+      label: OpenRouter
+      suggested_model: anthropic/claude-sonnet-4-6
+      model_format: "openrouter:{model}"
+
+  mistral:
+    prefix: mistral
+    required_env:
+      - MISTRAL_API_KEY
+    wizard:
+      label: Mistral
+      suggested_model: mistral-large-latest
+      model_format: "mistral:{model}"
+
+  pydantic-ai-gateway:
+    prefix: gateway
+    required_env:
+      - PYDANTIC_AI_GATEWAY_API_KEY
+    wizard:
+      label: Pydantic AI Gateway
+      suggested_model: openai:gpt-5
+      model_format: "gateway/{model}"
+
+  google-vertex:
+    prefix: google-vertex
+    required_env: []
+
+  groq:
+    prefix: groq
+    required_env:
+      - GROQ_API_KEY
+
+  cohere:
+    prefix: cohere
+    required_env:
+      - COHERE_API_KEY

@@ -10,7 +10,7 @@ Layout:
 - Project workspace: ``<project_root>/.agents/`` (community-neutral)
 - Project context: ``<project_root>/AGENTS.md`` (auto-loaded)
 - User context: ``~/.jac/AGENTS.md`` (auto-loaded)
-- Package defaults: shipped under ``jac/`` in the installed package
+- Package data: shipped under ``jac/data/`` in the installed package (defaults + provider catalog)
 """
 
 from __future__ import annotations
@@ -23,6 +23,8 @@ from pathlib import Path
 
 USER_WORKSPACE: Path = Path.home() / ".jac"
 USER_CONFIG_FILE: Path = USER_WORKSPACE / "config.yaml"
+USER_PROVIDERS_FILE: Path = USER_WORKSPACE / "providers.yaml"
+USER_PROVIDERS_EXAMPLE_FILE: Path = USER_WORKSPACE / "providers.yaml.example"
 USER_CONTEXT_FILE: Path = USER_WORKSPACE / "AGENTS.md"
 USER_MEMORY_FILE: Path = USER_WORKSPACE / "memory.md"
 USER_PROMPTS_DIR: Path = USER_WORKSPACE / "prompts"
@@ -112,7 +114,7 @@ def resolve_under_project(path: str | Path) -> Path:
     return find_project_root() / p
 
 
-# --- Package defaults ---------------------------------------------
+# --- Package data (shipped defaults) ------------------------------
 
 
 @cache
@@ -121,8 +123,17 @@ def package_root() -> Path:
     return Path(str(files("jac")))
 
 
+def package_data_dir() -> Path:
+    """Shipped YAML defaults and provider catalog (not Python modules)."""
+    return package_root() / "data"
+
+
 def package_defaults_file() -> Path:
-    return package_root() / "defaults.yaml"
+    return package_data_dir() / "defaults.yaml"
+
+
+def package_providers_file() -> Path:
+    return package_data_dir() / "providers.yaml"
 
 
 def package_prompts_dir() -> Path:

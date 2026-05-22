@@ -45,7 +45,7 @@ Each phase block leads with **Goal** + **why/what/how** before the checklist. Th
 - [x] Workspace layout: user at `~/.jac/`, project at `<repo>/.agents/`, project context at `<repo>/AGENTS.md` (community convention)
 - [x] Format-convention table locked: YAML for human-edited structured data, JSON for state, Markdown for prose, dotenv for secrets
 - [x] Layered settings loader: package defaults → user YAML → project YAML → env → CLI (`jac.workspace.config_loader`)
-- [x] Shipped `src/jac/defaults.yaml` (intentionally empty — fail-first means no required defaults)
+- [x] Shipped `src/jac/data/defaults.yaml` (non-required tunables only; fail-first for model/keys)
 - [x] `JacConfigError` with actionable messages everywhere a required value is missing
 - [x] Layered prompt loader (`jac.workspace.prompts`) — project → user → package, first hit wins
 - [x] AGENTS.md auto-loader (`jac.workspace.context`) — concatenates user + project context into Gru's instructions
@@ -105,6 +105,8 @@ Each phase block leads with **Goal** + **why/what/how** before the checklist. Th
 - [x] `Profile` model + `~/.jac/config.yaml` schema (`profiles:`, `default_profile:`, `secrets.backend:`) (`jac.profiles`)
 - [x] Strict profile-name validation: `[a-z0-9-]+`, no leading/trailing hyphen
 - [x] Provider → required env vars map; auto-inferred from `model:` prefix, overridable
+- [x] Provider catalog externalized: `src/jac/data/providers.yaml` + optional `~/.jac/providers.yaml` overlay (`jac.providers.registry`); powers init wizard + credential inference
+- [x] `defaults.yaml` ships `secrets.backend: keyring`; bootstrap writes `providers.yaml.example`
 - [x] Three secrets backends: `keyring` (OS-native, default), `dotenv` (`~/.jac/.env`, chmod 600), `env-only` (read-through, no storage) (`jac.secrets`)
 - [x] Resolution layering: process env > backend > fail-first with actionable message
 - [x] `apply_profile_env(name, profile)` injects `JAC_MODEL` + non-secret env + resolved secrets into `os.environ` before REPL starts
@@ -301,7 +303,8 @@ The "first minion." Built on top of Phase 3 infra so we don't paint ourselves in
 
 - [ ] CodeMode integration (`pydantic-ai-harness`)
 - [ ] Stuck-loop detection
-- [ ] Test suite (pytest)
+- [x] Provider registry tests (`tests/test_provider_registry.py`, `just test`)
+- [ ] Broader test suite (pytest)
 - [ ] Ruff / mypy config
 - [ ] User docs
 

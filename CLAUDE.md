@@ -59,6 +59,7 @@ uv run python -m jac             # equivalent invocation
 | --- | --- | --- |
 | Secrets (API keys, tokens) | `.env`, env vars | **dotenv** |
 | App config | `~/.jac/config.yaml`, `<repo>/.agents/config.yaml` | **YAML** |
+| Provider catalog | `src/jac/data/providers.yaml` (package), `~/.jac/providers.yaml` (user overlay) | **YAML** |
 | Agent / minion specs | `~/.jac/minions/templates/*.yaml`, `<repo>/.agents/minions/templates/*.yaml` | **YAML** |
 | System prompts | `~/.jac/prompts/*.md`, `<repo>/.agents/prompts/*.md` | **Markdown** |
 | Project context (auto-loaded) | `<repo>/AGENTS.md` (at repo root, community convention) | **Markdown** |
@@ -78,13 +79,13 @@ uv run python -m jac             # equivalent invocation
 3. `.env` file in CWD
 4. Project config (`<repo>/.agents/config.yaml`)
 5. User config (`~/.jac/config.yaml`)
-6. Package defaults (`src/jac/defaults.yaml` — *non-required* values only)
+6. Package defaults (`src/jac/data/defaults.yaml` — *non-required* values only)
 
 Implementation lives in `jac.workspace.config_loader`. Missing required values raise `JacConfigError` at point of use.
 
 ### Profiles & secrets
 
-User-facing config is organized into **profiles**. Each profile binds a model + optional non-secret env (e.g. `OLLAMA_BASE_URL`) and inherits required secret-key names from the model's provider prefix. Schema:
+User-facing config is organized into **profiles**. Each profile binds a model + optional non-secret env (e.g. `OLLAMA_BASE_URL`) and inherits required secret-key names from the model's provider prefix (defined in the **provider catalog** — shipped `src/jac/data/providers.yaml`, overridable via `~/.jac/providers.yaml`). Schema:
 
 ```yaml
 default_profile: claude
@@ -112,6 +113,8 @@ Profile activation lives in `jac.secrets.apply_profile_env` and writes `os.envir
 ```text
 ~/.jac/                       # user workspace (JAC-private, cross-project)
 ├── config.yaml
+├── providers.yaml            # optional overlay on package providers.yaml
+├── providers.yaml.example    # commented template (first-run bootstrap)
 ├── AGENTS.md                 # user-level context (user-authored), auto-loaded
 ├── memory.md                 # user-level JAC-managed memory, written via `remember`
 ├── prompts/                  # overrides for shipped prompts

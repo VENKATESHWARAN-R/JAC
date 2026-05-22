@@ -18,22 +18,8 @@ import yaml
 from pydantic import BaseModel, Field
 
 from jac.errors import JacConfigError
+from jac.providers.registry import get_provider_registry, provider_prefix
 from jac.workspace import paths
-
-# Provider → required env var names. Source of truth for "what does this
-# model need to authenticate?". Keep aligned with pydantic-ai's providers.
-PROVIDER_REQUIREMENTS: dict[str, list[str]] = {
-    "anthropic": ["ANTHROPIC_API_KEY"],
-    "openai": ["OPENAI_API_KEY"],
-    "google-gla": ["GEMINI_API_KEY"],
-    "google-vertex": [],  # uses GOOGLE_APPLICATION_CREDENTIALS / ADC
-    "mistral": ["MISTRAL_API_KEY"],
-    "openrouter": ["OPENROUTER_API_KEY"],
-    "ollama": [],  # OLLAMA_BASE_URL is optional, set via profile.env
-    "gateway": ["PYDANTIC_AI_GATEWAY_API_KEY"],
-    "groq": ["GROQ_API_KEY"],
-    "cohere": ["COHERE_API_KEY"],
-}
 
 _NAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$")
 
@@ -58,27 +44,13 @@ class Profile(BaseModel):
 
     requires_env: list[str] | None = None
     """If set, the explicit list of secret env vars the profile needs.
-    If ``None``, JAC infers them from the model's provider prefix via
-    :data:`PROVIDER_REQUIREMENTS`."""
+    If ``None``, JAC infers them from the model's provider prefix via the
+    provider catalog (:mod:`jac.providers.registry`)."""
 
     def required_env_keys(self) -> list[str]:
         if self.requires_env is not None:
             return list(self.requires_env)
-        return list(PROVIDER_REQUIREMENTS.get(_provider_prefix(self.model), []))
-
-
-def _provider_prefix(model: str) -> str:
-    """Map a pydantic-ai model id to the provider key in :data:`PROVIDER_REQUIREMENTS`.
-
-    Most providers use ``provider:model``. Gateway uses ``gateway/<upstream>[:model]``,
-    so a naive split on ``:`` yields ``gateway/google-cloud``, which would miss the
-    ``gateway`` entry and skip credential resolution.
-    """
-    if model.startswith("gateway/"):
-        return "gateway"
-    if ":" in model:
-        return model.split(":", 1)[0]
-    return model
+        return get_provider_registry().required_env_for_prefix(provider_prefix(self.model))
 
 
 # ---------- raw YAML I/O ----------

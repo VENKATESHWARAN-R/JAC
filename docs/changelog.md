@@ -6,9 +6,15 @@ All notable changes to JAC are documented here. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- Provider catalog (`src/jac/data/providers.yaml`) with optional `~/.jac/providers.yaml` overlay — centralizes provider→API-key mappings and `jac init` wizard defaults; `providers.yaml.example` on first-run bootstrap
+
 ### Changed
 
 - Docs and metadata: JAC acronym documented as Just Another Companion/CLI; replaced "local-first AI coworker harness" tagline.
+- `.env.template` aligned with the provider catalog (removed undocumented `LITELLM_API_KEY`; added `GROQ_API_KEY` / `COHERE_API_KEY`)
+- `secrets.backend: keyring` default moved to shipped `src/jac/data/defaults.yaml` (Settings layering)
 
 ### Planned
 

@@ -29,25 +29,12 @@ from jac.profiles import (
     list_profiles,
     validate_profile_name,
 )
+from jac.providers.registry import get_provider_registry
 from jac.secrets import SecretBackendName, get_backend
 from jac.workspace import paths
 from jac.workspace.bootstrap import ensure_user_workspace
 
 console = Console()
-
-
-PROVIDER_CHOICES: dict[str, dict[str, str]] = {
-    "anthropic": {"suggested_model": "claude-sonnet-4-5", "format": "anthropic:{model}"},
-    "openai": {"suggested_model": "gpt-5", "format": "openai:{model}"},
-    "google": {"suggested_model": "gemini-2.5-flash", "format": "google-gla:{model}"},
-    "ollama": {"suggested_model": "gemma3:e2b", "format": "ollama:{model}"},
-    "openrouter": {
-        "suggested_model": "anthropic/claude-sonnet-4-5",
-        "format": "openrouter:{model}",
-    },
-    "mistral": {"suggested_model": "mistral-large-latest", "format": "mistral:{model}"},
-    "pydantic-ai-gateway": {"suggested_model": "gpt-4o", "format": "gateway/{model}"},
-}
 
 
 def run_init() -> None:
@@ -95,12 +82,16 @@ def _pick_or_load_backend(existing: dict[str, Profile]) -> SecretBackendName:
     """First run: ask which secrets backend to use. Subsequent runs: keep current."""
     from jac.config import get_settings, reset_settings_cache
 
+    registry = get_provider_registry()
     if existing:
-        # Backend already chosen; just report.
         current = get_settings().secrets.backend
         console.print(f"[dim]secrets backend:[/dim] [bold]{current}[/bold]")
         return current
 
+    default_backend = cast(
+        SecretBackendName,
+        registry.init.default_secrets_backend,
+    )
     backend_name = cast(
         SecretBackendName,
         Prompt.ask(
@@ -110,7 +101,7 @@ def _pick_or_load_backend(existing: dict[str, Profile]) -> SecretBackendName:
             "  [bold]env-only[/bold] — JAC won't store; you'll manage via shell\n"
             "choice",
             choices=["keyring", "dotenv", "env-only"],
-            default="keyring",
+            default=default_backend,
         ),
     )
     _write_backend_choice(backend_name)
@@ -120,16 +111,32 @@ def _pick_or_load_backend(existing: dict[str, Profile]) -> SecretBackendName:
 
 def _build_profile_interactive(existing: dict[str, Profile]) -> tuple[str, Profile]:
     """Collect provider/model/name/env from the user; return ``(name, profile)``."""
+    registry = get_provider_registry()
+    wizard_entries = registry.wizard_providers()
+    if not wizard_entries:
+        raise JacConfigError(
+            "no providers with wizard metadata in the catalog. "
+            f"Check {paths.package_providers_file()}."
+        )
+
+    provider_ids = [entry[0] for entry in wizard_entries]
+    default_provider = registry.init.default_wizard_provider
+    if default_provider not in provider_ids:
+        default_provider = provider_ids[0]
+
     provider = Prompt.ask(
         "\n[bold]Provider[/bold]",
-        choices=list(PROVIDER_CHOICES),
-        default="anthropic",
+        choices=provider_ids,
+        default=default_provider,
     )
-    pc = PROVIDER_CHOICES[provider]
-    model_name = Prompt.ask(f"[bold]{provider}[/bold] model", default=pc["suggested_model"])
-    model_id = pc["format"].format(model=model_name)
+    _provider_id, spec, wizard = next(e for e in wizard_entries if e[0] == provider)
 
-    # Profile name — validated, with friendly retry.
+    model_name = Prompt.ask(
+        f"[bold]{wizard.label}[/bold] model",
+        default=wizard.suggested_model,
+    )
+    model_id = wizard.model_format.format(model=model_name)
+
     suggested = (
         provider
         if provider not in existing
@@ -150,12 +157,18 @@ def _build_profile_interactive(existing: dict[str, Profile]) -> tuple[str, Profi
         profile_name = candidate
         break
 
-    # Non-secret env (Ollama base URL is the canonical example).
     profile_env: dict[str, str] = {}
-    if provider == "ollama":
-        existing_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
-        url = Prompt.ask("[bold]Ollama base URL[/bold]", default=existing_url)
-        profile_env["OLLAMA_BASE_URL"] = url
+    for env_key in spec.profile_env_keys:
+        default_val = registry.init.env_defaults.get(
+            env_key,
+            os.environ.get(env_key, ""),
+        )
+        if provider == "ollama" and env_key == "OLLAMA_BASE_URL" and not default_val:
+            default_val = "http://localhost:11434/v1"
+        label = env_key.replace("_", " ").title()
+        value = Prompt.ask(f"[bold]{label}[/bold]", default=default_val or "")
+        if value:
+            profile_env[env_key] = value
 
     return profile_name, Profile(model=model_id, env=profile_env)
 
@@ -172,7 +185,6 @@ def _maybe_store_secrets(
     backend = get_backend(backend_name)
 
     for key in required:
-        # Already stored?
         try:
             already = backend.get(key)
         except Exception:
@@ -186,9 +198,6 @@ def _maybe_store_secrets(
             if backend_name == "env-only":
                 console.print(f"  [green]✓[/green] {key} present in environment")
                 continue
-            # Explicit prompt — never silent. The user might be on a machine
-            # with employer credentials in env and want to keep them out of
-            # their personal JAC store.
             if Confirm.ask(
                 f"  [yellow]I see {key} in your environment.[/yellow] "
                 f"Import into [bold]{backend_name}[/bold]?",
@@ -200,7 +209,6 @@ def _maybe_store_secrets(
                 console.print(f"    [dim]skipped — JAC will keep reading {key} from env[/dim]")
             continue
 
-        # Not in env or backend — prompt or warn depending on backend.
         if backend_name == "env-only":
             console.print(
                 f"  [yellow]![/yellow] {key} not set. "

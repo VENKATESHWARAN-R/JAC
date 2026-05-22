@@ -3,7 +3,7 @@
 Reads from a layered stack:
 
   CLI args > env vars > .env > <repo>/.agents/config.yaml >
-  ~/.jac/config.yaml > <package>/defaults.yaml
+  ~/.jac/config.yaml > <package>/data/defaults.yaml
 
 The layering is plumbed in :mod:`jac.workspace.config_loader`. Required
 values (no default in code) raise ``JacConfigError`` at the point of use —

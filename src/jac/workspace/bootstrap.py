@@ -27,6 +27,29 @@ _USER_CONFIG_TEMPLATE = """\
 # Run `jac init` for an interactive setup wizard.
 """
 
+_USER_PROVIDERS_EXAMPLE_TEMPLATE = """\
+# JAC provider catalog overrides (optional).
+#
+# Copy to providers.yaml and edit, or create providers.yaml with only the
+# keys you want to override. Deep-merges over the shipped package catalog at:
+#   <package>/data/providers.yaml
+#
+# Example — bump a suggested model for the init wizard:
+#
+# providers:
+#   anthropic:
+#     wizard:
+#       suggested_model: claude-opus-4-6
+#
+# Example — add credential requirements for a custom prefix:
+#
+# providers:
+#   my-provider:
+#     prefix: my-provider
+#     required_env:
+#       - MY_PROVIDER_API_KEY
+"""
+
 _USER_CONTEXT_TEMPLATE = """\
 # AGENTS.md
 
@@ -63,6 +86,12 @@ def ensure_user_workspace() -> bool:
 
     if not paths.USER_CONTEXT_FILE.exists():
         paths.USER_CONTEXT_FILE.write_text(_USER_CONTEXT_TEMPLATE, encoding="utf-8")
+        created_anything = True
+
+    if not paths.USER_PROVIDERS_EXAMPLE_FILE.exists():
+        paths.USER_PROVIDERS_EXAMPLE_FILE.write_text(
+            _USER_PROVIDERS_EXAMPLE_TEMPLATE, encoding="utf-8"
+        )
         created_anything = True
 
     return created_anything
