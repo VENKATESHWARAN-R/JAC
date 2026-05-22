@@ -20,7 +20,7 @@ Each phase block leads with **Goal** + **why/what/how** before the checklist. Th
 | Phase 2a — `remember` tool | ✅ Complete | HITL-gated `remember`, JAC-owned `.agents/memory.md`, fixed category enum, auto-injected into Gru's context |
 | Phase 2a.1 — User scope + `forget` | ✅ Complete | `~/.jac/memory.md`, scope-aware `remember`/`forget`, session-id audit trail, soft size warning, fail-first on no-repo |
 | Phase 1.6 — Tool surface polish | ✅ Complete | plan, background processes, fs/grep upgrades, web search, clarify (all landed 2026-05-22 after a tool retrospective) |
-| **Phase 1.7 — Coworker experience** | ⏳ **In flight** | umbrella for compaction, status bar, slash commands, plan mode, budgets, feedback channels — see sub-phases below. **1.7.c complete** (PR1 D22 schema + auto-migration, PR2 slash scaffolding, PR3 `/model` + `/profile` with fail-safe rebuild, PR4 `jac profiles edit`). Next sub-phase: 1.7.a token-aware compaction, or 1.7.b status bar. |
+| **Phase 1.7 — Coworker experience** | ⏳ **In flight** | umbrella for compaction, status bar, slash commands, plan mode, budgets, feedback channels — see sub-phases below. **Complete:** 1.7.c (D22 schema + slash scaffolding + `/model` + `/profile` + `jac profiles edit`), 1.7.a (token-aware compaction with user-configurable 200k default budget). **Next:** 1.7.b status bar. |
 | Phase 2b — Summarizer minion | ⛔ Superseded | rolled into Phase 1.7.a (token-aware compaction). No separate minion. |
 | Phase 3 — Skills (D21) | ⏸ Queued | community-format skill loader + inline mode (replaces old bespoke minion factory plan) |
 | Phase 4 — A2A (D24) | ⏸ Queued | inbound server + outbound client — moved up from v2 |
@@ -304,31 +304,26 @@ Each phase block leads with **Goal** + **why/what/how** before the checklist. Th
 
 **Non-negotiables:** every new tool / event still carries `reason: str` and goes through `@jac_tool` and the EventBus. Slash commands share internals with their `jac <subcommand>` counterparts — *no duplicate logic*. New decisions ride to `architecture.md §11` in the same change.
 
-### Phase 1.7.a — Token-aware history compaction (D20) 🚧
+### Phase 1.7.a — Token-aware history compaction (D20) ✅
 
-**Why:** current `ProcessHistory` caps at 40 *exchanges*. At 40 heavy exchanges, total context can sit at 180k+ tokens and *every model call re-processes them*. That is a direct, ongoing input-token cost burn — silent and expensive. This phase replaces exchange-count gating with a token-budget gate keyed to the active model's context window, with thresholds (60% warn / 70% auto-compact / 85% hard-refuse).
+**Why:** the old `ProcessHistory` capped at 40 *exchanges*. At 40 heavy exchanges total context could sit at 180k+ tokens and every model call re-processed them — silent input-token cost burn. This phase replaces exchange-count gating with a **user-configurable token budget** (default 200k, *not* the model's published context window — newer models advertise 1M+ but quality typically degrades past ~200-300k) and a three-step ladder.
 
-**What:**
-- New `TokenAwareHistory` history processor that knows the active model's context limit and the current `RunUsage` totals
-- At ≥60% — emit a `CompactionWarning` event (status bar turns yellow)
-- At ≥70% — auto-compact: the oldest slice that brings us back under 50% is summarized via `model_request_sync` against the profile's `small` tier (never a hardcoded model — D22), replaced in-history with a single synthetic system message
-- At ≥85% — refuse the next user turn, surface "run `/compact` or `/clear`"
-- `<session>/compacted/<n>.json` preserves the original slice for replay
-- New events: `CompactionWarning(usage_pct)`, `CompactionTriggered(dropped_count, replaced_with_summary_tokens)`, `CompactionRefused(usage_pct)`
+**Landed (2026-05-23):**
+- [x] `TokenAwareHistory` processor — char-based 3-tokens-per-char heuristic, threshold ladder 60/70/85 with `target_pct_after_compact=50`
+- [x] User-configurable budget: `compaction.max_context_tokens` (default 200_000) with env override `JAC_COMPACTION__MAX_CONTEXT_TOKENS` — every threshold is a percent of *that*, not the model's window
+- [x] Small-tier summarizer via `pydantic_ai.direct.model_request` (async); drop-only fallback on failure (no profile / no `small` tier / call raises)
+- [x] `<session>/compacted/<n>.json` snapshots of every dropped slice (via `ModelMessagesTypeAdapter`)
+- [x] Portable `<<conversation_summary>>` `UserPromptPart` survives `/profile` provider swaps mid-session
+- [x] `CompactionWarning` / `CompactionTriggered` / `CompactionRefused` events on `JacEventT`; CLI renderer prints inline notices
+- [x] REPL pre-flight refuse check: emits `CompactionRefused` and skips the turn if `history + prompt` exceeds `refuse_pct` — the model is never called
+- [x] `summarizer_model` threaded through `build_gru`; rebuilt on `/profile` switch via `_resolve_summarizer_model`
+- [x] `gru_system.md` "Context management" section so Gru doesn't redundantly summarize
+- [x] architecture.md §11 D20 updated with the user-configurable-budget refinement
+- [x] 14 tests: estimator, drop-boundary, threshold ladder paths, drop-only fallback, snapshot persistence, env override
 
-**How:**
-- Lives in `jac.capabilities.history` (rewrites the existing exchange-count processor)
-- Tier lookup goes through `jac.profiles.active_profile().tier("small").default` — depends on D22 being in place first, but the simple form (single model per tier as today) works for the initial landing
-- Auto-compact is best-effort: if the small-tier model call fails, we fall back to dropping (the old behavior) and surface the error loudly
-- No approval gate — compaction is automatic and announced. User opts out via `/compact off` (toggles auto-compact for the session, hard-refuse still applies)
+**Deferred (1.7.b status bar):** status bar color flip on warning/refused — the renderer prints inline notices today; the persistent bottom-toolbar lands with 1.7.b.
 
-- [ ] `TokenAwareHistory` processor reading model window + cumulative `RunUsage`
-- [ ] Three-threshold ladder (60/70/85) — tunable via `compaction:` block in profile YAML
-- [ ] Small-tier summarizer call wrapped in retries; fallback to drop on failure
-- [ ] `<session>/compacted/<n>.json` snapshots
-- [ ] New events + renderer warning panel + status bar color flip
-- [ ] `gru_system.md` mentions auto-compaction discipline so Gru doesn't redundantly summarize
-- [ ] architecture.md §11 D20 recorded ✅ (done in this change)
+**Refinement vs the original D20:** the budget is *user-configurable*, not "the active model's context window". A 1M model with a 200k budget compacts at 140k (70% of budget), not 700k — matching the actual useful context envelope rather than the marketing one. Users on smaller / cheaper models can lower it; users who trust their model with more can raise it.
 
 ### Phase 1.7.b — Status bar (depends on D22 schema) 🚧
 

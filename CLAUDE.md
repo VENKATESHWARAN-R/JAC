@@ -114,11 +114,19 @@ profiles:
       OLLAMA_BASE_URL: http://localhost:11434/v1
 secrets:
   backend: keyring   # keyring | dotenv | env-only
+compaction:           # D20 — history auto-compaction
+  max_context_tokens: 200000   # user-configurable; not the model's published window
+  warn_pct: 60
+  auto_compact_pct: 70
+  refuse_pct: 85
+  target_pct_after_compact: 50
 budget:
   session_input_tokens: null   # opt-in only (D25)
   session_total_tokens: null
   project_total_tokens: null
 ```
+
+The `compaction:` block runs Gru's history against a conservative budget rather than the model's published context window (newer models advertise 1M+ but quality typically degrades past ~200-300k). Override per-key via env (`JAC_COMPACTION__MAX_CONTEXT_TOKENS=400000`) or by editing this block. At **60%** of budget you'll see a warning; at **70%** the oldest slice is auto-summarized via the active profile's `small` tier; at **85%** the next user turn is pre-flight refused (no model call) until you `/clear` or raise the budget.
 
 Minion templates declare `model_tier:` (e.g. `model_tier: small`), never a hardcoded model name — swapping a tier's default swaps every minion uniformly. The history compaction summarizer (D20) also uses `small` tier.
 

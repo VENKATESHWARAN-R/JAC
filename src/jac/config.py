@@ -37,6 +37,35 @@ class SecretsSettings(BaseModel):
     backend: SecretBackendName = "keyring"
 
 
+class CompactionSettings(BaseModel):
+    """History-compaction thresholds (D20).
+
+    Compaction operates against a **user-configurable budget**, not the
+    model's published context window — recent models advertise 1M+ but
+    quality typically degrades past ~200-300k. ``max_context_tokens``
+    defaults to a conservative 200k; bump it if you trust your model with
+    more, or lower it for cheaper models. Pcts apply against that budget.
+    """
+
+    max_context_tokens: int = 200_000
+    """The "useful" context budget Gru runs against. Compaction ladder is
+    measured as a percentage of this — not the model's raw window."""
+
+    warn_pct: int = 60
+    """At this percent of the budget, emit a :class:`CompactionWarning`."""
+
+    auto_compact_pct: int = 70
+    """At this percent, auto-summarize the oldest slice via the small-tier model."""
+
+    refuse_pct: int = 85
+    """At this percent, refuse the next user turn — the user must ``/clear``
+    or otherwise free space. Caught pre-flight in the REPL."""
+
+    target_pct_after_compact: int = 50
+    """Auto-compaction shrinks the kept history until estimated size ≤ this
+    percent of the budget, then stops."""
+
+
 class Settings(BaseSettings):
     """Top-level JAC configuration.
 
@@ -63,6 +92,11 @@ class Settings(BaseSettings):
 
     secrets: SecretsSettings = Field(default_factory=SecretsSettings)
     """Secrets backend configuration. Defaults to OS keyring."""
+
+    compaction: CompactionSettings = Field(default_factory=CompactionSettings)
+    """History-compaction thresholds (D20). Override per-key via env
+    ``JAC_COMPACTION__MAX_CONTEXT_TOKENS=400000`` or the ``compaction:``
+    block in ``~/.jac/config.yaml`` / ``<repo>/.agents/config.yaml``."""
 
     @classmethod
     def settings_customise_sources(

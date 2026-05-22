@@ -28,6 +28,9 @@ from jac.runtime.events import (
     ApprovalResponse,
     ClarifyRequest,
     ClarifyResponse,
+    CompactionRefused,
+    CompactionTriggered,
+    CompactionWarning,
     JacEvent,
     ModelRequestCompleted,
     ModelRequestStarted,
@@ -217,6 +220,21 @@ class CliRenderer:
                 f"[{color}]■ process[/{color}] {event.task_id} "
                 f"exited [dim](code={event.exit_code})[/dim]"
             )
+        elif isinstance(event, CompactionWarning):
+            self.console.print(
+                f"[yellow]context at {event.usage_pct}%[/yellow] "
+                "[dim]— auto-compact triggers at 70%[/dim]"
+            )
+        elif isinstance(event, CompactionTriggered):
+            self.console.print(
+                f"[green]✦ compacted[/green] {event.dropped_count} messages "
+                f"[dim](~{event.summary_tokens} summary tokens; "
+                f"context now {event.usage_pct}%)[/dim]"
+            )
+        elif isinstance(event, CompactionRefused):
+            # The REPL prints its own actionable message; this lets future
+            # surfaces (TUI / status bar in 1.7.b) react to the same signal.
+            pass
         elif isinstance(event, RunCompleted):
             self.final_output = event.output
         elif isinstance(event, RunFailed):

@@ -185,6 +185,45 @@ class PlanStepUpdated(JacEvent):
 
 
 @dataclass(frozen=True, slots=True)
+class CompactionWarning(JacEvent):
+    """History size has crossed the warn threshold but not yet the auto-compact one.
+
+    Renderer flips the status bar / prints an inline yellow notice; no
+    structural change to history yet. ``usage_pct`` is the integer percent
+    of the configured ``max_context_tokens`` budget the current history
+    estimate occupies.
+    """
+
+    usage_pct: int
+
+
+@dataclass(frozen=True, slots=True)
+class CompactionTriggered(JacEvent):
+    """Auto-compaction just ran: an old slice was summarized + replaced.
+
+    ``dropped_count`` is the number of original messages condensed into a
+    single synthetic summary. ``summary_tokens`` is the estimated token
+    cost of the synthetic replacement. ``usage_pct`` is the post-compaction
+    estimate so the renderer can show the new fill level.
+    """
+
+    dropped_count: int
+    summary_tokens: int
+    usage_pct: int
+
+
+@dataclass(frozen=True, slots=True)
+class CompactionRefused(JacEvent):
+    """The pre-flight check refused the next user turn — context is too full.
+
+    Emitted before ``gru.run()`` is invoked, so the model is never called.
+    The user is told to ``/clear`` or otherwise free space.
+    """
+
+    usage_pct: int
+
+
+@dataclass(frozen=True, slots=True)
 class RunCompleted(JacEvent):
     """Terminal: ``agent.run()`` completed normally. Carries the final output."""
 
@@ -210,6 +249,9 @@ type JacEventT = (
     | PlanStepUpdated
     | ProcessStarted
     | ProcessExited
+    | CompactionWarning
+    | CompactionTriggered
+    | CompactionRefused
     | RunCompleted
     | RunFailed
 )

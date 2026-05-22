@@ -12,3 +12,15 @@
 
 secrets:
   backend: keyring
+
+compaction:
+  # Useful context budget Gru runs against — NOT the model's published window.
+  # Recent models advertise 1M+ but quality typically degrades past ~200-300k.
+  # Bump if you trust your model with more; lower for cheaper models.
+  max_context_tokens: 200000
+  # Thresholds as percent of max_context_tokens.
+  warn_pct: 60
+  auto_compact_pct: 70
+  refuse_pct: 85
+  # Auto-compaction shrinks the kept history until it's below this percent.
+  target_pct_after_compact: 50

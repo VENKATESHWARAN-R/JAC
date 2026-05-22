@@ -27,6 +27,7 @@ from jac.capabilities.shell import ShellCapability
 from jac.capabilities.web import WebCapability
 from jac.config import get_settings
 from jac.errors import JacConfigError
+from jac.runtime.bus import EventBus
 from jac.workspace.context import load_session_context
 from jac.workspace.prompts import load_prompt
 
@@ -37,15 +38,24 @@ def _compose_instructions() -> str:
     return f"{base}\n\n---\n\n# Session context\n\n{context}"
 
 
-def _default_tool_capabilities() -> list[Any]:
-    """The standard tool + history capabilities every interactive JAC session gets."""
+def _default_tool_capabilities(
+    *, bus: EventBus | None = None, summarizer_model: str | None = None
+) -> list[Any]:
+    """The standard tool + history capabilities every interactive JAC session gets.
+
+    Args:
+        bus: passed to the history capability so it can emit compaction events.
+        summarizer_model: model id used for auto-compaction summarization
+            (typically the active profile's ``small`` tier). When ``None``,
+            compaction falls back to drop-only.
+    """
     return [
         FilesystemCapability(),
         SearchCapability(),
         ShellCapability(),
         MemoryCapability(),
         WebCapability(),
-        make_history_capability(),
+        make_history_capability(bus=bus, summarizer_model=summarizer_model),
     ]
 
 
@@ -53,6 +63,9 @@ def build_gru(
     model_override: str | None = None,
     extra_capabilities: Sequence[Any] | None = None,
     include_default_tools: bool = True,
+    *,
+    bus: EventBus | None = None,
+    summarizer_model: str | None = None,
 ) -> Agent[None, str]:
     """Build the Gru agent.
 
@@ -65,6 +78,11 @@ def build_gru(
         include_default_tools: when ``True`` (default), attaches filesystem,
             search, and shell capabilities. Set ``False`` for tests or headless
             contexts that don't need filesystem access.
+        bus: event bus passed to the default history capability so it can
+            emit compaction events. ``None`` in headless / test contexts.
+        summarizer_model: model id used by the history capability for
+            auto-compaction (typically the active profile's ``small`` tier).
+            ``None`` falls back to drop-only compaction.
 
     Returns:
         A ready-to-run ``Agent``.
@@ -83,5 +101,5 @@ def build_gru(
         )
     capabilities: list[Any] = list(extra_capabilities or [])
     if include_default_tools:
-        capabilities.extend(_default_tool_capabilities())
+        capabilities.extend(_default_tool_capabilities(bus=bus, summarizer_model=summarizer_model))
     return Agent(model, instructions=_compose_instructions(), capabilities=capabilities)

@@ -31,6 +31,7 @@ from rich.console import Console
 from jac import __version__
 from jac.capabilities.approval import make_approval_handler
 from jac.capabilities.clarify import make_clarify_capability
+from jac.capabilities.history import estimate_text_tokens, estimate_tokens
 from jac.capabilities.hooks import make_hooks
 from jac.capabilities.plan import make_plan_capability
 from jac.capabilities.process import make_process_capability
@@ -49,7 +50,7 @@ from jac.errors import JacConfigError
 from jac.profiles import Profile, get_profile
 from jac.providers.registry import get_provider_registry, provider_prefix
 from jac.runtime.bus import EventBus
-from jac.runtime.events import RunCompleted, RunFailed
+from jac.runtime.events import CompactionRefused, RunCompleted, RunFailed
 from jac.runtime.gru import build_gru
 from jac.runtime.session import Session
 from jac.runtime.session_ctx import set_current_session_id
@@ -193,6 +194,8 @@ async def _repl_loop(
                 process_capability,
                 clarify_capability,
             ],
+            bus=bus,
+            summarizer_model=_resolve_summarizer_model(profile_name),
         )
     except JacConfigError as exc:
         console.print(f"[red]config error:[/red] {exc}")
@@ -266,9 +269,13 @@ async def _repl_loop(
                         current_profile=active_profile,
                         current_profile_name=profile_name,
                         capabilities=persisted_capabilities,
+                        bus=bus,
                     )
                     if rebuilt is not None:
                         gru, model_id, profile_name, active_profile = rebuilt
+                continue
+
+            if await _refuse_if_over_budget(bus, message_history, text):
                 continue
 
             message_history = await _run_turn(gru, bus, text, message_history)
@@ -286,6 +293,54 @@ async def _repl_loop(
             console.print(f"[yellow]warning:[/yellow] process shutdown: {exc}")
 
 
+async def _refuse_if_over_budget(bus: EventBus, message_history: list, user_text: str) -> bool:
+    """Pre-flight: refuse the turn if context is already above the refuse pct.
+
+    Estimates the tokens we'd send (history + the next user prompt) and
+    compares against ``settings.compaction.refuse_pct * max_context_tokens``.
+    On refuse: emit :class:`CompactionRefused`, surface an actionable
+    message, and return ``True``. The caller skips the model call.
+    """
+    settings = get_settings().compaction
+    budget = settings.max_context_tokens
+    if budget <= 0:
+        return False
+    projected = estimate_tokens(message_history) + estimate_text_tokens(user_text)
+    pct = int((projected / budget) * 100)
+    if pct < settings.refuse_pct:
+        return False
+    await bus.emit(CompactionRefused(usage_pct=pct))
+    console.print(
+        f"[red]context at {pct}% of {budget:,}-token budget[/red] — refusing the turn.\n"
+        "[dim]free up context with [bold]/clear[/bold] (start fresh in place) or "
+        "raise [bold]compaction.max_context_tokens[/bold] in your config.[/dim]"
+    )
+    return True
+
+
+def _resolve_summarizer_model(profile_name: str | None) -> str | None:
+    """Return the small-tier model for the named profile, or ``None``.
+
+    Falls back gracefully when:
+
+    - No profile is in play (``--model`` ad-hoc session, ``profile_name`` is ``None``).
+    - The profile has no ``small`` tier (e.g. only ``medium`` configured).
+    - The profile fails to load for some reason.
+
+    Returning ``None`` makes the history capability drop-only on compaction —
+    safe, no crash; we just lose the summary.
+    """
+    if profile_name is None:
+        return None
+    try:
+        profile = get_profile(profile_name)
+    except JacConfigError:
+        return None
+    if "small" not in profile.tiers or not profile.tiers["small"]:
+        return None
+    return profile.tiers["small"][0]
+
+
 def _rebuild_gru(
     *,
     new_model_id: str,
@@ -293,6 +348,7 @@ def _rebuild_gru(
     current_profile: Profile | None,
     current_profile_name: str | None,
     capabilities: list,
+    bus: EventBus,
 ) -> tuple[Agent, str, str | None, Profile | None] | None:
     """Attempt to rebuild Gru against a new model/profile.
 
@@ -347,7 +403,11 @@ def _rebuild_gru(
             # new model's required env (no-op when the union already covered it).
             apply_ad_hoc_model_env(new_model_id)
 
-        new_gru = build_gru(extra_capabilities=capabilities)
+        new_gru = build_gru(
+            extra_capabilities=capabilities,
+            bus=bus,
+            summarizer_model=_resolve_summarizer_model(new_profile_name),
+        )
     except JacConfigError as exc:
         restore_env(snap)
         _warn_switch_failed(exc, current_profile_name)
