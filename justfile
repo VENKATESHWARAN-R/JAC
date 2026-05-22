@@ -19,9 +19,9 @@ sync-dev:
 # Run the app
 # ---------------------------------------------------------------------------
 
-# run jac with .env loaded; forward args (e.g. `just run --help`, `just run --profile claude`)
+# run jac; load .env when present; forward args (e.g. `just run --help`, `just run --profile claude`)
 run *ARGS:
-    uv run --env-file .env jac {{ARGS}}
+    @if [ -f .env ]; then uv run --env-file .env jac {{ARGS}}; else uv run jac {{ARGS}}; fi
 
 # launch the REPL with .env loaded
 repl:
