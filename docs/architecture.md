@@ -48,10 +48,10 @@ flowchart TB
 
 | JAC concept | Pydantic AI primitive | Notes |
 | --- | --- | --- |
-| **Gru** | `Agent` (long-lived) | One per session. Built once with capability list. |
-| **Minion** | `Agent.from_spec()` | Short-lived. Loaded from YAML per task. |
-| **Minion template** | `AgentSpec` YAML file | Stored in `minions/templates/`. |
-| **Minion Factory** | Custom `Capability` | Exposes `spawn_minion(template, task)` tool to Gru. |
+| **Gru** | `Agent` (long-lived) | One per session. Built once with capability list. Model selected by *tier* via active profile (D22), not hardcoded. |
+| **Minion** | `Agent` instantiated from a skill (`mode: minion`) | Short-lived. Loaded from a community-format skill file (D21). Replaces the old `AgentSpec` YAML path. |
+| **Skill (inline mode)** | Markdown + YAML frontmatter | Loaded via custom `SkillsCapability`; description-triggered or `/skill NAME` forced. Adopts the [Anthropic skills format](https://www.anthropic.com/news/claude-skills) verbatim — community catalogs install as-is. |
+| **Skill (minion mode)** | Same file + `mode: minion` + `output_schema:` | The skill body becomes the sub-agent's instructions; `tools:` scopes the toolset; the minion factory orchestration sits on this. Minion runtime needs a separate grooming session before Phase 4. |
 | **Tool bundles** | Custom `Capability` providing `FunctionToolset` | One capability per concern (fs, shell, grep). |
 | **HITL approval** | `ApprovalRequiredToolset` + `deferred_tool_calls` hook | Built-in. Tools we mark `approval_required` defer; CLI handles the prompt. |
 | **CLI event bus** | `Hooks` (`event`, `before_*`, `deferred_tool_calls`) | CLI registers a `Hooks` capability that pushes lifecycle events to a UI queue. |
@@ -62,8 +62,10 @@ flowchart TB
 | **CodeMode** | `CodeMode` capability from `pydantic-ai-harness` | Drop-in. Pulls in Monty automatically. |
 | **Tracing** | `Instrumentation` capability + Logfire | One-line setup. |
 | **YOLO sandbox (v2)** | Custom `Capability` wrapping shell tool with Monty + `sandbox-exec`/`bwrap` | Behaves transparently to Gru. |
-| **A2A — outbound (v2)** | `fasta2a` (PAI's externalized A2A server) wrapped as a capability | Exposes Gru on an A2A endpoint. See [PAI A2A integration docs](https://pydantic.dev/docs/ai/integrations/a2a/). |
-| **A2A — inbound (v2)** | Bespoke HTTP client toolset | `fasta2a` is server-only; we build the "call a remote Gru" tool ourselves. It's small. |
+| **A2A — inbound** | `fasta2a` (PAI's A2A server) wrapped as a `Capability`, spawned on a background asyncio task | Exposes JAC on an A2A endpoint. Inbound requests hit an **isolated guest Gru** (D24), not the main session. See [PAI A2A integration docs](https://pydantic.dev/docs/ai/integrations/a2a/) and [A2A protocol spec](https://a2a-protocol.org/latest/). |
+| **A2A — outbound** | Custom toolset around the A2A HTTP protocol | `a2a_call(reason, url, message)` — talks to any A2A-compatible agent, not just other JAC instances (D24). |
+| **Plan Mode** | `PlanMode` capability — toolset swap + prompt overlay | Structurally enforces read-only-plus-`write_plan` (D23). |
+| **Mode swap mechanism** | Toolset filter at construction time | One `ModeCapability` base; future modes (YOLO, review-only) reuse the same swap pattern. |
 | **Scheduling (v2)** | External cron → `jac run --headless` | No internal scheduler needed. |
 
 ## 3. Module layout (proposed)
@@ -74,46 +76,64 @@ jac/
 ├── src/jac/
 │   ├── __init__.py
 │   ├── cli/                      # CLI surface
-│   │   ├── app.py                # entry point (typer/click)
+│   │   ├── app.py                # entry point (typer)
 │   │   ├── repl.py               # interactive loop
-│   │   ├── approval.py           # HITL approval prompt UI
-│   │   └── events.py             # subscribes to runtime events
+│   │   ├── renderer.py           # Rich rendering + approval/clarify UI
+│   │   ├── statusbar.py          # bottom_toolbar provider (D22 status display)
+│   │   ├── slash/                # slash command handlers (D22+ — share internals with CLI subcommands)
+│   │   │   ├── registry.py       # discovery + completer source
+│   │   │   ├── model.py          # /model, /profile (tier-aware)
+│   │   │   ├── compact.py        # /compact, /clear
+│   │   │   ├── plan.py           # /plan, /approve, /cancel (Plan Mode entry)
+│   │   │   ├── budget.py         # /budget, /tokens
+│   │   │   └── a2a.py            # /a2a serve, /a2a stop
+│   │   ├── init.py               # interactive setup wizard
+│   │   ├── profiles_cmd.py       # `jac profiles`
+│   │   └── keys_cmd.py           # `jac keys`
 │   ├── runtime/                  # core
-│   │   ├── gru.py                # builds the Gru Agent
+│   │   ├── gru.py                # builds the Gru Agent (tier-aware)
 │   │   ├── session.py            # session lifecycle, persistence
-│   │   └── bus.py                # event bus glue between hooks and CLI
+│   │   ├── session_ctx.py        # ContextVar for current session id
+│   │   ├── bus.py                # event bus glue between hooks and CLI
+│   │   ├── events.py             # typed event union
+│   │   └── usage.py              # token tracking (D25 budgets)
 │   ├── capabilities/             # all JAC-specific capabilities
-│   │   ├── memory/
-│   │   │   ├── session.py        # save/load message history
-│   │   │   ├── project.py        # inject AGENTS.md
-│   │   │   └── user.py           # v2
-│   │   ├── tools/
-│   │   │   ├── filesystem.py     # read, write, edit
-│   │   │   ├── shell.py          # exec
-│   │   │   └── search.py         # grep, glob
-│   │   ├── factory/
-│   │   │   ├── minion_factory.py # exposes spawn_minion(...)
-│   │   │   └── playbooks.py      # docstring guidance for Gru
-│   │   ├── stuck_loop.py         # detect A-B-A-B tool loops
+│   │   ├── hooks.py              # event bus producer
+│   │   ├── approval.py           # HITL + denied-with-feedback (D26)
+│   │   ├── clarify.py            # structured prompt + free-text option (D26)
+│   │   ├── history.py            # token-aware compaction (D20)
+│   │   ├── memory.py             # remember / forget (D14)
+│   │   ├── tasks.py              # task list (D15, renamed from plan)
+│   │   ├── filesystem.py         # read, write, edit
+│   │   ├── search.py             # grep, glob
+│   │   ├── shell.py              # exec
+│   │   ├── process.py            # background processes
+│   │   ├── web.py                # web_search (Tavily → DDG fallback) + fetch_url
+│   │   ├── skills.py             # skill loader + inline-mode injection (D21)
+│   │   ├── minion_factory.py     # mode:minion runtime — *queued, grooming pending*
+│   │   ├── modes/
+│   │   │   ├── base.py           # ModeCapability base — toolset filter + prompt overlay
+│   │   │   └── plan_mode.py      # Plan Mode (D23)
+│   │   ├── a2a/
+│   │   │   ├── server.py         # fasta2a wrapper, guest-Gru spawn (D24)
+│   │   │   └── client.py         # a2a_call tool
 │   │   └── observability.py      # Logfire wiring
-│   ├── minions/
-│   │   ├── templates/            # YAML AgentSpec files
-│   │   │   ├── researcher.yaml
-│   │   │   ├── builder.yaml
-│   │   │   ├── reviewer.yaml
-│   │   │   ├── tester.yaml
-│   │   │   └── summarizer.yaml
-│   │   └── runner.py             # loads spec, runs sub-agent, returns result
+│   ├── profiles.py               # profile schema (tiered models — D22)
+│   ├── secrets.py                # keyring/dotenv/env-only backends
+│   ├── providers/                # provider catalog (D19)
+│   ├── workspace/                # paths, config_loader, context, bootstrap
+│   ├── tools/                    # @jac_tool decorator + jac_function_toolset
 │   ├── prompts/
-│   │   └── gru_system.md         # Gru's base system prompt
-│   └── config/
-│       └── data/
-│           ├── defaults.yaml     # non-required Settings tunables (e.g. secrets.backend)
-│           └── providers.yaml    # provider catalog: keys, init wizard metadata
+│   │   ├── gru_system.md         # Gru's base system prompt
+│   │   └── plan_mode.md          # Plan Mode prompt overlay (D23)
+│   └── data/
+│       ├── defaults.yaml         # non-required Settings tunables
+│       ├── providers.yaml        # provider catalog
+│       └── skills/               # any *shipped* skills (community-format)
 └── tests/
 ```
 
-**OPEN:** name of the user-facing CLI command. `jac` is the obvious choice.
+Layout note: `slash/`, `modes/`, `a2a/`, `usage.py`, `statusbar.py`, `skills.py` are *planned* and tied to the phases in §9 — they don't all exist yet. The currently-shipping shape is reflected by what's in `src/jac/` on disk; this diagram is the target.
 
 ## 4. Key data flows
 
@@ -417,57 +437,76 @@ flowchart TB
 
 ## 9. Phased roadmap
 
-The phases are now far smaller than the original `idea.md` implied, because most plumbing is already shipped in `pydantic-ai` and `pydantic-ai-harness`.
+Reordered 2026-05-22 after a brainstorm pass. The driving principle is **functional + useful + cost-effective + maintainable** — phases are ordered by user-visible value per day of work, not by architectural neatness. Phases 0–1.6 plus 2a/2a.1 are ✅ complete; what follows is current-and-future. The detailed checklist lives in `progress.md`.
 
 ```mermaid
 gantt
-    title JAC Implementation Phases
+    title JAC Implementation Phases (reordered 2026-05-22)
     dateFormat YYYY-MM-DD
     axisFormat %b %d
 
-    section Phase 0: Skeleton
-    Project scaffold + uv + pyproject       :p0a, 2026-05-20, 1d
-    Logfire instrumentation                 :p0b, after p0a, 1d
-    Minimal CLI shell (typer)               :p0c, after p0b, 1d
-    Bare Gru agent (no tools)               :p0d, after p0c, 1d
+    section Done
+    Phase 0  Skeleton                       :done, p0,  2026-05-20, 2d
+    Phase 0.5 Config foundation             :done, p05, after p0, 2d
+    Phase 1  Solo Gru                       :done, p1,  after p05, 5d
+    Phase 1.5 Profiles + secrets            :done, p15, after p1, 2d
+    Phase 2a / 2a.1 Memory (remember/forget):done, p2a, after p15, 3d
+    Phase 1.6 Tool surface polish           :done, p16, after p2a, 3d
 
-    section Phase 1: Solo Gru
-    Filesystem capability                   :p1a, after p0d, 2d
-    Shell capability + HITL approval        :p1b, after p1a, 2d
-    Search/grep capability                  :p1c, after p1b, 1d
-    Hooks-driven event bus to CLI           :p1d, after p1c, 2d
-    Session memory persistence              :p1e, after p1d, 1d
-    ProcessHistory window management        :p1f, after p1e, 1d
+    section Phase 1.7 Coworker experience
+    1.7.a Token-aware compaction (D20)      :p17a, 2026-05-25, 3d
+    1.7.b Status bar (D22)                  :p17b, after p17a, 2d
+    1.7.c Slash commands + tiered profiles  :p17c, after p17b, 4d
+    1.7.d Approval/clarify feedback (D26)   :p17d, after p17c, 1d
+    1.7.e Plan Mode (D23)                   :p17e, after p17d, 3d
+    1.7.f Token budgets (D25)               :p17f, after p17e, 2d
+    1.7.g Task persistence on resume (D27)  :p17g, after p17f, 1d
+    1.7.h Tavily web backend                :p17h, after p17g, 1d
 
-    section Phase 2: Project memory
-    AGENTS.md capability                   :p2a, after p1f, 1d
-    Summarizer minion + session-close write :p2b, after p2a, 2d
+    section Phase 3 Skills (D21)
+    Skill loader + inline mode              :p3a, after p17h, 3d
+    /skill slash + discovery                :p3b, after p3a, 2d
+    Ship 2-3 reference skills               :p3c, after p3b, 2d
 
-    section Phase 3: Minion factory
-    Minion runner + spec loader             :p3a, after p2b, 2d
-    Minion Factory capability               :p3b, after p3a, 1d
-    First 3 templates: researcher/builder/reviewer :p3c, after p3b, 3d
-    Playbook docstring iteration            :p3d, after p3c, 2d
+    section Phase 4 A2A (D24)
+    Server + guest-Gru isolation            :p4a, after p3c, 4d
+    Outbound a2a_call tool                  :p4b, after p4a, 3d
+    /a2a slash + headless mode              :p4c, after p4b, 1d
 
-    section Phase 4: Quality
-    CodeMode integration                    :p4a, after p3d, 1d
-    Stuck-loop detection                    :p4b, after p4a, 2d
-    Tests + docs                            :p4c, after p4b, 3d
+    section Phase 5 Minions
+    Grooming session (design lock)          :p5a, after p4c, 1d
+    Minion runtime (skills mode:minion)     :p5b, after p5a, 4d
+    First reference minions                 :p5c, after p5b, 3d
 
-    section v2 (future)
-    YOLO + Monty + sandbox-exec             :v2a, after p4c, 5d
-    A2A capability + server                 :v2b, after v2a, 7d
-    Scheduling (cron + headless)            :v2c, after v2b, 3d
-    User memory + predict-calibrate         :v2d, after v2c, 4d
+    section Phase 6 MCP
+    MCP loader + reason: tension call       :p6,  after p5c, 4d
+
+    section Phase 7 Quality
+    Test suite + ruff/mypy                  :p7,  after p6, 5d
+
+    section v2 future
+    YOLO + Monty + sandbox-exec             :v2a, after p7, 5d
+    CodeMode integration                    :v2b, after v2a, 2d
+    Stuck-loop detection                    :v2c, after v2b, 2d
+    Night Shift (cron + headless)           :v2d, after v2c, 3d
+    User-tier predict-calibrate memory      :v2e, after v2d, 5d
 ```
 
-Dates are illustrative — they show *order* and *relative size*, not commitments.
+Dates are illustrative — they show *order* and *relative size*, not commitments. New since the prior draft:
 
-**Critical path to "JAC works":** Phase 0 + Phase 1. Roughly 1–2 weeks of focused work. That alone is a usable Claude-Code-lite.
+- **Phase 1.7** is a new umbrella ("Coworker experience") that batches every UX / cost-control change before any new agent-tier work. Status bar + slash commands + compaction + budgets ship together because they share renderer surface area.
+- **Phase 2b** (standalone summarizer minion) is **superseded** by Phase 1.7.a — token-aware compaction *is* the summarizer.
+- **Phase 3** (formerly "Minion factory" with bespoke YAML AgentSpec templates) is now **Skills** per D21 — adopting the Anthropic community format. Minion runtime moves to a later phase that builds on the skills substrate.
+- **Phase 4 A2A** moved out of v2 — it has no hard dependency on minions or skills, and it's the project's headline differentiator. No reason to keep deferring.
+- **Phase 5 Minions** explicitly requires a **grooming session** before implementation — D21 locks the *format* (skills with `mode: minion`); the *runtime* (output schema enforcement, tool scoping, factory orchestration, parallelism) is not yet designed.
+- **CodeMode + stuck-loop** moved to v2 alongside YOLO — they're either premature (CodeMode) or low-value in HITL (stuck-loop catches the kind of bug a human catches anyway).
 
-**Critical path to "JAC is interesting":** Phase 0 + 1 + 2 + 3. Adds the multi-agent story.
+**Critical paths (revised):**
 
-**Critical path to "JAC is differentiated":** Phase 0–4 then v2 A2A. The headline feature lives in v2 and depends on a stable v1 foundation.
+- *"JAC is a usable single-agent coworker"* = Phase 0 → 1.6 → 1.7 ✅ +current. This is most of what people will actually use day-to-day.
+- *"JAC is an extensible coworker"* = + Phase 3 Skills. Community skills install; JAC isn't an island.
+- *"JAC is differentiated"* = + Phase 4 A2A. Cross-agent coordination is the thing no one else does.
+- *"JAC is a real harness"* = + Phase 5 Minions. Sub-agent delegation closes the loop.
 
 ## 10. User journeys
 
@@ -515,7 +554,7 @@ These were open in the previous draft; now locked.
 | # | Decision |
 | --- | --- |
 | D1 | **Minion task packet:** `objective` (req), `success_criteria` (req), `relevant_files` (opt), `forbidden_actions` (opt), `expected_output` (req). Templates may extend with their own fields. See §5a. |
-| D2 | **Approval granularity:** per-tool, with an optional `risk: high` tag for one-off escalation. **Every tool call carries a `reason: str`** that is rendered in the approval UI. See §6a. |
+| D2 | **Approval granularity:** per-tool, with an optional `risk: high` tag for one-off escalation. **Every tool call carries a `reason: str`** that is rendered in the approval UI. See §6a. Approval responses may carry user feedback in-band (D26) so a denied call can redirect the model without a wasted turn. |
 | D3 | **Session ID:** timestamp folder. `.jac/sessions/2026-05-19T16-23-04/`. Human-readable, sorts chronologically, trivially scriptable. |
 | D4 | **Project memory:** prose `AGENTS.md` first. Add structured `facts.jsonl` only if/when prose retrieval gets noisy. Memory management is a last resort. |
 | D5 | **Skills location (v2 feature):** both project (`<repo>/.agents/skills/`) and user (`~/.jac/skills/`). Project entries shadow user entries on name collision. |
@@ -528,11 +567,20 @@ These were open in the previous draft; now locked.
 | D12 | **No hardcoded defaults for required runtime values.** No model default in code; the user must configure one via env, CLI flag, or config file. Prompts and minion templates ship with package defaults but may be overridden at the user or project workspace. |
 | D13 | **Profiles + secrets:** user-facing config is organized into named **profiles** (`[a-z0-9-]+`) in `~/.jac/config.yaml`, each binding `model:` + optional `env:` + optional `requires_env:`. Required secret env vars are inferred from the model's provider prefix via the provider catalog (D19), unless `requires_env` is set on the profile; values resolve from process env → configured backend (`keyring` default, `dotenv` fallback, `env-only` for pure shell-managed setups) → fail-first. Profile activation writes `os.environ` so pydantic-ai's normal provider construction stays unchanged. `--model` bypasses profile lookup but still resolves credentials best-effort. |
 | D14 | **Memory write path (2×2):** Gru writes durable facts via HITL-gated **`remember(reason, content, category, scope)`** into one of two JAC-owned files — `~/.jac/memory.md` for `scope="user"` (cross-project) or `<repo>/.agents/memory.md` for `scope="project"` (repo-local). Both mirror the AGENTS.md split (user-authored read side ↔ JAC-managed write side). Categories are a fixed enum (`convention / fact / preference / gotcha / decision`); the file structure is the same at both scopes. `scope` is required — there is no default, and `scope="project"` outside a git repo raises with an actionable error rather than scribbling into CWD. The symmetric **`forget(reason, content, scope)`** tool removes entries by exact-normalized match. Every entry carries an audit comment with timestamp + originating session id (via `jac.runtime.session_ctx` ContextVar). A soft size warning is surfaced through the tool result once a section crosses ~25 entries — loud, no automation. The summarizer minion (Phase 2b) routes any deltas through the same `remember` approval path; it never writes directly. |
-| D15 | **Plan tool (visible multi-step intent):** Gru declares multi-step work via **`plan(reason, steps)`** and progresses it with **`update_plan(reason, step, status)`**. State lives on a `PlanCapability` instance (one per agent / session) — never a module global, so minions stay isolated. The capability emits `PlanReplaced` / `PlanStepUpdated` onto the EventBus; the renderer draws a live checklist panel. **No approval required** — the plan is a visible side-effect-free todo list, and HITL on the user-facing intent declaration would be a double prompt. The plan is **ephemeral working memory** for the current session; durable facts still go through `remember`. Session resume intentionally does not restore the prior plan — by the time you're resuming, the prior intent is stale and Gru can re-declare. Minions do not get this capability (their work is scoped via a task packet). Caps: 1-25 steps, ≤240 chars each. |
+| D15 | **Task-list tool (visible multi-step intent).** Gru declares multi-step work via **`tasks(reason, steps)`** and progresses it with **`update_task(reason, step, status)`**. State lives on a `TaskListCapability` instance (one per agent / session) — never a module global, so minions stay isolated. The capability emits `TaskListReplaced` / `TaskStepUpdated` onto the EventBus; the renderer draws a live checklist panel. **No approval required** — the task list is a visible side-effect-free todo list, and HITL on the user-facing intent declaration would be a double prompt. The task list is **session-scoped working memory**; durable facts still go through `remember`. Minions do not get this capability (their work is scoped via a task packet). Caps: 1-25 steps, ≤240 chars each. **Revisions:** (1) per D27 the task list now *does* persist across `--resume` (in-progress steps flip to pending — the original "don't restore" stance held for week-old resumes but was wrong for crash recovery / cross-terminal continuity); (2) per D23 the tool names changed from `plan` / `update_plan` / `get_plan` to `tasks` / `update_task` / `get_tasks` so the word "plan" is reserved for Plan Mode. |
 | D16 | **Background processes via `ProcessCapability`:** long-running work (dev servers, watchers, long builds) uses **`start_process` / `tail_process` / `kill_process` / `list_processes`** — a separate tool surface from `run_shell`. `run_shell` stays synchronous with the 30s timeout for one-shot commands; anything longer goes through `start_process`. Output is captured into a **bounded 2000-line ring buffer per process** and surfaced via `tail_process` on demand — *not* streamed onto the EventBus, which would flood the renderer and the agent context. Mutating tools (`start_process`, `kill_process`) are HITL-gated; `tail_process` / `list_processes` are read-only. Process state lives on a `ProcessCapability` instance (one per session, like the plan capability). The REPL awaits `capability.shutdown()` in a `finally:` on session exit — SIGTERM all survivors, wait 5s, SIGKILL stragglers — so dev servers don't outlive the REPL. Minions do not get this capability. Events: `ProcessStarted(task_id, command, name)` and `ProcessExited(task_id, exit_code)`. |
-| D17 | **Structured user prompts via `clarify`:** when Gru needs the user to pick between concrete alternatives, it calls **`clarify(reason, question, options)`** rather than asking in free-form prose the model then has to parse from the user's reply. Mechanism mirrors the HITL approval flow: the tool emits a `ClarifyRequest` event carrying an `asyncio.Future`; the renderer prompts the user (numbered Rich panel) and resolves the future with a `ClarifyResponse` carrying the selected index and verbatim text. Cancellation (Ctrl-C / EOF) surfaces back to the tool as `RuntimeError` so the agent can pick a different approach rather than re-prompting. **Not approval-gated** — the prompt IS the side effect, and layering HITL on top would mean two prompts for one question. Validation: 2-8 distinct options, each ≤200 chars; question ≤500 chars. The same primitive will back the Phase 3 minion-factory delegation gate ("should I delegate this, and to which template?"). |
+| D17 | **Structured user prompts via `clarify`:** when Gru needs the user to pick between concrete alternatives, it calls **`clarify(reason, question, options)`** rather than asking in free-form prose the model then has to parse from the user's reply. Mechanism mirrors the HITL approval flow: the tool emits a `ClarifyRequest` event carrying an `asyncio.Future`; the renderer prompts the user (numbered Rich panel) and resolves the future with a `ClarifyResponse` carrying the selected index and verbatim text. Cancellation (Ctrl-C / EOF) surfaces back to the tool as `RuntimeError` so the agent can pick a different approach rather than re-prompting. **Not approval-gated** — the prompt IS the side effect, and layering HITL on top would mean two prompts for one question. Validation: 2-8 distinct options, each ≤200 chars; question ≤500 chars. The same primitive backs the future minion-delegation gate ("should I delegate this, and to which skill?"). Per D26, clarify gains a "Type your own answer" option that opens a free-text input — same `Future` plumbing, response marked `free_text=True`. |
 | D18 | **Web tools (`web_search` + `fetch_url`):** Gru gets the open web via two read-only JAC-decorated tools. We **wrap, don't directly use,** `duckduckgo_search_tool()` / `web_fetch_tool()` from `pydantic_ai.common_tools` because those ship as bare `Tool` objects without our `reason: str` discipline (D2 / §6a) — instead we re-implement the small surface and delegate to the upstream heavy lifting (DDGS for search; `WebFetchLocalTool` for SSRF-protected fetch + markdownify). **No approval required**: both tools are read-only, free, and the SSRF guard prevents the obvious local-network abuse; we'll revisit if we see misuse. Hard caps — `max_results` 1-10 (default 5); `fetch_url` returns ≤50k chars and rejects binary payloads (rather than burning context on PDFs / images). DuckDuckGo is the only backend in v1; Tavily/Exa or MCP-backed alternatives are a v2 question. |
 | D19 | **Provider catalog (`providers.yaml`):** provider → pydantic-ai prefix, required credential env vars, and optional `jac init` wizard metadata live in shipped `src/jac/data/providers.yaml`, deep-merged with optional `~/.jac/providers.yaml`. Runtime credential inference and the init wizard read this catalog; **profiles** in `config.yaml` still hold the user's chosen `model:` (fail-first — no default active model in the catalog). Unknown model prefixes warn and require no keys unless the profile sets `requires_env` explicitly. `groq` / `cohere` / `google-vertex` are catalog-only (manual profiles); wizard providers are those with a `wizard:` block. Bootstrap writes `providers.yaml.example` on first run; it never overwrites user `providers.yaml`. |
+| D20 | **Token-aware history compaction (supersedes Phase 2b summarizer minion).** The current `ProcessHistory` window caps at *40 exchanges* (count) — not tokens. At 40 heavy exchanges total context can sit at 180k+ tokens and every model call re-processes them, burning input-token cost on a loop. History becomes **token-budget-aware against the active model's context window**: **warn at 60%** (status bar turns yellow), **auto-compact at 70%**, **hard-refuse at 85%** (the user must run `/compact` or `/clear`). Compaction summarizes the about-to-drop slice into a single synthetic message using the **profile's `small` tier model** (never a hardcoded model name — D22). The original message slice is preserved on disk under `<session>/compacted/<n>.json` for replay/debugging. This rolls in what was Phase 2b — there is no separate summarizer minion; compaction *is* the summarizer. |
+| D21 | **Skills adopt the Anthropic community format; minions become specialized skills.** Skills are loaded from `~/.jac/skills/<name>/SKILL.md` (user) and `<repo>/.agents/skills/<name>/SKILL.md` (project, shadows user). File format matches the [community skill spec](https://www.anthropic.com/news/claude-skills): YAML frontmatter (`name:`, `description:`, plus optional `mode:`, `model_tier:`, `tools:`, `output_schema:`) and a markdown body of instructions. Default `mode: inline` injects the skill body into Gru's context when triggered — this is what every other harness does and what community skills assume. Optional `mode: minion` reuses the same file but adds the minion-specific fields (`model_tier:`, scoped `tools:`, `output_schema:`) to spawn a sub-agent with isolated context and structured return. Discovery + triggering follow the community pattern (description-based matching); a `/skill NAME` slash forces invocation. **This replaces the previously-planned bespoke YAML AgentSpec minion templates.** One install path, one discovery mechanism, full ecosystem compatibility. The full minion design (output schemas, tool scoping, factory orchestration) needs a follow-up grooming session before Phase 4 — D21 only locks the *format*, not the runtime. |
+| D22 | **Tiered model profiles (small / medium / large) with multi-provider tier lists.** Profile schema gains a `tiers:` block. Each tier maps to an *ordered list* of fully-qualified models — the first entry is the tier's default; the rest are alternates available via `/model` or programmatically. `active_tier:` selects Gru's default tier on REPL start. Minion templates select by `model_tier:` (e.g. `model_tier: small`), never by model name — swapping a tier's default swaps it for every minion uniformly. Multiple providers can share a tier (e.g. `small: [openai:gpt-4o-mini, anthropic:claude-haiku-4-5, google:gemini-2.5-flash]`) so a gateway-style profile or a "use whatever's cheapest today" setup falls out naturally. Tier names are intentionally neutral (small/medium/large) rather than role-flavored (cheap/default/deep) — the user maps tiers to use cases, not the other way around. Status bar shows `tier:NAME (model-short)` so the active model is always visible at a glance. `/model TIER` switches tier for rest of session; `/model PROVIDER:ID` allows ad-hoc one-session override outside the configured list (persists until user changes it again). **Migration:** pre-D22 profiles (top-level `model:`) are *not* compat-shimmed at the library level — `list_profiles()` fails fast with an actionable error. `jac init` detects them on entry, prints a notice listing the affected names, and (with user confirmation) auto-rewrites each as `tiers: {medium: [model]}, active_tier: medium` via `migrate_old_profiles()`. Idempotent, preserves `env:` and `requires_env:`. Hand-editing `~/.jac/config.yaml` is the other supported path. |
+| D23 | **Plan Mode is a structural toolset swap, not a prompt suggestion.** `/plan` (slash command) enters Plan Mode via a `PlanMode` capability that swaps Gru's active toolset for an explicit read-only subset: `read_file`, `grep`, `glob`, `list_dir`, `web_search`, `fetch_url`, `clarify`, the task-list family (D15 renamed — see below), and a *single* write exception — a `write_plan(content)` tool that persists the plan artifact to `<session>/plans/<n>.md`. All other mutating tools (`edit_file`, `write_file`, `run_shell`, `start_process`, `remember`, etc.) are **filtered out at construction time** — Gru cannot call them even if it wants to; the call fails before approval. A planning-focused system-prompt addendum is layered for the duration. The user reviews the produced plan artifact, then `/approve` exits the mode (restores full toolset; the plan markdown file is auto-referenced in Gru's instructions during execution) or `/cancel` discards. **Why structural and not prompt-only:** trust-but-verify — a plan-mode session may run cheap minions or fetch real URLs, but it must never mutate the workspace. Prompt instructions can be subverted; a removed toolset cannot. Distinct from D15's task list — see below. |
+| D24 | **A2A inbound spawns an isolated "guest Gru"; outbound is a separate tool.** `/a2a serve` (or headless `jac a2a serve`) starts `fasta2a` on a background asyncio task, binds to a configured port, and prints the URL + a freshly-generated bearer token. **Inbound A2A requests do not touch the main session.** Each call spawns a fresh "guest Gru" with empty session memory, a read-only toolset by default (configurable per profile via `a2a.guest_capabilities:`), and a separate Logfire span tagged with the calling agent's identity. Default auth is bearer-token (`Authorization: Bearer <token>`); the **`--unsafe` flag** allows unauthenticated mode and surfaces a loud startup warning. Server survives until the REPL exits or `/a2a stop`. Outbound is a separate read-only `a2a_call(reason, url, message)` tool following the [A2A protocol spec](https://a2a-protocol.org/latest/) — enables JAC to talk to any A2A-compatible agent (other JAC instances *or* third-party deployed agents like cloud-hosted data-science agents), not just JAC↔JAC. Gru may call `a2a_call` directly or delegate it to a minion (once minions exist) for back-and-forth conversations that would otherwise pollute Gru's context. **A2A moves out of v2** — it has no hard dependency on minions/skills and is the project's headline differentiator. |
+| D25 | **Budgets are token-based, never dollar-based.** Pydantic AI exposes token usage (`RunUsage.input_tokens`, `output_tokens`, `requests`) but **not cost** — cost depends on a per-model / per-provider / per-region price table that goes stale fast and varies by negotiated rates. We refuse to ship that mapping. Budget knobs are `budget.session_input_tokens:`, `budget.session_total_tokens:`, `budget.project_total_tokens:` (the last summed across sessions in `<repo>/.agents/usage.jsonl`). **Warn at 80%, hard-stop at 100%**; mid-session `/budget extend N` overrides for the rest of the session. Defaults are **`null` — no limits, opt-in only.** No surprise stops on first run. Cost translation is the user's responsibility (they have their own pricing) — we expose the raw token counts via the status bar (`ctx:%`) and `/tokens` slash; they map to whatever pricing they have. |
+| D26 | **Approval and Clarify accept in-band user feedback (extends D2 and D17).** The approval channel previously resolved to `approved | denied`. A third variant `denied_with_feedback(text)` is added: when the user denies a tool call they may type a redirection ("edit the test file instead, not the source") and the tool call returns to the model as a **tool result** carrying the feedback — no extra model roundtrip, no wasted turn. Clarify (D17) gains a `"Type your own answer"` choice that opens a text input; resolves with `free_text=True` on the response. Both reuse the existing event-bus `Future` plumbing — no new approval channel, no schema break in events that don't carry feedback. This is the "make orchestration as efficient as possible" discipline applied to the hottest interaction paths. |
+| D27 | **Task-list state persists across session resume (revises D15).** D15 said "session resume intentionally does not restore the prior plan — by the time you're resuming, the prior intent is stale." That reasoning held for **week-old** resumes but was wrong for the **crash-recovery / cross-terminal continuity** scenarios — process killed mid-task, user re-attaches in a new terminal. Revised behavior: task-list state is persisted to `<session>/tasks.json` on every mutation (cheap). On `--resume`, the state is reloaded with any `in_progress` steps flipped to `pending` (the actor was killed mid-step). The greeting surfaces the restored task list ("3 pending steps from last session — continue or replace?"); Gru's instructions for the first turn carry "you have a restored task list — continue or call `tasks()` to replace." **Naming note:** as part of D23 the existing `plan` / `update_plan` / `get_plan` tools are renamed to `tasks` / `update_task` / `get_tasks` — "plan" now exclusively refers to the Plan Mode artifact (D23), "tasks" refers to the live in-session checklist. The capability is renamed `TaskListCapability`. |
+| D28 | **MCP tools do not carry `reason: str` — accept loose enforcement, render honestly.** Our D2 / §6a rule requires `reason: str` on every JAC-authored tool. MCP tools come from external servers that don't know about this discipline. The options were: (a) wrap every MCP tool with a reason-injecting adapter — breaks community MCP server compatibility; (b) skip MCP entirely; (c) accept MCP tools as-is and render `reason: (mcp tool — no reason captured)` in the approval UI. **We chose (c).** Rationale: community MCP compatibility is more valuable than uniform reason enforcement. The approval UI is honest about the gap rather than hiding it. JAC-authored tools and MCP tools will behave differently in the approval panel — that asymmetry is documented, not papered over. This decision is scoped to *external* MCP servers only; any tool we write and expose *as* an MCP server still carries `reason:` on our side. Revisit if we later find a low-friction way to prompt the model to supply reasons for MCP calls without breaking the server contract. |
 
 ### Still open (smaller calls, deferrable)
 

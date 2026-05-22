@@ -28,8 +28,7 @@ from jac.capabilities.observability import setup_observability
 from jac.cli.keys_cmd import app as keys_app
 from jac.cli.profiles_cmd import app as profiles_app
 from jac.errors import JacConfigError
-from jac.profiles import Profile
-from jac.secrets import apply_profile_env
+from jac.secrets import apply_ad_hoc_model_env, apply_profile_env
 from jac.workspace.bootstrap import ensure_user_workspace
 
 app = typer.Typer(
@@ -157,7 +156,7 @@ def _activate_for_repl(*, model_override: str | None, profile_name: str | None) 
     """
     if model_override is not None:
         # Best-effort credential resolution for the ad-hoc model.
-        apply_profile_env("(--model override)", Profile(model=model_override))
+        apply_ad_hoc_model_env(model_override)
         return
 
     from jac.profiles import get_profile, resolve_active_profile_name

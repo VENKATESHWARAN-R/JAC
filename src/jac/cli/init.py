@@ -26,7 +26,9 @@ from jac.errors import JacConfigError
 from jac.profiles import (
     Profile,
     add_or_update_profile,
+    detect_old_profiles,
     list_profiles,
+    migrate_old_profiles,
     validate_profile_name,
 )
 from jac.providers.registry import get_provider_registry
@@ -40,6 +42,7 @@ console = Console()
 def run_init() -> None:
     """Run the wizard. Idempotent: re-runs add or update profiles."""
     ensure_user_workspace()
+    _maybe_migrate_old_profiles()
     existing = list_profiles()
 
     _print_intro(existing)
@@ -53,6 +56,36 @@ def run_init() -> None:
     )
     add_or_update_profile(profile_name, profile, set_default=set_as_default)
     _print_done(profile_name, set_as_default)
+
+
+def _maybe_migrate_old_profiles() -> None:
+    # TODO: Update this to be more generic and helpful for future version upgrades not just this one
+    """Detect pre-D22 ``model:`` profiles and offer to auto-rewrite as ``tiers:``."""
+    old = detect_old_profiles()
+    if not old:
+        return
+
+    listed = ", ".join(f"[bold]{n}[/bold]" for n in old)
+    console.print(
+        Panel.fit(
+            "[bold yellow]Old profile schema detected[/bold yellow]\n\n"
+            f"Profile(s) {listed} use the pre-D22 [bold]model:[/bold] field.\n"
+            "JAC's new schema groups models into [bold]tiers[/bold] "
+            "(small / medium / large) — see CLAUDE.md.\n\n"
+            "Auto-migration wraps each [bold]model: X[/bold] as "
+            "[bold]tiers: {medium: [X]}, active_tier: medium[/bold].\n"
+            "Your env: and requires_env: fields are preserved.",
+            border_style="yellow",
+        )
+    )
+    if not Confirm.ask("Migrate now?", default=True):
+        raise JacConfigError(
+            "old-schema profiles not migrated. Re-run `jac init` or hand-edit "
+            f"{paths.USER_CONFIG_FILE} to add tiers/active_tier."
+        )
+
+    migrated = migrate_old_profiles()
+    console.print(f"[green]✓[/green] migrated {len(migrated)} profile(s): {', '.join(migrated)}\n")
 
 
 # ---------- steps ----------
@@ -132,10 +165,32 @@ def _build_profile_interactive(existing: dict[str, Profile]) -> tuple[str, Profi
     _provider_id, spec, wizard = next(e for e in wizard_entries if e[0] == provider)
 
     model_name = Prompt.ask(
-        f"[bold]{wizard.label}[/bold] model",
+        f"[bold]{wizard.label}[/bold] model "
+        "[dim](this becomes your [bold]medium[/bold] tier)[/dim]",
         default=wizard.suggested_model,
     )
-    model_id = wizard.model_format.format(model=model_name)
+    medium_model = wizard.model_format.format(model=model_name)
+
+    tiers: dict[str, list[str]] = {"medium": [medium_model]}
+    if Confirm.ask(
+        "\n[dim]Optional: add [bold]small[/bold] and [bold]large[/bold] tiers now? "
+        "(Used by `/model TIER` and future cost-aware compaction.)[/dim]",
+        default=False,
+    ):
+        small = Prompt.ask(
+            "[bold]Small[/bold] tier model "
+            "[dim](full id, e.g. anthropic:claude-haiku-4-5 — blank to skip)[/dim]",
+            default="",
+        ).strip()
+        if small:
+            tiers["small"] = [small]
+        large = Prompt.ask(
+            "[bold]Large[/bold] tier model "
+            "[dim](full id, e.g. anthropic:claude-opus-4-7 — blank to skip)[/dim]",
+            default="",
+        ).strip()
+        if large:
+            tiers["large"] = [large]
 
     suggested = (
         provider
@@ -143,7 +198,7 @@ def _build_profile_interactive(existing: dict[str, Profile]) -> tuple[str, Profi
         else f"{provider}-{model_name.split('/')[-1].split(':')[0]}"
     )
     while True:
-        candidate = Prompt.ask("[bold]Profile name[/bold]", default=suggested).strip().lower()
+        candidate = Prompt.ask("\n[bold]Profile name[/bold]", default=suggested).strip().lower()
         try:
             validate_profile_name(candidate)
         except JacConfigError as exc:
@@ -170,7 +225,7 @@ def _build_profile_interactive(existing: dict[str, Profile]) -> tuple[str, Profi
         if value:
             profile_env[env_key] = value
 
-    return profile_name, Profile(model=model_id, env=profile_env)
+    return profile_name, Profile(tiers=tiers, active_tier="medium", env=profile_env)
 
 
 def _maybe_store_secrets(

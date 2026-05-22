@@ -60,15 +60,17 @@ uv run python -m jac             # equivalent invocation
 | Secrets (API keys, tokens) | `.env`, env vars | **dotenv** |
 | App config | `~/.jac/config.yaml`, `<repo>/.agents/config.yaml` | **YAML** |
 | Provider catalog | `src/jac/data/providers.yaml` (package), `~/.jac/providers.yaml` (user overlay) | **YAML** |
-| Agent / minion specs | `~/.jac/minions/templates/*.yaml`, `<repo>/.agents/minions/templates/*.yaml` | **YAML** |
+| Skills (community Anthropic format — D21) | `~/.jac/skills/<name>/SKILL.md`, `<repo>/.agents/skills/<name>/SKILL.md` | **Markdown w/ YAML frontmatter** |
 | System prompts | `~/.jac/prompts/*.md`, `<repo>/.agents/prompts/*.md` | **Markdown** |
 | Project context (auto-loaded) | `<repo>/AGENTS.md` (at repo root, community convention) | **Markdown** |
 | User context (auto-loaded) | `~/.jac/AGENTS.md` | **Markdown** |
 | Session message history | `<repo>/.agents/sessions/<ts>/messages.json` | **JSON** |
+| Session task list (D27) | `<repo>/.agents/sessions/<ts>/tasks.json` | **JSON** |
+| Session plan artifacts (D23 Plan Mode) | `<repo>/.agents/sessions/<ts>/plans/<n>.md` | **Markdown** |
 | Project memory (JAC-managed, auto-loaded) | `<repo>/.agents/memory.md` | **Markdown** |
 | User memory (JAC-managed, auto-loaded) | `~/.jac/memory.md` | **Markdown** |
+| Per-session token usage (D25 budgets) | `<repo>/.agents/usage.jsonl` | **JSONL** |
 | Project memory (structured, v2) | `<repo>/.agents/facts.jsonl` | **JSONL** |
-| Skills (v2) | `~/.jac/skills/*.py`, `<repo>/.agents/skills/*.py` | **Python** |
 
 **Unified standards:** one format per category. YAML covers everything human-edited and structured (config + specs). JSON / JSONL is machine state. Markdown is prose. dotenv is secrets. Don't mix.
 
@@ -85,20 +87,39 @@ Implementation lives in `jac.workspace.config_loader`. Missing required values r
 
 ### Profiles & secrets
 
-User-facing config is organized into **profiles**. Each profile binds a model + optional non-secret env (e.g. `OLLAMA_BASE_URL`) and inherits required secret-key names from the model's provider prefix (defined in the **provider catalog** — shipped `src/jac/data/providers.yaml`, overridable via `~/.jac/providers.yaml`). Schema:
+User-facing config is organized into **profiles** with **tiered model lists** (D22 — landing in Phase 1.7.c). Each profile binds a `tiers:` block (small / medium / large, each an ordered list — first entry is the tier's default), an `active_tier:` for Gru's default tier, and optional non-secret env (e.g. `OLLAMA_BASE_URL`). Required secret-key names are inferred from each model's provider prefix via the **provider catalog** (shipped `src/jac/data/providers.yaml`, overridable via `~/.jac/providers.yaml`). Schema:
 
 ```yaml
 default_profile: claude
 profiles:
   claude:
-    model: anthropic:claude-sonnet-4-5
+    tiers:
+      small:  [anthropic:claude-haiku-4-5]
+      medium: [anthropic:claude-sonnet-4-5]
+      large:  [anthropic:claude-opus-4-7]
+    active_tier: medium
+  gateway:                # multi-provider tier — works naturally
+    tiers:
+      small:  [openai:gpt-4o-mini, anthropic:claude-haiku-4-5, google:gemini-2.5-flash]
+      medium: [anthropic:claude-sonnet-4-5]
+      large:  [anthropic:claude-opus-4-7]
+    active_tier: medium
   ollama-local:
-    model: ollama:gemma3:e2b
+    tiers:
+      small:  [ollama:gemma3:e2b]
+      medium: [ollama:gemma3:e2b]
+    active_tier: small
     env:
       OLLAMA_BASE_URL: http://localhost:11434/v1
 secrets:
   backend: keyring   # keyring | dotenv | env-only
+budget:
+  session_input_tokens: null   # opt-in only (D25)
+  session_total_tokens: null
+  project_total_tokens: null
 ```
+
+Minion templates declare `model_tier:` (e.g. `model_tier: small`), never a hardcoded model name — swapping a tier's default swaps every minion uniformly. The history compaction summarizer (D20) also uses `small` tier.
 
 Credentials resolve at REPL startup in this order:
 
@@ -118,8 +139,8 @@ Profile activation lives in `jac.secrets.apply_profile_env` and writes `os.envir
 ├── AGENTS.md                 # user-level context (user-authored), auto-loaded
 ├── memory.md                 # user-level JAC-managed memory, written via `remember`
 ├── prompts/                  # overrides for shipped prompts
-├── minions/templates/
-├── skills/                   # v2
+├── skills/                   # community-format skills (D21, Phase 3)
+│   └── <name>/SKILL.md
 └── history                   # prompt-toolkit input history
 
 <repo>/AGENTS.md              # project context at REPO ROOT (community convention,
@@ -127,11 +148,15 @@ Profile activation lives in `jac.secrets.apply_profile_env` and writes `os.envir
 <repo>/.agents/               # JAC project workspace (community-neutral dir name)
 ├── config.yaml
 ├── memory.md                 # JAC-managed project memory, written via `remember`
+├── usage.jsonl               # per-session token usage (D25)
 ├── prompts/                  # project-level prompt overrides
-├── minions/templates/        # project-level minion templates
-├── skills/                   # v2
+├── skills/                   # project-level skills (shadow user-level)
+│   └── <name>/SKILL.md
 └── sessions/<timestamp>/
-    └── messages.json
+    ├── messages.json
+    ├── tasks.json            # restored on --resume (D27)
+    ├── plans/<n>.md          # Plan Mode artifacts (D23)
+    └── compacted/<n>.json    # original slices preserved after compaction (D20)
 ```
 
 Project-level files **shadow** user-level files of the same name; user-level files shadow package defaults. Sessions live only at project scope. `AGENTS.md` is intentionally at the repo root (not inside `.agents/`) to match the community convention — other tools that read `AGENTS.md` find it where they expect.
@@ -176,9 +201,11 @@ The following are built-in or shipped via `pydantic-ai-harness` — use them, do
 - `ModelMessagesTypeAdapter` (message history serialization)
 - `pydantic_ai.direct.model_request_sync` (lightweight model calls for routing/classification — use this instead of spinning up a full agent for tiny tasks like "should I delegate?")
 
-### Minions = `Agent.from_spec()` loaded from YAML
+### Skills + minions (D21 — supersedes the old YAML AgentSpec plan)
 
-Minions are short-lived agents loaded from declarative YAML specs. Resolution order (first hit wins): `<repo>/.agents/minions/templates/`, `~/.jac/minions/templates/`, `src/jac/minions/templates/` (package defaults). They receive a **locked task packet schema** via `deps`:
+**Skills (Phase 3, community-format):** loaded from `~/.jac/skills/<name>/SKILL.md` and `<repo>/.agents/skills/<name>/SKILL.md` (project shadows user). Format matches the [Anthropic community skill spec](https://www.anthropic.com/news/claude-skills) verbatim — YAML frontmatter (`name:`, `description:`, optional `mode:` / `model_tier:` / `tools:` / `output_schema:`) and a markdown body. Default `mode: inline` injects the body into Gru's context on description match (or via `/skill NAME`). Optional `mode: minion` reuses the same file to declare a sub-agent.
+
+**Minions (Phase 5 — runtime grooming pending):** a minion is a skill with `mode: minion`. Same install path, same discovery, same frontmatter. The factory spawns the sub-agent with isolated context and returns structured output. Task-packet schema (stable across the system):
 
 | Field | Required | Purpose |
 | --- | --- | --- |
@@ -188,7 +215,7 @@ Minions are short-lived agents loaded from declarative YAML specs. Resolution or
 | `forbidden_actions` | no | Specific actions the minion must not perform |
 | `expected_output` | yes | Description / JSONSchema of return shape |
 
-Templates may add their own `deps_schema` fields, but these five stay stable. Gru never sees a minion's internal turns — only its structured output.
+Skills may add their own frontmatter fields, but these five stay stable. Gru never sees a minion's internal turns — only its structured output. **Don't write code against the minion runtime yet** — it's blocked on a grooming session that locks output-schema enforcement, tool scoping, factory orchestration, and parallelism rules.
 
 ### Memory: prose first, structured later
 
@@ -203,25 +230,31 @@ Memory follows a **2×2 matrix** — user / project × user-authored / JAC-manag
 
 **Write side.** Gru persists durable facts via the **HITL-gated `remember(reason, content, category, scope)` tool** (Phase 2a / 2a.1) and removes them via the symmetric **`forget(reason, content, scope)`**. Categories are a fixed enum — `convention / fact / preference / gotcha / decision`. `scope` is required: `"user"` for cross-project facts, `"project"` for repo-specific facts. `scope="project"` outside a git repo raises `JacConfigError` rather than scribbling into CWD. Each entry carries `<!-- jac: <timestamp> session: <id> -->` for audit, written atomically, de-duped against the target section (loud rejection — Gru is told, not silently dropped). A soft "consider pruning" warning surfaces past ~25 entries per section. We **never** write to either `AGENTS.md` — those are owned by the user.
 
-The summarizer minion (Phase 2b, queued) will propose additional deltas at session close, but routes them through the same `remember` approval path — it never writes directly. Structured `facts.jsonl` (v2) is added **only when prose retrieval gets noisy** — memory management is a last resort, not a first move. Session memory lives under `<repo>/.agents/sessions/<timestamp>/` (folder-per-session, timestamp-named, human-readable).
+The old Phase 2b "summarizer minion" is **superseded** by Phase 1.7.a token-aware compaction (D20) — same job, better trigger (cost burn vs. session close), no separate minion. Structured `facts.jsonl` (v2) is added **only when prose retrieval gets noisy** — memory management is a last resort, not a first move. Session memory lives under `<repo>/.agents/sessions/<timestamp>/` (folder-per-session, timestamp-named, human-readable).
 
 ### Tracing fields on every Logfire span
 
 Every span carries: `template`, `task_id`, `parent_run_id`, `token_cost`, `duration`, `exit_status`. This is what makes minion runs debuggable later.
 
-## What is v2 (do not build in v1)
+## What is v2 (do not build now)
 
-If a task seems to require any of these, stop and ask before scaffolding:
+After the 2026-05-22 roadmap reshuffle, **A2A and skills moved out of v2** (to Phase 4 and Phase 3 respectively). What's actually still v2:
 
-- A2A interop (outbound exposure via `fasta2a`, inbound calls via bespoke HTTP toolset)
+- YOLO mode + sandboxing (Monty + `sandbox-exec` / `bwrap` + Git-Clean Guard)
+- CodeMode integration (`pydantic-ai-harness`) — deferred until we see real context bloat from individual file tools
+- Stuck-loop detection — low value in HITL where the human catches loops; mandatory only for YOLO
 - Night Shift / cron-triggered headless runs
-- YOLO mode + sandboxing (Monty + `sandbox-exec`/`bwrap`)
-- User-tier memory + predict-calibrate extraction
+- User-tier predict-calibrate memory extraction (the `~/.jac/memory.md` *file* already exists per Phase 2a.1; what's deferred is the *automatic extraction*)
 - Browser / API / SDK surfaces
-- Agent-authored reusable skills
-- Richer onboarding (tier-based models, per-project setup) — v1 `jac init` does just provider + model
 
-The full roadmap is `docs/architecture.md` §9; the live tracker is `docs/progress.md`.
+If a task seems to require any of the above, stop and ask before scaffolding. The full roadmap is `docs/architecture.md` §9; the live tracker is `docs/progress.md`.
+
+**Things that are NOT v2 anymore** (so go look at the right phase block before touching):
+
+- **A2A interop** — Phase 4 (server-side `fasta2a` + outbound `a2a_call` tool, isolated guest-Gru — D24)
+- **Skills** — Phase 3 (community Anthropic format — D21)
+- **Tier-based models** — Phase 1.7.c (D22)
+- **Richer onboarding** — still relatively thin; `jac init` will grow when there are more profile fields to set (tiers, budget, A2A guest caps)
 
 ## Reference projects (read-only, for inspiration)
 

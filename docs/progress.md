@@ -7,6 +7,8 @@ For the *why* see `idea.md`. For the *how* see `architecture.md` and `CLAUDE.md`
 
 Each phase block leads with **Goal** + **why/what/how** before the checklist. This is intentional — phases get revisited after long gaps and the rationale must survive without re-derivation. Architectural decisions live in `architecture.md §11`; this file is the *what*, but each phase here should hand you enough *why* that the *how* makes sense.
 
+**2026-05-22 roadmap reshuffle:** after a brainstorm pass on 2026-05-22 we reordered the post-1.6 phases. Phase 1.7 (Coworker experience — UX + cost-control batch) jumps to the front; Phase 2b (standalone summarizer minion) is **superseded** by 1.7.a (token-aware compaction); Phase 3 switches from bespoke YAML minion templates to the community **Skills** format (D21); A2A moves out of v2 to Phase 4; minions move to Phase 5 (pending a grooming session). See `architecture.md §9` for the rationale, §11 D20–D27 for the new decisions.
+
 ## Status summary
 
 | Phase | Status | Notes |
@@ -18,10 +20,14 @@ Each phase block leads with **Goal** + **why/what/how** before the checklist. Th
 | Phase 2a — `remember` tool | ✅ Complete | HITL-gated `remember`, JAC-owned `.agents/memory.md`, fixed category enum, auto-injected into Gru's context |
 | Phase 2a.1 — User scope + `forget` | ✅ Complete | `~/.jac/memory.md`, scope-aware `remember`/`forget`, session-id audit trail, soft size warning, fail-first on no-repo |
 | Phase 1.6 — Tool surface polish | ✅ Complete | plan, background processes, fs/grep upgrades, web search, clarify (all landed 2026-05-22 after a tool retrospective) |
-| Phase 2b — Summarizer minion | ⏸ Queued | proposes deltas at session close, routes through `remember` approval — needs Phase 3 minion infra |
-| Phase 3 — Minion factory | ⏸ Queued | spec loader + factory + first templates |
-| Phase 4 — Quality | ⏸ Queued | CodeMode + stuck-loop + tests + docs |
-| v2 | ⏸ Future | A2A / scheduling / YOLO / user memory tier / surfaces |
+| **Phase 1.7 — Coworker experience** | ⏳ **In flight** | umbrella for compaction, status bar, slash commands, plan mode, budgets, feedback channels — see sub-phases below. **1.7.c PR1 landed: D22 tiered profile schema + auto-migration.** Next: PR2 slash scaffolding. |
+| Phase 2b — Summarizer minion | ⛔ Superseded | rolled into Phase 1.7.a (token-aware compaction). No separate minion. |
+| Phase 3 — Skills (D21) | ⏸ Queued | community-format skill loader + inline mode (replaces old bespoke minion factory plan) |
+| Phase 4 — A2A (D24) | ⏸ Queued | inbound server + outbound client — moved up from v2 |
+| Phase 5 — Minions | ⏸ Queued | runtime for skills with `mode: minion` — **needs grooming session before implementation** |
+| Phase 6 — MCP | ⏸ Queued | external MCP servers + the `reason:` discipline call (D26 reasoning) |
+| Phase 7 — Quality | ⏸ Queued | broader pytest, ruff, mypy, user docs |
+| v2 | ⏸ Future | YOLO + Monty + CodeMode + stuck-loop + Night Shift + user-tier predict-calibrate memory |
 
 ---
 
@@ -284,38 +290,278 @@ Each phase block leads with **Goal** + **why/what/how** before the checklist. Th
 
 ---
 
-## Phase 2b — Summarizer minion ⏸
+## Phase 2b — Summarizer minion ⛔ Superseded
 
-The "first minion." Built on top of Phase 3 infra so we don't paint ourselves into a corner. Acts as a redundant safety net on the Phase 2a primary path — proposes deltas at session close, routes them through the same `remember` approval flow rather than writing directly.
+**Status (2026-05-22):** rolled into **Phase 1.7.a** (token-aware compaction). Rationale: the old plan was a standalone minion that summarized at session close. The new compaction path runs the *same* summarization mid-session (when the context window crosses 70%) using the profile's `small` tier model, against a far more useful trigger (cost burn, not session close). Two summarizers for one job would have been waste. Nothing else in this phase block survives — see Phase 1.7.a for the actual work.
 
-- [ ] `summarizer.yaml` minion template (no write tools — structurally cannot mutate memory.md)
-- [ ] Session-close hook that invokes the summarizer, then funnels proposed entries through `remember` (each one HITL-gated)
-- [ ] Token-cost / opt-in gating so summarization isn't surprise spend
+---
 
-## Phase 3 — Minion factory ⏸
+## Phase 1.7 — Coworker experience ⏳
 
-- [ ] Minion runner — load YAML spec, instantiate via `Agent.from_spec()`, run with task packet
-- [ ] `MinionFactory` capability exposing `spawn_minion(reason, template, task)`
-- [ ] First three templates: `researcher.yaml`, `builder.yaml`, `reviewer.yaml`
-- [ ] Playbook docstring on `spawn_minion` — Gru's delegation guidance
+**Goal:** turn JAC from "a single agent that works" into "an agent you'd actually want to sit next to all day." Eight small-to-medium changes that share renderer surface area and ship as one batch. The ordering follows brainstorm 2026-05-22 — biggest-pain items first.
 
-## Phase 4 — Quality ⏸
+**Why this exists (single paragraph):** by the end of Phase 1.6 Gru has a real tool surface but no visibility (you don't know what model is active, how much context you've burned, what session you're on), no slash commands (every action is a CLI restart), the sliding-window cap is exchange-count not token-count (a real cost trap — D20), and approval / clarify are yes-no choices that cost a model turn when the user wants to redirect. Phase 1.7 closes all of those at once because they fight over the same UI real estate (status bar + bottom prompt + inline panels).
 
-- [ ] CodeMode integration (`pydantic-ai-harness`)
-- [ ] Stuck-loop detection
+**Non-negotiables:** every new tool / event still carries `reason: str` and goes through `@jac_tool` and the EventBus. Slash commands share internals with their `jac <subcommand>` counterparts — *no duplicate logic*. New decisions ride to `architecture.md §11` in the same change.
+
+### Phase 1.7.a — Token-aware history compaction (D20) 🚧
+
+**Why:** current `ProcessHistory` caps at 40 *exchanges*. At 40 heavy exchanges, total context can sit at 180k+ tokens and *every model call re-processes them*. That is a direct, ongoing input-token cost burn — silent and expensive. This phase replaces exchange-count gating with a token-budget gate keyed to the active model's context window, with thresholds (60% warn / 70% auto-compact / 85% hard-refuse).
+
+**What:**
+- New `TokenAwareHistory` history processor that knows the active model's context limit and the current `RunUsage` totals
+- At ≥60% — emit a `CompactionWarning` event (status bar turns yellow)
+- At ≥70% — auto-compact: the oldest slice that brings us back under 50% is summarized via `model_request_sync` against the profile's `small` tier (never a hardcoded model — D22), replaced in-history with a single synthetic system message
+- At ≥85% — refuse the next user turn, surface "run `/compact` or `/clear`"
+- `<session>/compacted/<n>.json` preserves the original slice for replay
+- New events: `CompactionWarning(usage_pct)`, `CompactionTriggered(dropped_count, replaced_with_summary_tokens)`, `CompactionRefused(usage_pct)`
+
+**How:**
+- Lives in `jac.capabilities.history` (rewrites the existing exchange-count processor)
+- Tier lookup goes through `jac.profiles.active_profile().tier("small").default` — depends on D22 being in place first, but the simple form (single model per tier as today) works for the initial landing
+- Auto-compact is best-effort: if the small-tier model call fails, we fall back to dropping (the old behavior) and surface the error loudly
+- No approval gate — compaction is automatic and announced. User opts out via `/compact off` (toggles auto-compact for the session, hard-refuse still applies)
+
+- [ ] `TokenAwareHistory` processor reading model window + cumulative `RunUsage`
+- [ ] Three-threshold ladder (60/70/85) — tunable via `compaction:` block in profile YAML
+- [ ] Small-tier summarizer call wrapped in retries; fallback to drop on failure
+- [ ] `<session>/compacted/<n>.json` snapshots
+- [ ] New events + renderer warning panel + status bar color flip
+- [ ] `gru_system.md` mentions auto-compaction discipline so Gru doesn't redundantly summarize
+- [ ] architecture.md §11 D20 recorded ✅ (done in this change)
+
+### Phase 1.7.b — Status bar (depends on D22 schema) 🚧
+
+**Why:** the user has no persistent visibility into what model / tier / profile / session / branch / context usage is active. Every modern CLI agent shows this. It's the cheapest meaningful UX win.
+
+**What:** single-line `prompt_toolkit` `bottom_toolbar` that always shows:
+
+```
+profile:claude  tier:medium (sonnet-4-5)  branch:main*  ctx:34%/200k  session:20260522-1430
+```
+
+**How:**
+- New `jac.cli.statusbar` module — exposes a callable returning the toolbar string
+- Branch lookup is `git symbolic-ref --short HEAD` debounced to once per 5 seconds (don't shell on every keystroke); `*` if working tree is dirty
+- Context % comes from cumulative `RunUsage.input_tokens` / active model window
+- Tier comes from `jac.profiles.active_profile().active_tier`; model short name is the part after the last `:` in the tier's default model
+- Single-line by design — Rich `Live` multi-region was considered and rejected (more code, fights with approval/plan panels for vertical space)
+
+- [ ] `jac.cli.statusbar.format_toolbar()` pure function
+- [ ] Debounced git branch lookup
+- [ ] Wire `bottom_toolbar=` on the prompt-toolkit session in `repl.py`
+- [ ] Re-render on `CompactionWarning` (yellow), `BudgetWarning` (yellow), `BudgetHardStop` (red)
+- [ ] Renderer tests cover: no-git-repo, dirty tree, missing token usage, missing profile
+
+### Phase 1.7.c — Slash commands + tiered profile schema (D22) 🚧
+
+**Why:** every meaningful in-session action today (switch model, see sessions, compact, see cost, exit) requires killing the REPL and restarting with new args. Slash commands fix that and *share internals with the CLI subcommands* — no duplicate logic. Tiered profiles (D22) ship in this phase because `/model` is meaningless without them.
+
+**What:**
+- Slash registry: `/help`, `/exit`, `/clear` (new session in-place), `/model`, `/profile`, `/compact`, `/sessions`, `/resume`, `/cost`, `/tokens`, `/remember`, `/forget`, `/budget`, `/plan` (the *mode* entry — see 1.7.e)
+- Profile YAML schema gains `tiers:` (ordered list per tier, first = default) and `active_tier:`
+- `/model` with no arg shows configured tiers + alternates; `/model TIER` switches tier; `/model PROVIDER:ID` ad-hoc one-session override (persists until changed again — per user decision 2026-05-22)
+- `prompt_toolkit` `WordCompleter` populated from the registry + active profile's models
+
+**How:**
+- New `jac.cli.slash/` package — one module per command family
+- Each slash handler delegates to the same internals as the corresponding `jac` subcommand (the profile commands are the prototype; replicate that pattern)
+- `/remember TEXT` and `/forget TEXT` shortcut Gru's tool call — go through the same `MemoryCapability` but without the model roundtrip
+- Schema change is a **hard breaking change**. Library-level `list_profiles()` fails first on the old `model:` shape; `jac init` detects + auto-rewrites with user confirmation (2026-05-22 decision — friendlier than hand-edit-or-die).
+
+**PR carve-out (2026-05-22):** this phase ships in three PRs. PR1 = D22 schema + migration (landed). PR2 = slash scaffolding + `/help` `/exit` `/clear` `/sessions` `/resume`. PR3 = `/model` `/profile` + the rebuild-Gru path. **Slashes deferred to their upstream phases:** `/compact` (1.7.a), `/tokens` `/budget` (1.7.f), `/plan` (1.7.e). `/cost` is permanently out — D25 refuses dollar conversion. `/remember` `/forget` deferred to a follow-up; the UX needs more thought than fit in PR1-3.
+
+- [x] `jac.profiles.Profile` schema extended with `tiers:` (ordered list per tier) and `active_tier:` *(PR1)*
+- [x] Migration path for old `model:` field (auto-rewrite on `jac init` with user confirmation) *(PR1)*
+- [x] `apply_profile_env` uses `default_model()` and unioned secret inference; `apply_ad_hoc_model_env` for `--model` overrides *(PR1)*
+- [x] `jac init` collects per-tier models (medium required; small/large optional via follow-up prompt) *(PR1)*
+- [x] `jac profiles list` renders tiers with `← active` marker *(PR1)*
+- [x] Tests for tier schema, union secret inference, old-shape rejection, migration idempotency *(PR1)*
+- [ ] `jac.cli.slash.registry` with discovery + completer hook *(PR2)*
+- [ ] One module per command family; handlers reuse subcommand internals *(PR2/PR3)*
+- [ ] `prompt_toolkit` integration: completer + key binding for `/` *(PR2)*
+- [ ] `/model` + `/profile` + rebuild-Gru path *(PR3)*
+- [ ] `gru_system.md` updated so Gru knows the user can short-circuit `remember`/`forget`/`tasks` via slash *(deferred with the slashes themselves)*
+
+### Phase 1.7.d — Approval & clarify accept feedback (D26) 🚧
+
+**Why:** today denying a tool call costs a turn — the model has to re-decide what to do. With in-band feedback the user types "edit the test file instead" on the deny prompt and the model gets the redirection as a tool result. Same for clarify — adding a "type your own" option avoids a follow-up turn.
+
+**What:**
+- Approval prompt gets a third option: `[y]es / [n]o / [r]edirect with feedback`. Selecting `r` opens a multi-line input; the response becomes a `denied_with_feedback(text)` variant
+- Clarify prompt gets a final numbered option "Type your own answer" that opens a text input; resolves with `free_text=True`
+- Tool result for `denied_with_feedback` is structured: `{"approved": false, "user_feedback": "..."}` so the model has a clear signal
+
+**How:**
+- Reuses the existing event-bus `Future` plumbing — no new approval channel
+- `ApprovalResponse` event grows a `feedback: str | None` field (default None — non-breaking for events that don't carry feedback)
+- `ClarifyResponse` event grows `free_text: bool = False`
+- Renderer: small extension of `_prompt_approval` and `_prompt_clarify`
+
+- [ ] `ApprovalResponse.feedback` field + `denied_with_feedback` semantics
+- [ ] `ClarifyResponse.free_text` field + extra menu option
+- [ ] Renderer updates for both
+- [ ] `gru_system.md` notes that denials may carry redirections (Gru should read `user_feedback` when present)
+
+### Phase 1.7.e — Plan Mode (D23) 🚧
+
+**Why:** "plan mode" has converged on a specific meaning across the agent ecosystem — restricted read-only context where the model produces a plan artifact, the user reviews, then execution begins. Our current `plan` tool was just a checklist (now renamed to `tasks` per D27). This phase adds the *mode*.
+
+**What:**
+- Rename existing `plan` / `update_plan` / `get_plan` → `tasks` / `update_task` / `get_tasks` (capability becomes `TaskListCapability`, events become `TaskListReplaced` / `TaskStepUpdated`)
+- New `PlanMode` capability swaps Gru's active toolset for a read-only subset (`read_file`, `grep`, `glob`, `list_dir`, `web_search`, `fetch_url`, `clarify`, the task-list family) plus a single write tool `write_plan(reason, content)` that writes to `<session>/plans/<n>.md`
+- All other mutating tools are *removed at construction* — Gru cannot call them
+- `/plan` enters the mode (layers a planning system prompt addendum); `/approve` exits and the plan markdown is auto-referenced in Gru's instructions for execution; `/cancel` discards
+
+**How:**
+- `PlanMode` extends a new `ModeCapability` base class — toolset filter + prompt overlay. Future modes (YOLO, review-only) reuse the same shape
+- The toolset swap is *structural* (D23) — re-instantiate the agent with the filtered capability list, not a runtime check
+- Plan artifacts are markdown so they survive into git review naturally
+
+- [ ] Rename plan tools → task tools (one breaking change, pre-1.0)
+- [ ] `ModeCapability` base — toolset filter + prompt addendum slot
+- [ ] `PlanMode` subclass with the read-only subset
+- [ ] `write_plan` tool (the only write exception)
+- [ ] Slash handlers for `/plan`, `/approve`, `/cancel`
+- [ ] `prompts/plan_mode.md` addendum
+- [ ] architecture.md §11 D23 recorded ✅ (done in this change)
+
+### Phase 1.7.f — Token budgets (D25) 🚧
+
+**Why:** running a learning project against paid providers without a stop button is asking for a surprise bill. Token-based (not dollar-based — D25) budgets give us a provider-agnostic guardrail.
+
+**What:**
+- New `budget:` block in profile/project config: `session_input_tokens:`, `session_total_tokens:`, `project_total_tokens:`
+- All defaults are `null` (opt-in only — no surprise stops on first run)
+- Warn at 80% (`BudgetWarning` event, status bar yellow), hard-stop at 100% (`BudgetHardStop` event, refuses next user turn)
+- `/budget extend N` overrides for the rest of the session
+- `<repo>/.agents/usage.jsonl` aggregates per-session totals so `project_total_tokens` works across sessions
+
+**How:**
+- New `jac.runtime.usage` module — observes `after_model_request`, accumulates into per-session + per-project counters
+- Status bar reads from this module
+- `/cost` is intentionally absent — D25 explicitly refuses dollar conversion
+
+- [ ] `jac.runtime.usage.UsageTracker` accumulating from `RunUsage`
+- [ ] `<repo>/.agents/usage.jsonl` append-on-turn-close
+- [ ] `BudgetWarning` / `BudgetHardStop` events; renderer + status bar integration
+- [ ] `/budget` slash + `budget:` config block
+- [ ] architecture.md §11 D25 recorded ✅ (done in this change)
+
+### Phase 1.7.g — Task-list persistence on resume (D27) 🚧
+
+**Why:** the current task list (formerly plan) is in-memory only. Process killed → cross-terminal resume → lost. D27 revises D15 to persist tasks per session.
+
+**What:**
+- `<session>/tasks.json` written on every `tasks` / `update_task` call
+- On `--resume`, state is reloaded; `in_progress` steps flip to `pending` (the actor was killed)
+- Greeting surfaces restored task list; Gru's first-turn context says "you have a restored task list — continue or call `tasks()` to replace"
+
+- [ ] Persistence in `TaskListCapability` (after rename per 1.7.e)
+- [ ] Resume path in `Session.resume(id)` loads `tasks.json`, flips in-progress → pending
+- [ ] REPL greeting surfaces it
+- [ ] `gru_system.md` covers the restored-tasks signal
+- [ ] architecture.md §11 D27 recorded ✅ (done in this change)
+
+### Phase 1.7.h — Tavily web search backend 🚧
+
+**Why:** Tavily is becoming the standard search backend for agent harnesses; DDG works but is the fallback, not the lead. Wire Tavily as primary when an API key is present, DDG otherwise. Provider-native search (Anthropic/OpenAI/Google) was considered and rejected — it would force per-provider code paths and break portability. One client-side `web_search` tool, two backends.
+
+- [ ] Add `tavily-python` to optional extras (or hit the HTTP API directly — TBD when implementing)
+- [ ] `TAVILY_API_KEY` added to provider catalog as a non-provider-bound key (or to the `web:` block in config)
+- [ ] `web_search` tool picks backend based on key presence; signature unchanged
+- [ ] `jac init` prompts for Tavily key as optional
+- [ ] `gru_system.md` unchanged (tool surface identical)
+
+---
+
+## Phase 3 — Skills (D21) ⏸
+
+**Goal:** adopt the Anthropic community skills format so JAC isn't an island — community-maintained skills install as-is, and our own minions (Phase 5) are built on the same substrate.
+
+**Why:** D21. The previously-planned bespoke YAML AgentSpec format was reinventing what's now a community standard. Skills are markdown-with-frontmatter (`name:`, `description:`, body) loaded from `~/.jac/skills/<name>/SKILL.md` and `<repo>/.agents/skills/<name>/SKILL.md`. Default `mode: inline` injects the body into Gru's context when the skill's description matches the user's request (description-based triggering, same as Claude Code and Anthropic's own skill ecosystem). Optional `mode: minion` extends the same file for sub-agent spawning — but the *runtime* for that lives in Phase 5 (needs grooming).
+
+- [ ] Skill loader walks `~/.jac/skills/` and `<repo>/.agents/skills/` (project shadows user)
+- [ ] Frontmatter validator (community spec compliance)
+- [ ] Description-based triggering — inject skill body into Gru's system prompt when relevant
+- [ ] `/skill NAME` slash to force-load a skill
+- [ ] `/skill list` shows available skills and their trigger conditions
+- [ ] Ship 2-3 reference skills in `src/jac/data/skills/` (a `code-review` skill is a good first candidate)
+- [ ] Documentation: how to write a skill (point at the Anthropic spec)
+- [ ] architecture.md §11 D21 recorded ✅ (done in this change)
+
+---
+
+## Phase 4 — A2A (D24) ⏸
+
+**Goal:** speak the A2A protocol both ways so JAC can talk to other A2A-compatible agents (other JAC instances *or* third-party deployed agents — D24 explicitly covers the case of a cloud-deployed data-science agent exposing A2A).
+
+**Why now (not v2):** D24. A2A has no hard dependency on minions or skills, and it's the project's headline differentiator. Continuing to defer it makes the differentiator vapor.
+
+**Inbound (server):**
+- [ ] `fasta2a` server wrapped as a `Capability`, spawned on a background asyncio task by `/a2a serve` or `jac a2a serve`
+- [ ] Generated bearer token printed at start; `Authorization: Bearer <token>` enforced unless `--unsafe`
+- [ ] **Guest Gru** — each inbound request spawns a *fresh* Gru with empty session memory, read-only toolset by default (configurable per profile via `a2a.guest_capabilities:`), separate Logfire span tagged with caller identity
+- [ ] Server survives until REPL exits or `/a2a stop`
+- [ ] Headless mode (`jac a2a serve --port N`) for running A2A without an interactive REPL
+
+**Outbound (client):**
+- [ ] `a2a_call(reason, url, message)` tool — read-only (no approval needed for the *call*, but the model's *use* of the returned data may trigger approval on downstream tools)
+- [ ] Follow the [A2A protocol spec](https://a2a-protocol.org/latest/)
+- [ ] Auth header support — config block for known peers' tokens
+- [ ] Gru may delegate A2A back-and-forth to a minion (once minions exist) to keep its own context clean
+
+- [ ] architecture.md §11 D24 recorded ✅ (done in this change)
+
+---
+
+## Phase 5 — Minions ⏸ (grooming pending)
+
+**Goal:** runtime for skills with `mode: minion` — spawn a sub-agent with isolated context, scoped toolset, structured output, return to Gru.
+
+**⚠️ Needs a grooming session before any code lands.** D21 locks the *file format* (skills with `mode: minion`). The *runtime* is not yet designed: output schema enforcement, tool scoping rules, factory orchestration, parallelism (one at a time? many?), failure handling, structured output validation, retry policy. Owner of next grooming session: TBD.
+
+- [ ] Grooming session: lock the runtime design, add D-numbers
+- [ ] Minion factory capability + `spawn_minion(reason, skill_name, task_packet)` tool
+- [ ] Task packet schema (already locked in §5a — `objective` / `success_criteria` / `relevant_files` / `forbidden_actions` / `expected_output`)
+- [ ] Tier-based model selection from `model_tier:` field
+- [ ] Structured output validation against the skill's `output_schema:` block
+- [ ] First 2-3 reference minion-mode skills
+
+---
+
+## Phase 6 — MCP ⏸
+
+**Goal:** consume external MCP servers so JAC's tool surface scales without us writing every tool by hand.
+
+**`reason:` tension resolved (D28):** MCP tools don't carry `reason: str`. We accept loose enforcement — render `reason: (mcp tool — no reason captured)` in the approval UI. Honest about the gap, community-compatible. See architecture.md §11 D28.
+
+- [x] `reason:` tension resolved as D28 (2026-05-22)
+- [ ] `~/.jac/mcp.yaml` schema + loader
+- [ ] `MCPServerStdio` / `MCPServerHTTP` wiring via pydantic-ai
+- [ ] `/mcp list` and `/mcp reload` slash commands
+- [ ] Per-server enable/disable
+
+---
+
+## Phase 7 — Quality ⏸
+
+- [ ] CodeMode integration moved to v2 (no concrete pain yet — D9 in idea.md notes)
+- [ ] Stuck-loop detection moved to v2 (low value in HITL where human catches loops)
 - [x] Provider registry tests (`tests/test_provider_registry.py`, `just test`)
-- [ ] Broader test suite (pytest)
+- [ ] Broader test suite (pytest) — capability-level coverage for the Phase 1.7 additions
 - [ ] Ruff / mypy config
-- [ ] User docs
+- [ ] User docs (publish under `docs/user-guide/` via the existing Zensical site)
+
+---
 
 ## v2 ⏸
 
 - [ ] YOLO mode + sandboxing (Monty + sandbox-exec / bwrap + Git-Clean Guard)
-- [ ] A2A — `fasta2a` outbound, bespoke HTTP client toolset inbound
+- [ ] CodeMode integration (`pydantic-ai-harness`)
+- [ ] Stuck-loop detection
 - [ ] Night Shift / cron scheduling
 - [ ] User-tier memory + predict-calibrate extraction
-- [ ] Agent-authored skills
-- [ ] Richer `jac init` (tier-based models, project workspace setup, key-validation)
 - [ ] Browser / API / SDK surfaces
 
 ---

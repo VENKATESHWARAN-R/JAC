@@ -25,6 +25,7 @@ from typing import Literal
 
 from jac.errors import JacConfigError
 from jac.profiles import Profile
+from jac.providers.registry import get_provider_registry, provider_prefix
 from jac.workspace import paths
 
 KEYRING_SERVICE = "jac"
@@ -177,19 +178,14 @@ def resolve(key: str) -> tuple[str | None, str]:
     return None, "missing"
 
 
-def apply_profile_env(profile_name: str, profile: Profile) -> None:
-    """Inject the profile's model + env + resolved secrets into ``os.environ``.
+def _resolve_env_keys(keys: list[str]) -> list[str]:
+    """Resolve each key into ``os.environ`` from the configured backend.
 
-    Sets ``JAC_MODEL`` so :func:`jac.config.get_settings` picks it up via the
-    normal env path. Raises :class:`JacConfigError` listing any missing
-    required secrets so the user gets one actionable error, not N.
+    Returns the names that couldn't be resolved anywhere — caller decides
+    whether that's fatal.
     """
-    os.environ["JAC_MODEL"] = profile.model
-    for k, v in profile.env.items():
-        os.environ[k] = v
-
     missing: list[str] = []
-    for key in profile.required_env_keys():
+    for key in keys:
         if key in os.environ:
             continue
         value, _ = resolve(key)
@@ -197,11 +193,49 @@ def apply_profile_env(profile_name: str, profile: Profile) -> None:
             missing.append(key)
         else:
             os.environ[key] = value
+    return missing
 
+
+def apply_profile_env(profile_name: str, profile: Profile) -> None:
+    """Inject the profile's default model + env + resolved secrets into ``os.environ``.
+
+    Sets ``JAC_MODEL`` to ``profile.default_model()`` (the active tier's first
+    entry — D22) so :func:`jac.config.get_settings` picks it up via the
+    normal env path. Resolves the **union** of secrets across all tier models
+    so tier-switching mid-session never hits a missing key. Raises
+    :class:`JacConfigError` listing any missing required secrets so the user
+    gets one actionable error, not N.
+    """
+    os.environ["JAC_MODEL"] = profile.default_model()
+    for k, v in profile.env.items():
+        os.environ[k] = v
+
+    missing = _resolve_env_keys(profile.required_env_keys())
     if missing:
         listed = ", ".join(missing)
         first = missing[0]
         raise JacConfigError(
             f"profile {profile_name!r} requires {listed} but they aren't set. "
+            f"Run `jac keys set {first}` to store, or export in your shell."
+        )
+
+
+def apply_ad_hoc_model_env(model: str) -> None:
+    """Activate a one-shot ``--model PROVIDER:ID`` override.
+
+    Sets ``JAC_MODEL`` and best-effort resolves the secrets required by the
+    model's provider prefix. Used by the ``--model`` CLI flag and by the
+    in-REPL ``/model PROVIDER:ID`` slash command (Phase 1.7.c PR3).
+
+    Missing secrets are reported as one actionable error.
+    """
+    os.environ["JAC_MODEL"] = model
+    required = get_provider_registry().required_env_for_prefix(provider_prefix(model))
+    missing = _resolve_env_keys(required)
+    if missing:
+        listed = ", ".join(missing)
+        first = missing[0]
+        raise JacConfigError(
+            f"model {model!r} requires {listed} but they aren't set. "
             f"Run `jac keys set {first}` to store, or export in your shell."
         )
