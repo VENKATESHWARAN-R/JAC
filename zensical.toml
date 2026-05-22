@@ -5,7 +5,7 @@
 
 [project]
 site_name = "JAC"
-site_description = "Local-first AI coworker harness, built on Pydantic AI."
+site_description = "Just Another Companion/CLI — built on Pydantic AI."
 site_author = "Venkateshwaran R"
 site_url = "https://venkateshwaran-r.github.io/JAC/"
 repo_url = "https://github.com/VENKATESHWARAN-R/JAC"

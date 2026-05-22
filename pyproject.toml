@@ -1,7 +1,7 @@
 [project]
 name = "jac"
 version = "0.1.2"
-description = "Local-first AI coworker harness built on Pydantic AI."
+description = "Just Another Companion/CLI — built on Pydantic AI."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [

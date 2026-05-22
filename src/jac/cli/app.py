@@ -34,7 +34,7 @@ from jac.workspace.bootstrap import ensure_user_workspace
 
 app = typer.Typer(
     name="jac",
-    help="JAC — local-first AI coworker harness.",
+    help="JAC — Just Another Companion/CLI, An agentic harness built on Pydantic AI.",
     no_args_is_help=False,
     add_completion=False,
 )

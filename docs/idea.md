@@ -1,10 +1,10 @@
-# JAC — IDEA
+# JAC — Just Another Companion/CLI
 
 > **Status:** Draft v2 · **Last revised:** 2026-05-19 · **Type:** product vision
 
 ## What JAC is
 
-JAC is a **local-first AI coworker harness**. It runs on the user's machine and wraps an LLM with the things the model lacks on its own: persistent memory, tools, orchestration, context discipline, and continuity across sessions.
+**JAC** (**J**ust **A**nother **C**ompanion/CLI) is a Python CLI built on Pydantic AI. It runs on the user's machine and wraps an LLM with the things the model lacks on its own: persistent memory, tools, orchestration, context discipline, and continuity across sessions.
 
 JAC is the runtime around the model that turns raw reasoning into a practical worker.
 

@@ -1,6 +1,6 @@
 # JAC — Implementation Progress
 
-> **Updated:** 2026-05-22 · keep this in sync as work lands.
+> **Just Another Companion/CLI** · **Updated:** 2026-05-22 · keep this in sync as work lands.
 
 This file tracks **what is implemented**, **what is in flight**, and **what is queued**.
 For the *why* see `idea.md`. For the *how* see `architecture.md` and `CLAUDE.md`.

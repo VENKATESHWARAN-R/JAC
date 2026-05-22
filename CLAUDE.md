@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+**JAC** (**J**ust **A**nother **C**ompanion/CLI) is an agentic harness built on Pydantic AI. It runs on the user's machine and wraps an LLM with persistent memory, tools, orchestration, and session continuity. See [`docs/idea.md`](docs/idea.md) for product vision and scope.
+
 ## Project state
 
 See `docs/progress.md` for what's implemented, what's in flight, and what's queued. **Update it as work lands.**

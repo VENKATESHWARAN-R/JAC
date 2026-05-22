@@ -1,3 +1,3 @@
-"""JAC — local-first AI coworker harness."""
+"""JAC — Just Another Companion/CLI, An agentic harness built on Pydantic AI."""
 
 __version__ = "0.1.2"

@@ -1,11 +1,10 @@
 # JAC
 
-> **Local-first AI coworker harness, built on Pydantic AI.**
+> **Just Another Companion/CLI — built on Pydantic AI.**
 
-JAC is a Python CLI that wraps an LLM with the things the model lacks on its
-own: persistent memory, tools, human-in-the-loop gates, multi-provider
-credentials, and session continuity. It runs entirely on your machine — your
-keys, your files, your context, no cloud relay.
+JAC is a Python CLI that wraps an LLM with persistent memory, tools,
+human-in-the-loop gates, multi-provider credentials, and session continuity.
+It runs on your machine — your keys, your files, your context.
 
 ## Documentation map
 

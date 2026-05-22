@@ -7,7 +7,7 @@ This is a living document. Where a decision is settled, it's stated as a decisio
 
 ## 1. System overview
 
-JAC is a thin orchestration layer over Pydantic AI. The model and the agent loop are Pydantic AI's. JAC's contribution is: persona (Gru), packaged capabilities, a minion factory, a CLI surface, and tier-aware memory.
+JAC (**J**ust **A**nother **C**ompanion/CLI) is a thin orchestration layer over Pydantic AI. The model and the agent loop are Pydantic AI's. JAC's contribution is: persona (Gru), packaged capabilities, a minion factory, a CLI surface, and tier-aware memory.
 
 ```mermaid
 flowchart TB
