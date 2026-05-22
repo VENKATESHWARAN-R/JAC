@@ -22,7 +22,8 @@ import asyncio
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
-from prompt_toolkit.completion import WordCompleter
+from prompt_toolkit.completion import CompleteEvent, Completer, Completion
+from prompt_toolkit.document import Document
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import FileHistory
 from pydantic_ai import Agent, AgentRunResult
@@ -78,19 +79,42 @@ _BANNER_MIN_WIDTH = 30
 console = Console()
 
 
+class _SlashOnlyCompleter(Completer):
+    """Yields completions only when the user is typing a slash command.
+
+    The default ``WordCompleter`` matches the *current word* at the cursor,
+    treating ``/`` as a non-word character — so it both (a) fires the
+    dropdown after any space (the bug 1.7.b shipped with) and (b) silently
+    fails to match ``/re`` against ``/resume``. We do our own matching:
+
+    - The buffer (left of cursor) must start with ``/``.
+    - The cursor must still be on the first word (no space yet). Once the
+      user has typed ``/model openai...`` we stop offering completions; the
+      command name is locked in and the rest is argument prose.
+    - Within those rules we suggest every registered name whose ``/name``
+      prefix matches the typed text.
+    """
+
+    def __init__(self, names: list[str]) -> None:
+        self._candidates = [f"/{n}" for n in sorted(names)]
+
+    def get_completions(self, document: Document, complete_event: CompleteEvent):
+        text = document.text_before_cursor
+        if not text.startswith("/"):
+            return
+        if " " in text:
+            return
+        for candidate in self._candidates:
+            if candidate.startswith(text):
+                yield Completion(candidate, start_position=-len(text))
+
+
 def _make_prompt_session(status: StatusState) -> PromptSession[str]:
     paths.USER_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
-    # WordCompleter offers slash-command names when the user types `/`.
-    # Non-slash input falls through unchanged — no completer matches.
-    completer = WordCompleter(
-        [f"/{name}" for name in command_names()],
-        ignore_case=False,
-        match_middle=False,
-    )
     return PromptSession(
         history=FileHistory(str(paths.USER_HISTORY_FILE)),
         auto_suggest=AutoSuggestFromHistory(),
-        completer=completer,
+        completer=_SlashOnlyCompleter(list(command_names())),
         bottom_toolbar=lambda: format_toolbar(status),
         multiline=False,
     )

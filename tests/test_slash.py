@@ -356,3 +356,47 @@ def test_profile_switch_to_unknown_surfaces_error(ctx: SlashContext, isolated_co
     result = dispatch("/profile does-not-exist", ctx)
     assert isinstance(result, Handled)
     assert "no profile" in ctx.console.export_text()
+
+
+# ---------- prompt-toolkit slash-only completer ----------
+
+
+def _complete(text: str) -> list[str]:
+    """Run the REPL's slash-only completer against ``text`` and return suggestions."""
+    from prompt_toolkit.completion import CompleteEvent
+    from prompt_toolkit.document import Document
+
+    from jac.cli.repl import _SlashOnlyCompleter
+
+    completer = _SlashOnlyCompleter(["help", "exit", "clear", "sessions", "resume"])
+    document = Document(text=text, cursor_position=len(text))
+    return [c.text for c in completer.get_completions(document, CompleteEvent())]
+
+
+def test_completer_fires_on_slash_prefix() -> None:
+    suggestions = _complete("/")
+    assert "/help" in suggestions
+    assert "/exit" in suggestions
+
+
+def test_completer_filters_by_typed_prefix() -> None:
+    suggestions = _complete("/re")
+    assert "/resume" in suggestions
+    assert "/help" not in suggestions
+
+
+def test_completer_silent_on_plain_text() -> None:
+    """Typing regular prose must NOT trigger the slash dropdown — the bug fix."""
+    assert _complete("hello world") == []
+    assert _complete("write a file") == []
+
+
+def test_completer_silent_after_first_word_completes() -> None:
+    """Once the user has typed a space, slash-command suggestions stop —
+    the rest of the line is arguments, not a command name."""
+    assert _complete("/model ") == []
+    assert _complete("/model anthropic:") == []
+
+
+def test_completer_silent_on_empty_input() -> None:
+    assert _complete("") == []
