@@ -56,9 +56,7 @@ class Session:
         """Persist ``messages`` to disk. Overwrites the existing file."""
         self.session_dir.mkdir(parents=True, exist_ok=True)
         self.message_history = messages
-        self.messages_file.write_bytes(
-            ModelMessagesTypeAdapter.dump_json(messages, indent=2)
-        )
+        self.messages_file.write_bytes(ModelMessagesTypeAdapter.dump_json(messages, indent=2))
 
     @classmethod
     def new(cls) -> Session:
@@ -89,9 +87,7 @@ class Session:
         """
         latest = cls.latest_id()
         if latest is None:
-            raise JacConfigError(
-                "no sessions to resume in this project — start one with `jac`"
-            )
+            raise JacConfigError("no sessions to resume in this project — start one with `jac`")
         return cls.resume(latest)
 
     @classmethod

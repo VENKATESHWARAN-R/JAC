@@ -96,7 +96,7 @@ class ApprovalRequest(JacEvent):
     tool_name: str
     reason: str | None
     args: dict[str, Any]
-    response_future: "asyncio.Future[ApprovalResponse]"
+    response_future: asyncio.Future[ApprovalResponse]
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,7 +121,7 @@ class ClarifyRequest(JacEvent):
 
     question: str
     options: tuple[str, ...]
-    response_future: "asyncio.Future[ClarifyResponse]"
+    response_future: asyncio.Future[ClarifyResponse]
 
 
 @dataclass(frozen=True, slots=True)

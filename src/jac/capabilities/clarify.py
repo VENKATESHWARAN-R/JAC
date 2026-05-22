@@ -55,9 +55,7 @@ class ClarifyCapability(AbstractCapability[Any]):
         bus = self.bus
 
         @jac_tool
-        async def clarify(
-            reason: str, question: str, options: list[str]
-        ) -> str:
+        async def clarify(reason: str, question: str, options: list[str]) -> str:
             """Ask the user to pick exactly one of ``options``.
 
             Use when you genuinely need a decision the user is best
@@ -104,16 +102,12 @@ class ClarifyCapability(AbstractCapability[Any]):
             seen: set[str] = set()
             for i, raw in enumerate(options, start=1):
                 if not isinstance(raw, str):
-                    raise ValueError(
-                        f"option #{i} must be a string; got {type(raw).__name__}."
-                    )
+                    raise ValueError(f"option #{i} must be a string; got {type(raw).__name__}.")
                 opt = raw.strip()
                 if not opt:
                     raise ValueError(f"option #{i} is empty.")
                 if len(opt) > _MAX_OPTION_CHARS:
-                    raise ValueError(
-                        f"option #{i} exceeds {_MAX_OPTION_CHARS} chars."
-                    )
+                    raise ValueError(f"option #{i} exceeds {_MAX_OPTION_CHARS} chars.")
                 key = opt.lower()
                 if key in seen:
                     raise ValueError(
@@ -123,9 +117,7 @@ class ClarifyCapability(AbstractCapability[Any]):
                 seen.add(key)
                 cleaned.append(opt)
 
-            future: asyncio.Future[ClarifyResponse] = (
-                asyncio.get_running_loop().create_future()
-            )
+            future: asyncio.Future[ClarifyResponse] = asyncio.get_running_loop().create_future()
             await bus.emit(
                 ClarifyRequest(
                     question=q,

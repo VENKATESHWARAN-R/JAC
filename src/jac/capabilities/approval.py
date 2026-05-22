@@ -19,7 +19,13 @@ import json
 from typing import Any
 
 from pydantic_ai.capabilities import HandleDeferredToolCalls
-from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, RunContext, ToolDenied
+from pydantic_ai.tools import (
+    DeferredToolRequests,
+    DeferredToolResults,
+    RunContext,
+    ToolApproved,
+    ToolDenied,
+)
 
 from jac.runtime.bus import EventBus
 from jac.runtime.events import ApprovalRequest, ApprovalResponse
@@ -49,7 +55,7 @@ def make_approval_handler(bus: EventBus) -> HandleDeferredToolCalls[Any]:
         if not requests.approvals:
             return None
 
-        approvals: dict[str, bool | ToolDenied] = {}
+        approvals: dict[str, bool | ToolApproved | ToolDenied] = {}
         for call in requests.approvals:
             args = _coerce_args(call.args)
             reason = args.get("reason")

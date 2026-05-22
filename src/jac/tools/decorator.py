@@ -15,11 +15,12 @@ from __future__ import annotations
 import inspect
 import typing
 from collections.abc import Callable
-from typing import TypeVar
-
-F = TypeVar("F", bound=Callable[..., object])
 
 _JAC_TOOL_MARKER = "__jac_tool__"
+
+
+def _tool_qualname(func: Callable[..., object]) -> str:
+    return getattr(func, "__qualname__", repr(func))
 
 
 def _resolve_annotation(func: Callable[..., object], name: str, raw: object) -> object:
@@ -35,7 +36,7 @@ def _resolve_annotation(func: Callable[..., object], name: str, raw: object) -> 
     return resolved.get(name, raw)
 
 
-def jac_tool(func: F) -> F:
+def jac_tool[F: Callable[..., object]](func: F) -> F:
     """Mark ``func`` as a JAC tool and validate its signature.
 
     The first parameter (or first parameter after a leading ``ctx``) must
@@ -55,20 +56,20 @@ def jac_tool(func: F) -> F:
 
     if not params:
         raise TypeError(
-            f"@jac_tool {func.__qualname__}: missing required `reason: str` parameter. "
+            f"@jac_tool {_tool_qualname(func)}: missing required `reason: str` parameter. "
             "Every JAC tool must justify its call — see docs/architecture.md §6a."
         )
 
     first = params[0]
     if first.name != "reason":
         raise TypeError(
-            f"@jac_tool {func.__qualname__}: first non-ctx parameter must be named "
+            f"@jac_tool {_tool_qualname(func)}: first non-ctx parameter must be named "
             f"`reason`, got `{first.name}`. See docs/architecture.md §6a."
         )
     annotation = _resolve_annotation(func, first.name, first.annotation)
     if annotation is not str:
         raise TypeError(
-            f"@jac_tool {func.__qualname__}: `reason` must be annotated `str`, "
+            f"@jac_tool {_tool_qualname(func)}: `reason` must be annotated `str`, "
             f"got `{annotation!r}`. See docs/architecture.md §6a."
         )
 

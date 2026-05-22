@@ -104,7 +104,7 @@ async def _run_turn(gru: Agent, bus: EventBus, text: str, message_history: list)
     async def run_agent_and_signal() -> AgentRunResult[str]:
         try:
             result = await gru.run(text, message_history=message_history)
-        except Exception as exc:  # noqa: BLE001 — emit and re-raise for the caller
+        except Exception as exc:
             await bus.emit(RunFailed(error=str(exc)))
             raise
         await bus.emit(RunCompleted(output=str(result.output)))
@@ -203,7 +203,7 @@ async def _repl_loop(
         # Best-effort: never raise from cleanup, the REPL is already exiting.
         try:
             await process_capability.shutdown()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             console.print(f"[yellow]warning:[/yellow] process shutdown: {exc}")
 
 

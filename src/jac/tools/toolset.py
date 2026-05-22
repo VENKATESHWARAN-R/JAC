@@ -29,7 +29,7 @@ def jac_function_toolset(*funcs: Callable[..., Any]) -> FunctionToolset:
     for f in funcs:
         if not is_jac_tool(f):
             raise TypeError(
-                f"{f.__qualname__} is not decorated with @jac_tool. "
+                f"{getattr(f, '__qualname__', repr(f))} is not decorated with @jac_tool. "
                 "Every JAC tool must justify its call. See docs/architecture.md §6a."
             )
     return FunctionToolset(tools=list(funcs))

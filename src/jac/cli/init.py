@@ -15,7 +15,7 @@ Honest design notes:
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import Any, cast
 
 import yaml
 from rich.console import Console
@@ -70,6 +70,7 @@ def run_init() -> None:
 
 # ---------- steps ----------
 
+
 def _print_intro(existing: dict[str, Profile]) -> None:
     if existing:
         console.print(
@@ -100,15 +101,18 @@ def _pick_or_load_backend(existing: dict[str, Profile]) -> SecretBackendName:
         console.print(f"[dim]secrets backend:[/dim] [bold]{current}[/bold]")
         return current
 
-    backend_name: SecretBackendName = Prompt.ask(
-        "\n[bold]Where should JAC store API keys?[/bold]\n"
-        "  [bold]keyring[/bold]  — OS keychain (recommended)\n"
-        "  [bold]dotenv[/bold]   — ~/.jac/.env, plaintext, chmod 600\n"
-        "  [bold]env-only[/bold] — JAC won't store; you'll manage via shell\n"
-        "choice",
-        choices=["keyring", "dotenv", "env-only"],
-        default="keyring",
-    )  # type: ignore[assignment]
+    backend_name = cast(
+        SecretBackendName,
+        Prompt.ask(
+            "\n[bold]Where should JAC store API keys?[/bold]\n"
+            "  [bold]keyring[/bold]  — OS keychain (recommended)\n"
+            "  [bold]dotenv[/bold]   — ~/.jac/.env, plaintext, chmod 600\n"
+            "  [bold]env-only[/bold] — JAC won't store; you'll manage via shell\n"
+            "choice",
+            choices=["keyring", "dotenv", "env-only"],
+            default="keyring",
+        ),
+    )
     _write_backend_choice(backend_name)
     reset_settings_cache()
     return backend_name
@@ -126,7 +130,11 @@ def _build_profile_interactive(existing: dict[str, Profile]) -> tuple[str, Profi
     model_id = pc["format"].format(model=model_name)
 
     # Profile name — validated, with friendly retry.
-    suggested = provider if provider not in existing else f"{provider}-{model_name.split('/')[-1].split(':')[0]}"
+    suggested = (
+        provider
+        if provider not in existing
+        else f"{provider}-{model_name.split('/')[-1].split(':')[0]}"
+    )
     while True:
         candidate = Prompt.ask("[bold]Profile name[/bold]", default=suggested).strip().lower()
         try:
@@ -134,12 +142,11 @@ def _build_profile_interactive(existing: dict[str, Profile]) -> tuple[str, Profi
         except JacConfigError as exc:
             console.print(f"  [red]{exc}[/red]")
             continue
-        if candidate in existing:
-            if not Confirm.ask(
-                f"  [yellow]profile {candidate!r} exists — overwrite?[/yellow]",
-                default=False,
-            ):
-                continue
+        if candidate in existing and not Confirm.ask(
+            f"  [yellow]profile {candidate!r} exists — overwrite?[/yellow]",
+            default=False,
+        ):
+            continue
         profile_name = candidate
         break
 
@@ -168,7 +175,7 @@ def _maybe_store_secrets(
         # Already stored?
         try:
             already = backend.get(key)
-        except Exception:  # noqa: BLE001 — backend may be unavailable; treat as missing
+        except Exception:
             already = None
         if already:
             console.print(f"  [green]✓[/green] {key} already in [bold]{backend_name}[/bold]")
@@ -190,9 +197,7 @@ def _maybe_store_secrets(
                 backend.set(key, env_value)
                 console.print(f"    [green]✓ imported {key}[/green]")
             else:
-                console.print(
-                    f"    [dim]skipped — JAC will keep reading {key} from env[/dim]"
-                )
+                console.print(f"    [dim]skipped — JAC will keep reading {key} from env[/dim]")
             continue
 
         # Not in env or backend — prompt or warn depending on backend.
@@ -237,7 +242,7 @@ def _print_done(profile_name: str, set_as_default: bool) -> None:
         f"profile [bold]{profile_name}[/bold] saved to {paths.USER_CONFIG_FILE}.",
     ]
     if set_as_default:
-        lines.append(f"set as default — [bold]jac[/bold] will use it.")
+        lines.append("set as default — [bold]jac[/bold] will use it.")
     else:
         lines.append(f"use it explicitly: [bold]jac --profile {profile_name}[/bold]")
     lines.append("")

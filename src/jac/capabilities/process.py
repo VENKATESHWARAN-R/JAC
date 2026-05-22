@@ -33,6 +33,7 @@ Architecture decision: docs/architecture.md §11 D16.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import signal as _signal
 import time
 from collections import deque
@@ -133,9 +134,7 @@ class ProcessCapability(AbstractCapability[Any]):
         task to finish, then SIGKILLs anything still alive. Best-effort —
         we never raise from shutdown.
         """
-        pending: list[_ProcessRecord] = [
-            r for r in self.store.all() if r.exit_code is None
-        ]
+        pending: list[_ProcessRecord] = [r for r in self.store.all() if r.exit_code is None]
         if not pending:
             return
         for record in pending:
@@ -145,13 +144,11 @@ class ProcessCapability(AbstractCapability[Any]):
                 continue
         drain_tasks = [r.drain_task for r in pending if r.drain_task is not None]
         if drain_tasks:
-            try:
+            with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(
                     asyncio.gather(*drain_tasks, return_exceptions=True),
                     timeout=_SHUTDOWN_GRACE_S,
                 )
-            except asyncio.TimeoutError:
-                pass
         for record in pending:
             if record.exit_code is None:
                 try:
@@ -168,9 +165,7 @@ class ProcessCapability(AbstractCapability[Any]):
                 await bus.emit(event)
 
         @jac_tool
-        async def start_process(
-            reason: str, command: str, name: str | None = None
-        ) -> str:
+        async def start_process(reason: str, command: str, name: str | None = None) -> str:
             """Spawn ``command`` as a background process.
 
             Use this for anything that runs longer than ~30s or needs to
@@ -214,12 +209,10 @@ class ProcessCapability(AbstractCapability[Any]):
                 assert proc.stdout is not None
                 try:
                     async for raw_line in proc.stdout:
-                        output.append(
-                            raw_line.decode("utf-8", errors="replace").rstrip("\n")
-                        )
+                        output.append(raw_line.decode("utf-8", errors="replace").rstrip("\n"))
                 except asyncio.CancelledError:
                     raise
-                except Exception as exc:  # noqa: BLE001 — capture once, don't crash
+                except Exception as exc:
                     output.append(f"[jac: drain error: {exc}]")
                 exit_code = await proc.wait()
                 record.exit_code = exit_code
@@ -227,16 +220,12 @@ class ProcessCapability(AbstractCapability[Any]):
 
             record.drain_task = asyncio.create_task(_drain())
             store.records[task_id] = record
-            await _emit(
-                ProcessStarted(task_id=task_id, command=command, name=name)
-            )
+            await _emit(ProcessStarted(task_id=task_id, command=command, name=name))
             label = f" (name={name})" if name else ""
             return f"started {task_id}: {command}{label}"
 
         @jac_tool
-        def tail_process(
-            reason: str, task_id: str, lines: int = _TAIL_DEFAULT_LINES
-        ) -> str:
+        def tail_process(reason: str, task_id: str, lines: int = _TAIL_DEFAULT_LINES) -> str:
             """Return the last ``lines`` of merged stdout/stderr for ``task_id``.
 
             Each process keeps a rolling 2000-line buffer. If output
@@ -253,9 +242,7 @@ class ProcessCapability(AbstractCapability[Any]):
                 tailed lines, or a "(no output yet)" notice.
             """
             if not (1 <= lines <= _TAIL_MAX_LINES):
-                raise ValueError(
-                    f"`lines` must be between 1 and {_TAIL_MAX_LINES}; got {lines}."
-                )
+                raise ValueError(f"`lines` must be between 1 and {_TAIL_MAX_LINES}; got {lines}.")
             record = store.get(task_id)
             snapshot = list(record.output)[-lines:]
             header_parts = [f"{record.task_id} {record.status}"]
@@ -269,9 +256,7 @@ class ProcessCapability(AbstractCapability[Any]):
             return header + "\n" + "\n".join(snapshot)
 
         @jac_tool
-        async def kill_process(
-            reason: str, task_id: str, signal: str = "TERM"
-        ) -> str:
+        async def kill_process(reason: str, task_id: str, signal: str = "TERM") -> str:
             """Send ``signal`` to a running background process.
 
             Default is ``TERM`` (graceful). Use ``INT`` to mimic Ctrl-C,
@@ -289,15 +274,10 @@ class ProcessCapability(AbstractCapability[Any]):
             """
             sig_num = _SIGNAL_MAP.get(signal.upper())
             if sig_num is None:
-                raise ValueError(
-                    f"signal must be one of {sorted(_SIGNAL_MAP)}; got {signal!r}."
-                )
+                raise ValueError(f"signal must be one of {sorted(_SIGNAL_MAP)}; got {signal!r}.")
             record = store.get(task_id)
             if record.exit_code is not None:
-                return (
-                    f"{task_id} already exited (code={record.exit_code}); "
-                    f"no signal sent."
-                )
+                return f"{task_id} already exited (code={record.exit_code}); no signal sent."
             try:
                 record.process.send_signal(sig_num)
             except ProcessLookupError:
@@ -330,9 +310,7 @@ class ProcessCapability(AbstractCapability[Any]):
         return [start_process, tail_process, kill_process, list_processes]
 
 
-def _needs_approval(
-    ctx: Any, tool_def: ToolDefinition, args: dict[str, Any]
-) -> bool:
+def _needs_approval(ctx: Any, tool_def: ToolDefinition, args: dict[str, Any]) -> bool:
     return tool_def.name in _RISKY_TOOLS
 
 

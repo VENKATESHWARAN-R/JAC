@@ -69,23 +69,22 @@ def unset_cmd(
         backend.unset(key)
     except JacConfigError as exc:
         console.print(f"[red]error:[/red] {exc}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
     console.print(f"[green]✓[/green] unset [bold]{key}[/bold] in {backend.name}")
 
 
 # ---------- helpers ----------
+
 
 def _status() -> None:
     try:
         profiles = list_profiles()
     except JacConfigError as exc:
         console.print(f"[red]error:[/red] {exc}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
     if not profiles:
-        console.print(
-            "[dim]no profiles configured. Run [bold]jac init[/bold].[/dim]"
-        )
+        console.print("[dim]no profiles configured. Run [bold]jac init[/bold].[/dim]")
         return
 
     # Collect required keys across profiles.
@@ -99,8 +98,7 @@ def _status() -> None:
 
     if not required_by:
         console.print(
-            "[dim]configured profiles don't require any secrets "
-            "(e.g. Ollama-only).[/dim]"
+            "[dim]configured profiles don't require any secrets (e.g. Ollama-only).[/dim]"
         )
         return
 

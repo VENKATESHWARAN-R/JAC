@@ -114,6 +114,7 @@ def resolve_under_project(path: str | Path) -> Path:
 
 # --- Package defaults ---------------------------------------------
 
+
 @cache
 def package_root() -> Path:
     """Filesystem path to the installed JAC package directory."""

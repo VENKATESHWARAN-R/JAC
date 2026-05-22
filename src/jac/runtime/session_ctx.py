@@ -20,9 +20,7 @@ from __future__ import annotations
 
 from contextvars import ContextVar
 
-_current_session_id: ContextVar[str | None] = ContextVar(
-    "jac_current_session_id", default=None
-)
+_current_session_id: ContextVar[str | None] = ContextVar("jac_current_session_id", default=None)
 
 
 def set_current_session_id(session_id: str | None) -> None:

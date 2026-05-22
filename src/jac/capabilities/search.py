@@ -155,9 +155,7 @@ def _grep_ripgrep(
     )
     # rg exits 1 when there are no matches — that's not an error.
     if proc.returncode not in (0, 1):
-        raise RuntimeError(
-            f"rg exited {proc.returncode}: {proc.stderr.strip() or 'no stderr'}"
-        )
+        raise RuntimeError(f"rg exited {proc.returncode}: {proc.stderr.strip() or 'no stderr'}")
     results: list[str] = []
     for line in proc.stdout.splitlines():
         # rg format: PATH:LINENO:CONTENT
@@ -199,13 +197,11 @@ def _grep_python(
             rel = fp
         rel_str = str(rel)
         if include_globs and not any(
-            fnmatch.fnmatch(rel_str, g) or fnmatch.fnmatch(fp.name, g)
-            for g in include_globs
+            fnmatch.fnmatch(rel_str, g) or fnmatch.fnmatch(fp.name, g) for g in include_globs
         ):
             continue
         if exclude_globs and any(
-            fnmatch.fnmatch(rel_str, g) or fnmatch.fnmatch(fp.name, g)
-            for g in exclude_globs
+            fnmatch.fnmatch(rel_str, g) or fnmatch.fnmatch(fp.name, g) for g in exclude_globs
         ):
             continue
         try:

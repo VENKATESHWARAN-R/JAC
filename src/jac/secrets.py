@@ -16,6 +16,7 @@ Missing values are fail-first with an actionable message — never silent.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import stat
 from abc import ABC, abstractmethod
@@ -36,6 +37,7 @@ SecretBackendName = Literal["keyring", "dotenv", "env-only"]
 
 
 # ---------- backends ----------
+
 
 class SecretBackend(ABC):
     name: SecretBackendName
@@ -69,11 +71,8 @@ class KeyringBackend(SecretBackend):
         import keyring
         import keyring.errors
 
-        try:
+        with contextlib.suppress(keyring.errors.PasswordDeleteError):
             keyring.delete_password(KEYRING_SERVICE, key)
-        except keyring.errors.PasswordDeleteError:
-            # already gone — idempotent
-            pass
 
 
 class DotenvBackend(SecretBackend):
@@ -108,10 +107,8 @@ class DotenvBackend(SecretBackend):
         for k in sorted(data):
             lines.append(f"{k}={data[k]}")
         DOTENV_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        try:
+        with contextlib.suppress(OSError):  # Windows may not honor this; best-effort
             DOTENV_FILE.chmod(stat.S_IRUSR | stat.S_IWUSR)  # 0600
-        except OSError:
-            pass  # Windows may not honor this; best-effort
 
     def get(self, key: str) -> str | None:
         return self._read().get(key)
@@ -147,6 +144,7 @@ class EnvOnlyBackend(SecretBackend):
 
 
 # ---------- factory + resolver ----------
+
 
 def get_backend(name: SecretBackendName | None = None) -> SecretBackend:
     """Return a secret backend by name; default = current config setting."""

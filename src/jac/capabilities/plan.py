@@ -40,9 +40,7 @@ from jac.runtime.events import (
 )
 from jac.tools import jac_function_toolset, jac_tool
 
-_VALID_STATUSES: frozenset[PlanStepStatus] = frozenset(
-    {"pending", "in_progress", "completed"}
-)
+_VALID_STATUSES: frozenset[PlanStepStatus] = frozenset({"pending", "in_progress", "completed"})
 _MAX_STEPS = 25
 _MAX_STEP_CHARS = 240
 _STATUS_GLYPH: dict[PlanStepStatus, str] = {
@@ -82,9 +80,7 @@ class PlanStore:
             if not text:
                 raise ValueError("plan steps must be non-empty strings.")
             if len(text) > _MAX_STEP_CHARS:
-                raise ValueError(
-                    f"plan step exceeds {_MAX_STEP_CHARS} chars: {text[:60]}…"
-                )
+                raise ValueError(f"plan step exceeds {_MAX_STEP_CHARS} chars: {text[:60]}…")
             cleaned.append(_PlanStep(text=text))
         self.steps = cleaned
         return list(self.steps)
@@ -92,17 +88,13 @@ class PlanStore:
     def update(self, index: int, status: PlanStepStatus) -> _PlanStep:
         if status not in _VALID_STATUSES:
             raise ValueError(
-                f"unknown status {status!r}; must be one of "
-                f"{sorted(_VALID_STATUSES)}."
+                f"unknown status {status!r}; must be one of {sorted(_VALID_STATUSES)}."
             )
         if not self.steps:
-            raise ValueError(
-                "no plan to update; call `plan` first to declare your steps."
-            )
+            raise ValueError("no plan to update; call `plan` first to declare your steps.")
         if not (1 <= index <= len(self.steps)):
             raise ValueError(
-                f"step index {index} out of range; plan has "
-                f"{len(self.steps)} step(s) (1-based)."
+                f"step index {index} out of range; plan has {len(self.steps)} step(s) (1-based)."
             )
         step = self.steps[index - 1]
         step.status = status
@@ -169,9 +161,7 @@ class PlanCapability(AbstractCapability[Any]):
             return store.render()
 
         @jac_tool
-        async def update_plan(
-            reason: str, step: int, status: PlanStepStatus
-        ) -> str:
+        async def update_plan(reason: str, step: int, status: PlanStepStatus) -> str:
             """Update one step's status. ``step`` is 1-based.
 
             Use this immediately when starting a step (``in_progress``)
@@ -188,9 +178,7 @@ class PlanCapability(AbstractCapability[Any]):
                 Rendered plan as a numbered checklist.
             """
             updated = store.update(step, status)
-            await _emit(
-                PlanStepUpdated(index=step, status=updated.status, text=updated.text)
-            )
+            await _emit(PlanStepUpdated(index=step, status=updated.status, text=updated.text))
             return store.render()
 
         @jac_tool

@@ -70,9 +70,7 @@ def make_hooks(bus: EventBus) -> Hooks:
         preview = str(result)
         if len(preview) > _RESULT_PREVIEW_MAX:
             preview = preview[: _RESULT_PREVIEW_MAX - 3] + "..."
-        await bus.emit(
-            ToolCallCompleted(tool_name=call.tool_name, result_preview=preview)
-        )
+        await bus.emit(ToolCallCompleted(tool_name=call.tool_name, result_preview=preview))
         return result
 
     @hooks.on.tool_execute_error

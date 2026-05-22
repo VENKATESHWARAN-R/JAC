@@ -72,9 +72,7 @@ async def web_search(
     if not q:
         raise ValueError("`query` must not be empty.")
     if not 1 <= max_results <= _MAX_RESULTS_HARD_CAP:
-        raise ValueError(
-            f"`max_results` must be 1-{_MAX_RESULTS_HARD_CAP}; got {max_results}."
-        )
+        raise ValueError(f"`max_results` must be 1-{_MAX_RESULTS_HARD_CAP}; got {max_results}.")
     client = DDGS()
     search = functools.partial(client.text, max_results=max_results)
     raw = await anyio.to_thread.run_sync(search, q)

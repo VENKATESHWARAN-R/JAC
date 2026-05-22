@@ -101,7 +101,7 @@ def root(
         _activate_for_repl(model_override=model, profile_name=profile)
     except JacConfigError as exc:
         console.print(f"[red]config error:[/red] {exc}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
     from jac.cli.repl import run_repl
 
@@ -124,8 +124,7 @@ def sessions_command() -> None:
     ids = Session.list_ids()
     if not ids:
         console.print(
-            "[dim]no sessions yet in this project. "
-            "Start one with [bold]jac[/bold].[/dim]"
+            "[dim]no sessions yet in this project. Start one with [bold]jac[/bold].[/dim]"
         )
         return
 
@@ -141,6 +140,7 @@ def sessions_command() -> None:
 
 
 # ---------- internal ----------
+
 
 def _activate_for_repl(*, model_override: str | None, profile_name: str | None) -> None:
     """Resolve and apply the profile that this REPL turn will use.

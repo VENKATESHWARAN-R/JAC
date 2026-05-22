@@ -108,6 +108,7 @@ def _save_raw_config(data: dict[str, Any]) -> None:
 
 # ---------- profile CRUD ----------
 
+
 def list_profiles() -> dict[str, Profile]:
     """Return all profiles defined in ``~/.jac/config.yaml``."""
     raw = _load_raw_config()
@@ -119,7 +120,7 @@ def list_profiles() -> dict[str, Profile]:
         validate_profile_name(name)
         try:
             result[name] = Profile.model_validate(payload or {})
-        except Exception as exc:  # noqa: BLE001 — surface YAML schema errors
+        except Exception as exc:
             raise JacConfigError(f"profile {name!r} is malformed: {exc}") from exc
     return result
 
@@ -193,9 +194,7 @@ def resolve_active_profile_name(cli_name: str | None) -> str:
     if default is None:
         profiles = list_profiles()
         if not profiles:
-            raise JacConfigError(
-                "no profiles configured. Run `jac init` to set one up."
-            )
+            raise JacConfigError("no profiles configured. Run `jac init` to set one up.")
         raise JacConfigError(
             "no `default_profile` set. "
             f"Run `jac profiles use <name>` (available: {', '.join(profiles)})."

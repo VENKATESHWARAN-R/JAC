@@ -75,13 +75,9 @@ def read_file(
         if first < 1:
             raise ValueError(f"`start_line` must be >= 1; got {first}.")
         if first > total:
-            raise ValueError(
-                f"`start_line` {first} exceeds file length ({total} lines)."
-            )
+            raise ValueError(f"`start_line` {first} exceeds file length ({total} lines).")
         if last < first:
-            raise ValueError(
-                f"`end_line` ({last}) must be >= `start_line` ({first})."
-            )
+            raise ValueError(f"`end_line` ({last}) must be >= `start_line` ({first}).")
         last = min(last, total)
         if last - first + 1 > _MAX_READ_LINES:
             raise ValueError(
@@ -154,13 +150,9 @@ def edit_file(reason: str, path: str, patches: list[dict[str, str]]) -> str:
                 f"patch #{i} must be a dict with `old` and `new` string keys."
             ) from exc
         if not isinstance(old, str) or not isinstance(new, str):
-            raise ValueError(
-                f"patch #{i}: `old` and `new` must both be strings."
-            )
+            raise ValueError(f"patch #{i}: `old` and `new` must both be strings.")
         if old == new:
-            raise ValueError(
-                f"patch #{i}: `old` and `new` are identical — nothing to do."
-            )
+            raise ValueError(f"patch #{i}: `old` and `new` are identical — nothing to do.")
         occurrences = text.count(old)
         if occurrences == 0:
             raise ValueError(
@@ -213,9 +205,7 @@ def list_dir(reason: str, path: str = ".", show_hidden: bool = False) -> list[st
         if child.is_dir():
             try:
                 count = sum(
-                    1
-                    for sub in child.iterdir()
-                    if show_hidden or not sub.name.startswith(".")
+                    1 for sub in child.iterdir() if show_hidden or not sub.name.startswith(".")
                 )
                 annotation = f"({count} entr{'y' if count == 1 else 'ies'})"
             except (PermissionError, OSError):

@@ -45,7 +45,7 @@ def use_cmd(
         set_default_profile(name)
     except JacConfigError as exc:
         console.print(f"[red]error:[/red] {exc}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
     console.print(f"[green]✓[/green] default profile is now [bold]{name}[/bold]")
 
 
@@ -58,7 +58,7 @@ def remove_cmd(
         remove_profile(name)
     except JacConfigError as exc:
         console.print(f"[red]error:[/red] {exc}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
     console.print(
         f"[green]✓[/green] removed profile [bold]{name}[/bold] "
         "[dim](any stored keys are kept — use `jac keys unset` if you want them gone)[/dim]"
@@ -67,24 +67,21 @@ def remove_cmd(
 
 # ---------- helpers ----------
 
+
 def _list_profiles() -> None:
     try:
         profiles = list_profiles()
     except JacConfigError as exc:
         console.print(f"[red]error:[/red] {exc}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
     if not profiles:
-        console.print(
-            "[dim]no profiles configured. Run [bold]jac init[/bold] to create one.[/dim]"
-        )
+        console.print("[dim]no profiles configured. Run [bold]jac init[/bold] to create one.[/dim]")
         return
     default = get_default_profile_name()
     console.print("[bold]Profiles:[/bold]")
     for name, p in profiles.items():
         marker = " [green](default)[/green]" if name == default else ""
-        env_part = (
-            f" [dim]· env: {', '.join(sorted(p.env))}[/dim]" if p.env else ""
-        )
+        env_part = f" [dim]· env: {', '.join(sorted(p.env))}[/dim]" if p.env else ""
         console.print(f"  [bold]{name}[/bold]{marker}  [dim]{p.model}[/dim]{env_part}")
     console.print(
         "\n[dim]switch default:[/dim] [bold]jac profiles use <name>[/bold]"

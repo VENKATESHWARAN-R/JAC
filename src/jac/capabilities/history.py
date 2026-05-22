@@ -28,9 +28,7 @@ def _has_user_prompt(message: ModelMessage) -> bool:
     return any(isinstance(part, UserPromptPart) for part in message.parts)
 
 
-def _slice_by_exchanges(
-    messages: Sequence[ModelMessage], max_exchanges: int
-) -> list[ModelMessage]:
+def _slice_by_exchanges(messages: Sequence[ModelMessage], max_exchanges: int) -> list[ModelMessage]:
     user_indices = [i for i, m in enumerate(messages) if _has_user_prompt(m)]
     if len(user_indices) <= max_exchanges:
         return list(messages)

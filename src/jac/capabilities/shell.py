@@ -32,7 +32,7 @@ def run_shell(reason: str, command: str, timeout_s: float = _DEFAULT_TIMEOUT_S) 
     **Always approval-required** — surfaces a prompt to the user via the bus.
     """
     try:
-        result = subprocess.run(  # noqa: S602 — shell=True is the point; HITL is the gate
+        result = subprocess.run(
             command,
             shell=True,
             capture_output=True,

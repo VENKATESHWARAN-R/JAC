@@ -67,8 +67,6 @@ indent-style = "space"
 # ---------------------------------------------------------------------------
 # ty — Astral's type checker
 # ---------------------------------------------------------------------------
-[tool.ty.src]
-root = "./src"
-
 [tool.ty.environment]
+root = ["./src"]
 python-version = "3.13"

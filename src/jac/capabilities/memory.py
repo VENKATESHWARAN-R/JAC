@@ -1,6 +1,6 @@
 """Project + user memory — the ``remember`` and ``forget`` tools.
 
-Gru maintains two JAC-owned memory files, mirroring the 2×2 we already
+Gru maintains two JAC-owned memory files, mirroring the 2x2 we already
 have with AGENTS.md:
 
 |                        | User scope            | Project scope                    |
@@ -77,7 +77,7 @@ _TEMPLATES: dict[MemoryScope, str] = {
         "\n"
         "_Maintained by JAC across every project. Edit freely — JAC will "
         "preserve manual edits and append below. Written via the `remember` "
-        "tool with `scope=\"user\"` (HITL-gated)._\n"
+        'tool with `scope="user"` (HITL-gated)._\n'
         + "".join(f"\n## {title}\n" for title in _SECTIONS.values())
     ),
     "project": (
@@ -86,7 +86,7 @@ _TEMPLATES: dict[MemoryScope, str] = {
         "\n"
         "_Maintained by JAC for this repository. Edit freely — JAC will "
         "preserve manual edits and append below. Written via the `remember` "
-        "tool with `scope=\"project\"` (HITL-gated)._\n"
+        'tool with `scope="project"` (HITL-gated)._\n'
         + "".join(f"\n## {title}\n" for title in _SECTIONS.values())
     ),
 }
@@ -176,9 +176,7 @@ def remember(
     _atomic_write(path, new_text)
 
     size_after = _count_bullets(_extract_section(new_text, section_title) or "")
-    msg = (
-        f"stored under {section_title} ({scope} scope): {content_stripped}"
-    )
+    msg = f"stored under {section_title} ({scope} scope): {content_stripped}"
     if size_after > _SECTION_SIZE_WARN:
         msg += (
             f" — note: section now has {size_after} entries; consider "
@@ -249,8 +247,7 @@ def ensure_memory_file(scope: MemoryScope) -> Path:
 def _validate_category(category: str) -> None:
     if category not in _SECTIONS:
         raise ValueError(
-            f"unknown category {category!r}; must be one of "
-            f"{list(get_args(MemoryCategory))}"
+            f"unknown category {category!r}; must be one of {list(get_args(MemoryCategory))}"
         )
 
 
@@ -259,9 +256,7 @@ def _validate_content(content: str) -> str:
     if not content_stripped:
         raise ValueError("`content` must not be empty.")
     if "\n" in content_stripped:
-        raise ValueError(
-            "`content` must be a single line — memory entries are one-sentence facts."
-        )
+        raise ValueError("`content` must be a single line — memory entries are one-sentence facts.")
     return content_stripped
 
 
@@ -271,19 +266,15 @@ def _memory_path_for_scope(scope: MemoryScope) -> Path:
     if scope == "project":
         if not paths.is_in_project_repo():
             raise JacConfigError(
-                "scope=\"project\" requires a git repository; none found at or "
+                'scope="project" requires a git repository; none found at or '
                 "above the current directory. Either `cd` into a tracked repo, "
-                "or use scope=\"user\" for cross-project facts."
+                'or use scope="user" for cross-project facts.'
             )
         return paths.project_memory_file()
-    raise ValueError(
-        f"unknown scope {scope!r}; must be one of {list(get_args(MemoryScope))}"
-    )
+    raise ValueError(f"unknown scope {scope!r}; must be one of {list(get_args(MemoryScope))}")
 
 
-def _needs_approval(
-    ctx: Any, tool_def: ToolDefinition, args: dict[str, Any]
-) -> bool:
+def _needs_approval(ctx: Any, tool_def: ToolDefinition, args: dict[str, Any]) -> bool:
     # Every remember/forget call mutates a tracked file — always HITL.
     return True
 
@@ -397,7 +388,7 @@ def _insert_into_section(text: str, section_title: str, bullet: str) -> str:
     while insert_at > start and lines[insert_at - 1].strip() == "":
         insert_at -= 1
 
-    new_lines = lines[:insert_at] + [bullet] + lines[insert_at:]
+    new_lines = [*lines[:insert_at], bullet, *lines[insert_at:]]
     out = "\n".join(new_lines)
     if text.endswith("\n") and not out.endswith("\n"):
         out += "\n"

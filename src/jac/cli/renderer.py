@@ -241,7 +241,7 @@ class CliRenderer:
         except (KeyboardInterrupt, EOFError):
             self.console.print("[dim]cancelled[/dim]")
             return ClarifyResponse(selected_index=None, selected_text=None, cancelled=True)
-        index = int(picked)
+        index = picked if isinstance(picked, int) else int(str(picked))
         return ClarifyResponse(
             selected_index=index,
             selected_text=event.options[index - 1],
@@ -263,8 +263,8 @@ class CliRenderer:
 
         self.console.print()
         self.console.print(Panel("\n".join(body), title="approval needed", border_style="yellow"))
-        approved: bool = await asyncio.to_thread(
-            Confirm.ask, "Approve?", default=False, console=self.console
+        approved = bool(
+            await asyncio.to_thread(Confirm.ask, "Approve?", default=False, console=self.console)
         )
         return ApprovalResponse(approved=approved)
 
