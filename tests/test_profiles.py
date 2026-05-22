@@ -238,3 +238,169 @@ def test_add_or_update_profile_persists_tiered_shape() -> None:
     assert "claude" in profiles
     assert profiles["claude"].default_model() == "anthropic:claude-sonnet-4-5"
     assert profiles["claude"].tier("small") == ["anthropic:claude-haiku-4-5"]
+
+
+# ---------- YAML round-trip (PR4) ----------
+
+
+def test_profile_to_yaml_round_trips_through_load() -> None:
+    from jac.profiles import load_profile_from_yaml, profile_to_yaml
+
+    original = Profile(
+        tiers={
+            "small": ["anthropic:claude-haiku-4-5"],
+            "medium": ["anthropic:claude-sonnet-4-5"],
+        },
+        active_tier="medium",
+        env={"OLLAMA_BASE_URL": "http://x"},
+    )
+    rt = load_profile_from_yaml(profile_to_yaml(original))
+    assert rt.tiers == original.tiers
+    assert rt.active_tier == original.active_tier
+    assert rt.env == original.env
+
+
+def test_profile_to_yaml_omits_empty_optionals() -> None:
+    from jac.profiles import profile_to_yaml
+
+    p = Profile(
+        tiers={"medium": ["anthropic:claude-sonnet-4-5"]},
+        active_tier="medium",
+    )
+    out = profile_to_yaml(p)
+    assert "env" not in out
+    assert "requires_env" not in out
+
+
+def test_load_profile_from_yaml_rejects_garbage() -> None:
+    from jac.profiles import load_profile_from_yaml
+
+    with pytest.raises(JacConfigError, match="invalid YAML"):
+        load_profile_from_yaml("tiers: [unclosed\n")
+
+
+def test_load_profile_from_yaml_rejects_empty() -> None:
+    from jac.profiles import load_profile_from_yaml
+
+    with pytest.raises(JacConfigError, match="empty"):
+        load_profile_from_yaml("")
+
+
+def test_load_profile_from_yaml_rejects_non_mapping() -> None:
+    from jac.profiles import load_profile_from_yaml
+
+    with pytest.raises(JacConfigError, match="mapping"):
+        load_profile_from_yaml("- just\n- a list\n")
+
+
+def test_load_profile_from_yaml_surfaces_schema_error() -> None:
+    from jac.profiles import load_profile_from_yaml
+
+    with pytest.raises(JacConfigError, match="malformed"):
+        load_profile_from_yaml("tiers:\n  small: [a:1]\nactive_tier: medium\n")
+
+
+# ---------- jac profiles edit (PR4) ----------
+
+
+def _python_editor(action: str) -> str:
+    import shutil
+    import sys
+
+    py = shutil.which("python3") or sys.executable
+    return (
+        f'{py} -c "import sys; p=sys.argv[1]; '
+        f"text=open(p).read(); {action}; open(p,'w').write(text)\" "
+    )
+
+
+def test_edit_command_persists_valid_changes(monkeypatch: pytest.MonkeyPatch) -> None:
+    from typer.testing import CliRunner
+
+    from jac.cli.profiles_cmd import app as profiles_app
+
+    add_or_update_profile(
+        "claude",
+        Profile(
+            tiers={"medium": ["anthropic:claude-sonnet-4-5"]},
+            active_tier="medium",
+        ),
+    )
+
+    # Fake editor: append a "small" tier line to the YAML.
+    monkeypatch.setenv(
+        "EDITOR",
+        _python_editor(
+            "text = text.replace("
+            "'tiers:\\n  medium:\\n  - anthropic:claude-sonnet-4-5\\n', "
+            "'tiers:\\n  small:\\n  - anthropic:claude-haiku-4-5\\n"
+            "  medium:\\n  - anthropic:claude-sonnet-4-5\\n')"
+        ),
+    )
+
+    result = CliRunner().invoke(profiles_app, ["edit", "claude"])
+    assert result.exit_code == 0, result.output
+
+    reloaded = list_profiles()["claude"]
+    assert reloaded.tier("small") == ["anthropic:claude-haiku-4-5"]
+    assert reloaded.tier("medium") == ["anthropic:claude-sonnet-4-5"]
+
+
+def test_edit_command_noop_when_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
+    from typer.testing import CliRunner
+
+    from jac.cli.profiles_cmd import app as profiles_app
+
+    add_or_update_profile(
+        "claude",
+        Profile(
+            tiers={"medium": ["anthropic:claude-sonnet-4-5"]},
+            active_tier="medium",
+        ),
+    )
+    monkeypatch.setenv("EDITOR", _python_editor("pass"))
+
+    result = CliRunner().invoke(profiles_app, ["edit", "claude"])
+    assert result.exit_code == 0
+    assert "no changes" in result.output
+
+
+def test_edit_command_unknown_profile_exits_nonzero() -> None:
+    from typer.testing import CliRunner
+
+    from jac.cli.profiles_cmd import app as profiles_app
+
+    result = CliRunner().invoke(profiles_app, ["edit", "does-not-exist"])
+    assert result.exit_code == 1
+    assert "no profile named" in result.output
+
+
+def test_edit_command_invalid_yaml_aborts_when_user_declines(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from typer.testing import CliRunner
+
+    from jac.cli.profiles_cmd import app as profiles_app
+
+    add_or_update_profile(
+        "claude",
+        Profile(
+            tiers={"medium": ["anthropic:claude-sonnet-4-5"]},
+            active_tier="medium",
+        ),
+    )
+
+    # Fake editor: replace whole content with invalid YAML.
+    monkeypatch.setenv(
+        "EDITOR",
+        _python_editor("text = 'tiers: [unclosed\\n'"),
+    )
+
+    # Typer's CliRunner pipes "n\n" to the Confirm.ask("Re-open editor to fix?")
+    result = CliRunner().invoke(profiles_app, ["edit", "claude"], input="n\n")
+    assert result.exit_code == 0
+    assert "invalid" in result.output
+    assert "unchanged" in result.output
+
+    # On-disk profile is intact.
+    assert list_profiles()["claude"].default_model() == "anthropic:claude-sonnet-4-5"

@@ -264,7 +264,7 @@ def add_or_update_profile(name: str, profile: Profile, *, set_default: bool = Fa
     profiles = raw.setdefault("profiles", {})
     if not isinstance(profiles, dict):
         raise JacConfigError("`profiles` in config.yaml must be a mapping")
-    profiles[name] = profile.model_dump(exclude_none=True, exclude_defaults=False)
+    profiles[name] = profile.model_dump(exclude_none=True, exclude_defaults=True)
     if set_default or "default_profile" not in raw:
         raw["default_profile"] = name
     _save_raw_config(raw)
@@ -283,6 +283,42 @@ def remove_profile(name: str) -> None:
         else:
             raw.pop("default_profile", None)
     _save_raw_config(raw)
+
+
+def profile_to_yaml(profile: Profile) -> str:
+    """Serialize a single profile to YAML (just the inner block).
+
+    Field order is preserved (``tiers`` first, then ``active_tier``, then
+    optional ``env`` / ``requires_env``) so the round-trip with
+    :func:`load_profile_from_yaml` is stable for the editor flow.
+    ``env`` and ``requires_env`` are omitted when they're at their defaults
+    so the YAML the user opens isn't littered with empty placeholders.
+    """
+    payload = profile.model_dump(exclude_none=True, exclude_defaults=True)
+    return yaml.safe_dump(payload, default_flow_style=False, sort_keys=False)
+
+
+def load_profile_from_yaml(text: str) -> Profile:
+    """Parse + validate YAML into a :class:`Profile`.
+
+    Raises:
+        JacConfigError: on YAML syntax errors or schema validation failures.
+            The original validator message is surfaced so the user can see
+            exactly what went wrong (e.g. ``active_tier 'foo' not defined
+            in tiers``).
+    """
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise JacConfigError(f"invalid YAML: {exc}") from exc
+    if data is None:
+        raise JacConfigError("profile YAML is empty")
+    if not isinstance(data, dict):
+        raise JacConfigError("profile YAML must be a mapping at the top level")
+    try:
+        return Profile.model_validate(data)
+    except Exception as exc:
+        raise JacConfigError(f"profile is malformed: {exc}") from exc
 
 
 def resolve_active_profile_name(cli_name: str | None) -> str:

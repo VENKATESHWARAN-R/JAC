@@ -40,6 +40,7 @@ uv run jac init                  # wizard: backend + profile + key storage
 uv run jac profiles              # list profiles, mark default
 uv run jac profiles use NAME     # set default profile
 uv run jac profiles remove NAME  # delete a profile
+uv run jac profiles edit NAME    # open profile YAML in $EDITOR (validates on save)
 uv run jac keys                  # show required keys with status
 uv run jac keys set KEY          # prompt and store in configured backend
 uv run jac keys unset KEY        # delete from backend
