@@ -63,7 +63,7 @@ def _make_prompt_session() -> PromptSession[str]:
     return PromptSession(
         history=FileHistory(str(paths.USER_HISTORY_FILE)),
         auto_suggest=AutoSuggestFromHistory(),
-        multiline=False,
+        multiline=True,
     )
 
 
