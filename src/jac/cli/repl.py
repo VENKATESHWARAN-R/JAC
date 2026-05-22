@@ -22,6 +22,7 @@ import asyncio
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
+from prompt_toolkit.completion import WordCompleter
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import FileHistory
 from pydantic_ai import Agent, AgentRunResult
@@ -34,6 +35,14 @@ from jac.capabilities.hooks import make_hooks
 from jac.capabilities.plan import make_plan_capability
 from jac.capabilities.process import make_process_capability
 from jac.cli.renderer import CliRenderer
+from jac.cli.slash import (
+    Exit,
+    SlashContext,
+    SwitchSession,
+    UnknownSlashCommand,
+    command_names,
+    dispatch,
+)
 from jac.config import get_settings
 from jac.errors import JacConfigError
 from jac.runtime.bus import EventBus
@@ -60,10 +69,18 @@ console = Console()
 
 def _make_prompt_session() -> PromptSession[str]:
     paths.USER_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+    # WordCompleter offers slash-command names when the user types `/`.
+    # Non-slash input falls through unchanged — no completer matches.
+    completer = WordCompleter(
+        [f"/{name}" for name in command_names()],
+        ignore_case=False,
+        match_middle=False,
+    )
     return PromptSession(
         history=FileHistory(str(paths.USER_HISTORY_FILE)),
         auto_suggest=AutoSuggestFromHistory(),
-        multiline=True,
+        completer=completer,
+        multiline=False,
     )
 
 
@@ -127,6 +144,7 @@ async def _run_turn(gru: Agent, bus: EventBus, text: str, message_history: list)
 async def _repl_loop(
     model_override: str | None = None,
     *,
+    profile_name: str | None = None,
     resume_latest: bool = False,
     resume_id: str | None = None,
 ) -> None:
@@ -192,6 +210,29 @@ async def _repl_loop(
                 console.print("[dim]bye[/dim]")
                 return
 
+            if text.startswith("/"):
+                ctx = SlashContext(
+                    console=console,
+                    session=session,
+                    profile_name=profile_name,
+                    model_id=model_id,
+                )
+                try:
+                    result = dispatch(text, ctx)
+                except UnknownSlashCommand as exc:
+                    console.print(
+                        f"[red]unknown slash command:[/red] /{exc.name}  "
+                        "[dim](try [bold]/help[/bold])[/dim]"
+                    )
+                    continue
+
+                if isinstance(result, Exit):
+                    console.print("[dim]bye[/dim]")
+                    return
+                if isinstance(result, SwitchSession):
+                    session, message_history = _switch_session(session, result.session)
+                continue
+
             message_history = await _run_turn(gru, bus, text, message_history)
             # Persist after every completed turn so kills mid-turn don't lose prior turns.
             try:
@@ -207,9 +248,33 @@ async def _repl_loop(
             console.print(f"[yellow]warning:[/yellow] process shutdown: {exc}")
 
 
+def _switch_session(old: Session, new: Session) -> tuple[Session, list]:
+    """Activate ``new`` as the REPL's session and reset message history.
+
+    Returns the new ``(session, message_history)`` pair. The caller is
+    expected to have already drained any in-flight turn — the slash dispatch
+    is synchronous so there's nothing in flight by definition.
+    """
+    set_current_session_id(new.session_id)
+    is_resumed = bool(new.message_history)
+    if is_resumed:
+        console.print(
+            f"[dim]session:[/dim] {new.session_id} "
+            f"[yellow](resumed, {len(new.message_history)} prior messages)[/yellow]",
+            highlight=False,
+        )
+    else:
+        console.print(
+            f"[dim]session:[/dim] {new.session_id} [green](new)[/green]",
+            highlight=False,
+        )
+    return new, list(new.message_history)
+
+
 def run_repl(
     model_override: str | None = None,
     *,
+    profile_name: str | None = None,
     resume_latest: bool = False,
     resume_id: str | None = None,
 ) -> None:
@@ -217,6 +282,7 @@ def run_repl(
     asyncio.run(
         _repl_loop(
             model_override=model_override,
+            profile_name=profile_name,
             resume_latest=resume_latest,
             resume_id=resume_id,
         )

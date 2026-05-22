@@ -97,14 +97,19 @@ def root(
     # REPL path. Activate the right env BEFORE invoking the REPL so build_gru
     # sees JAC_MODEL and the resolved secrets in os.environ.
     try:
-        _activate_for_repl(model_override=model, profile_name=profile)
+        active_profile_name = _activate_for_repl(model_override=model, profile_name=profile)
     except JacConfigError as exc:
         console.print(f"[red]config error:[/red] {exc}")
         raise typer.Exit(1) from None
 
     from jac.cli.repl import run_repl
 
-    run_repl(model_override=model, resume_latest=resume, resume_id=session)
+    run_repl(
+        model_override=model,
+        profile_name=active_profile_name,
+        resume_latest=resume,
+        resume_id=session,
+    )
 
 
 @app.command("init")
@@ -118,35 +123,23 @@ def init_command() -> None:
 @app.command("sessions")
 def sessions_command() -> None:
     """List sessions for this project, oldest → newest."""
-    from jac.runtime.session import Session
+    from jac.cli.session_view import render_session_listing
 
-    ids = Session.list_ids()
-    if not ids:
-        console.print(
-            "[dim]no sessions yet in this project. Start one with [bold]jac[/bold].[/dim]"
-        )
-        return
-
-    console.print("[bold]Sessions[/bold] (oldest → newest):")
-    latest = ids[-1]
-    for sid in ids:
-        marker = " [green](latest)[/green]" if sid == latest else ""
-        console.print(f"  {sid}{marker}")
-    console.print(
-        "\n[dim]resume the latest:[/dim] [bold]jac --resume[/bold]"
-        "  [dim]· resume by id:[/dim] [bold]jac --session <id>[/bold]"
-    )
+    render_session_listing(console, in_repl=False)
 
 
 # ---------- internal ----------
 
 
-def _activate_for_repl(*, model_override: str | None, profile_name: str | None) -> None:
+def _activate_for_repl(*, model_override: str | None, profile_name: str | None) -> str | None:
     """Resolve and apply the profile that this REPL turn will use.
 
     Sets ``JAC_MODEL`` + any required env vars in ``os.environ`` so the rest
     of the runtime (which reads ``settings.model`` and lets pydantic-ai
     construct providers from env) just works.
+
+    Returns the active profile name so the REPL can surface it (status bar,
+    ``/profile`` slash) — ``None`` when ``--model`` bypasses the profile path.
 
     - If ``model_override`` is given, JAC still resolves the model's required
       credentials best-effort (so ``--model anthropic:...`` with the key in
@@ -157,13 +150,14 @@ def _activate_for_repl(*, model_override: str | None, profile_name: str | None) 
     if model_override is not None:
         # Best-effort credential resolution for the ad-hoc model.
         apply_ad_hoc_model_env(model_override)
-        return
+        return None
 
     from jac.profiles import get_profile, resolve_active_profile_name
 
     active_name = resolve_active_profile_name(profile_name)
     active = get_profile(active_name)
     apply_profile_env(active_name, active)
+    return active_name
 
 
 def main() -> None:

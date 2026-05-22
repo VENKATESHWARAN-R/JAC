@@ -20,7 +20,7 @@ Each phase block leads with **Goal** + **why/what/how** before the checklist. Th
 | Phase 2a — `remember` tool | ✅ Complete | HITL-gated `remember`, JAC-owned `.agents/memory.md`, fixed category enum, auto-injected into Gru's context |
 | Phase 2a.1 — User scope + `forget` | ✅ Complete | `~/.jac/memory.md`, scope-aware `remember`/`forget`, session-id audit trail, soft size warning, fail-first on no-repo |
 | Phase 1.6 — Tool surface polish | ✅ Complete | plan, background processes, fs/grep upgrades, web search, clarify (all landed 2026-05-22 after a tool retrospective) |
-| **Phase 1.7 — Coworker experience** | ⏳ **In flight** | umbrella for compaction, status bar, slash commands, plan mode, budgets, feedback channels — see sub-phases below. **1.7.c PR1 landed: D22 tiered profile schema + auto-migration.** Next: PR2 slash scaffolding. |
+| **Phase 1.7 — Coworker experience** | ⏳ **In flight** | umbrella for compaction, status bar, slash commands, plan mode, budgets, feedback channels — see sub-phases below. **1.7.c PR1+PR2 landed:** D22 tiered profile schema + auto-migration, then slash scaffolding + `/help` `/exit` `/clear` `/sessions` `/resume`. Next: PR3 `/model` + `/profile` + rebuild-Gru. |
 | Phase 2b — Summarizer minion | ⛔ Superseded | rolled into Phase 1.7.a (token-aware compaction). No separate minion. |
 | Phase 3 — Skills (D21) | ⏸ Queued | community-format skill loader + inline mode (replaces old bespoke minion factory plan) |
 | Phase 4 — A2A (D24) | ⏸ Queued | inbound server + outbound client — moved up from v2 |
@@ -377,9 +377,10 @@ profile:claude  tier:medium (sonnet-4-5)  branch:main*  ctx:34%/200k  session:20
 - [x] `jac init` collects per-tier models (medium required; small/large optional via follow-up prompt) *(PR1)*
 - [x] `jac profiles list` renders tiers with `← active` marker *(PR1)*
 - [x] Tests for tier schema, union secret inference, old-shape rejection, migration idempotency *(PR1)*
-- [ ] `jac.cli.slash.registry` with discovery + completer hook *(PR2)*
-- [ ] One module per command family; handlers reuse subcommand internals *(PR2/PR3)*
-- [ ] `prompt_toolkit` integration: completer + key binding for `/` *(PR2)*
+- [x] `jac.cli.slash.registry` with `@register` + dispatch + `UnknownSlashCommand` + `command_names()` for the completer *(PR2)*
+- [x] First batch of handlers (`/help`, `/exit`, `/clear`, `/sessions`, `/resume`); session-list rendering extracted to `jac.cli.session_view` so `jac sessions` and `/sessions` share it *(PR2)*
+- [x] `prompt_toolkit` `WordCompleter` populated from registered command names *(PR2)*
+- [x] REPL threads `profile_name` through and handles `SwitchSession` / `Exit` results *(PR2)*
 - [ ] `/model` + `/profile` + rebuild-Gru path *(PR3)*
 - [ ] `gru_system.md` updated so Gru knows the user can short-circuit `remember`/`forget`/`tasks` via slash *(deferred with the slashes themselves)*
 
