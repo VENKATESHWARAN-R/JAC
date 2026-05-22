@@ -178,6 +178,34 @@ def resolve(key: str) -> tuple[str | None, str]:
     return None, "missing"
 
 
+def snapshot_env(keys: list[str]) -> dict[str, str | None]:
+    """Capture each key's current value in ``os.environ``.
+
+    Returns a mapping where unset keys map to ``None`` and set keys map to
+    their string value. Pair with :func:`restore_env` to roll back partial
+    mutations after a failed profile/model switch.
+
+    Used by the REPL's rebuild path so ``/profile NAME`` and
+    ``/model PROVIDER:ID`` don't leave half-applied state when credentials
+    are missing or the YAML is malformed.
+    """
+    return {k: os.environ.get(k) for k in keys}
+
+
+def restore_env(snapshot: dict[str, str | None]) -> None:
+    """Inverse of :func:`snapshot_env`. Idempotent.
+
+    For each ``(key, value)`` in the snapshot:
+    - If ``value`` is ``None``, the key is removed from ``os.environ`` (if present).
+    - Otherwise the key is set to ``value``.
+    """
+    for key, value in snapshot.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
+
+
 def _resolve_env_keys(keys: list[str]) -> list[str]:
     """Resolve each key into ``os.environ`` from the configured backend.
 

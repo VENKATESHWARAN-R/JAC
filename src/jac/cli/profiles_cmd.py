@@ -74,31 +74,11 @@ def _list_profiles() -> None:
     except JacConfigError as exc:
         console.print(f"[red]error:[/red] {exc}")
         raise typer.Exit(1) from None
-    if not profiles:
-        console.print("[dim]no profiles configured. Run [bold]jac init[/bold] to create one.[/dim]")
-        return
-    default = get_default_profile_name()
-    console.print("[bold]Profiles:[/bold]")
+    from jac.cli.profile_view import render_profile_listing
 
-    # Tier name column is sized to the widest configured tier across all profiles.
-    tier_col_width = max(
-        (len(t) for p in profiles.values() for t in p.tiers),
-        default=6,
-    )
-
-    for name, p in profiles.items():
-        marker = " [green](default)[/green]" if name == default else ""
-        env_part = f"  [dim]env: {', '.join(sorted(p.env))}[/dim]" if p.env else ""
-        console.print(f"  [bold]{name}[/bold]{marker}{env_part}")
-        for tier_name, models in p.tiers.items():
-            active = " [yellow]← active[/yellow]" if tier_name == p.active_tier else ""
-            primary = models[0]
-            alternates = f" [dim](+{len(models) - 1} alt)[/dim]" if len(models) > 1 else ""
-            console.print(
-                f"    [bold]{tier_name:<{tier_col_width}}[/bold]  "
-                f"[dim]{primary}[/dim]{alternates}{active}"
-            )
-    console.print(
-        "\n[dim]switch default:[/dim] [bold]jac profiles use <name>[/bold]"
-        "  [dim]· one-shot:[/dim] [bold]jac --profile <name>[/bold]"
-    )
+    render_profile_listing(console, profiles, default_name=get_default_profile_name())
+    if profiles:
+        console.print(
+            "\n[dim]switch default:[/dim] [bold]jac profiles use <name>[/bold]"
+            "  [dim]· one-shot:[/dim] [bold]jac --profile <name>[/bold]"
+        )

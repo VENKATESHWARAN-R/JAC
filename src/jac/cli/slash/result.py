@@ -35,4 +35,24 @@ class SwitchSession:
     session: Session
 
 
-SlashResult = Handled | Exit | SwitchSession
+@dataclass(frozen=True)
+class RebuildGru:
+    """REPL should rebuild the active Gru against a new model / profile.
+
+    Returned by ``/model`` and ``/profile``. The REPL is responsible for the
+    snapshot-try-rollback dance so a failed env apply (missing credentials,
+    malformed profile) doesn't leave the process in a half-switched state —
+    on failure Gru stays on the previous model and a warning is rendered.
+
+    Attributes:
+        new_model_id: target model identifier (e.g. ``anthropic:claude-opus-4-7``).
+        new_profile_name: profile this swap is happening under. ``None`` for
+            an ad-hoc ``/model PROVIDER:ID`` override that bypasses the
+            configured profile entirely.
+    """
+
+    new_model_id: str
+    new_profile_name: str | None
+
+
+SlashResult = Handled | Exit | SwitchSession | RebuildGru

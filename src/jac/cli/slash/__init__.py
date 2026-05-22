@@ -22,12 +22,13 @@ from jac.cli.slash.registry import (
     parse,
     register,
 )
-from jac.cli.slash.result import Exit, Handled, SlashResult, SwitchSession
+from jac.cli.slash.result import Exit, Handled, RebuildGru, SlashResult, SwitchSession
 
 __all__ = [
     "SLASH_COMMANDS",
     "Exit",
     "Handled",
+    "RebuildGru",
     "SlashCommand",
     "SlashContext",
     "SlashResult",

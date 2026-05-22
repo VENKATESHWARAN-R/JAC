@@ -14,6 +14,7 @@ from dataclasses import dataclass
 
 from rich.console import Console
 
+from jac.profiles import Profile
 from jac.runtime.session import Session
 
 
@@ -33,6 +34,11 @@ class SlashContext:
     """Active profile name. ``None`` when the REPL was started with
     ``--model PROVIDER:ID`` (no profile in play)."""
 
+    profile: Profile | None
+    """Loaded profile object — ``None`` mirrors ``profile_name``'s case.
+    The ``/model`` no-arg picker reads ``profile.tiers`` to enumerate
+    candidate models grouped by tier."""
+
     model_id: str
     """The model id currently bound to Gru — surfaces in ``/help`` output
-    and (PR3) in ``/model`` no-arg display."""
+    and in ``/model`` no-arg display (with an ``(active)`` marker)."""

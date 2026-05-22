@@ -12,6 +12,7 @@ from rich.console import Console
 from jac.cli.slash import (
     Exit,
     Handled,
+    RebuildGru,
     SlashContext,
     SwitchSession,
     UnknownSlashCommand,
@@ -30,11 +31,22 @@ from jac.workspace import paths
 @pytest.fixture
 def ctx() -> SlashContext:
     """A handler context with a captured stdout console + a fresh session."""
+    from jac.profiles import Profile
+
     buf = StringIO()
+    profile = Profile(
+        tiers={
+            "small": ["anthropic:claude-haiku-4-5"],
+            "medium": ["anthropic:claude-sonnet-4-5"],
+            "large": ["anthropic:claude-opus-4-7"],
+        },
+        active_tier="medium",
+    )
     return SlashContext(
         console=Console(file=buf, force_terminal=False, width=120, record=True),
         session=Session(session_id="20260523T00-00-00", message_history=[]),
         profile_name="claude",
+        profile=profile,
         model_id="anthropic:claude-sonnet-4-5",
     )
 
@@ -213,3 +225,134 @@ def test_resume_handler_catches_jacconfigerror(
     result = dispatch("/resume some-id", ctx)
     assert isinstance(result, Handled)
     assert "forced failure" in ctx.console.export_text()
+
+
+# ---------- /model ----------
+
+
+def test_model_explicit_id_returns_rebuild(ctx: SlashContext) -> None:
+    result = dispatch("/model anthropic:claude-opus-4-7", ctx)
+    assert isinstance(result, RebuildGru)
+    assert result.new_model_id == "anthropic:claude-opus-4-7"
+    assert result.new_profile_name == "claude"
+
+
+def test_model_explicit_id_already_active_is_noop(ctx: SlashContext) -> None:
+    result = dispatch(f"/model {ctx.model_id}", ctx)
+    assert isinstance(result, Handled)
+    assert "already on" in ctx.console.export_text()
+
+
+def test_model_explicit_id_outside_tiers_warns(ctx: SlashContext) -> None:
+    result = dispatch("/model openai:gpt-99", ctx)
+    assert isinstance(result, RebuildGru)
+    assert "isn't in profile" in ctx.console.export_text()
+
+
+def test_model_picker_selects_by_index(ctx: SlashContext, monkeypatch: pytest.MonkeyPatch) -> None:
+    from jac.cli.slash.handlers import model as model_mod
+
+    # Picker enumerates: 1=small (haiku), 2=medium (sonnet, active), 3=large (opus)
+    monkeypatch.setattr(model_mod.Prompt, "ask", lambda *a, **kw: "3")
+    result = dispatch("/model", ctx)
+    assert isinstance(result, RebuildGru)
+    assert result.new_model_id == "anthropic:claude-opus-4-7"
+
+
+def test_model_picker_cancel(ctx: SlashContext, monkeypatch: pytest.MonkeyPatch) -> None:
+    from jac.cli.slash.handlers import model as model_mod
+
+    monkeypatch.setattr(model_mod.Prompt, "ask", lambda *a, **kw: "c")
+    result = dispatch("/model", ctx)
+    assert isinstance(result, Handled)
+    assert "cancelled" in ctx.console.export_text()
+
+
+def test_model_picker_selecting_active_is_noop(
+    ctx: SlashContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jac.cli.slash.handlers import model as model_mod
+
+    # Index 2 is the medium tier (the active model).
+    monkeypatch.setattr(model_mod.Prompt, "ask", lambda *a, **kw: "2")
+    result = dispatch("/model", ctx)
+    assert isinstance(result, Handled)
+    assert "already on" in ctx.console.export_text()
+
+
+def test_model_picker_no_profile_directs_to_explicit_form(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    buf = StringIO()
+    ctx = SlashContext(
+        console=Console(file=buf, force_terminal=False, width=120, record=True),
+        session=Session(session_id="x", message_history=[]),
+        profile_name=None,
+        profile=None,
+        model_id="anthropic:claude-sonnet-4-5",
+    )
+    result = dispatch("/model", ctx)
+    assert isinstance(result, Handled)
+    assert "no profile" in ctx.console.export_text()
+
+
+# ---------- /profile ----------
+
+
+@pytest.fixture
+def isolated_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
+    import yaml
+
+    user_jac = tmp_path / ".jac"
+    user_jac.mkdir()
+    cfg = user_jac / "config.yaml"
+    cfg.write_text(
+        yaml.safe_dump(
+            {
+                "default_profile": "claude",
+                "profiles": {
+                    "claude": {
+                        "tiers": {
+                            "small": ["anthropic:claude-haiku-4-5"],
+                            "medium": ["anthropic:claude-sonnet-4-5"],
+                        },
+                        "active_tier": "medium",
+                    },
+                    "openai": {
+                        "tiers": {"medium": ["openai:gpt-4o"]},
+                        "active_tier": "medium",
+                    },
+                },
+            }
+        )
+    )
+    monkeypatch.setattr(paths, "USER_CONFIG_FILE", cfg)
+    yield cfg
+
+
+def test_profile_no_arg_lists_with_active_marker(ctx: SlashContext, isolated_config: Path) -> None:
+    result = dispatch("/profile", ctx)
+    assert isinstance(result, Handled)
+    out = ctx.console.export_text()
+    assert "claude" in out
+    assert "openai" in out
+    assert "(active)" in out
+
+
+def test_profile_switch_returns_rebuild(ctx: SlashContext, isolated_config: Path) -> None:
+    result = dispatch("/profile openai", ctx)
+    assert isinstance(result, RebuildGru)
+    assert result.new_model_id == "openai:gpt-4o"
+    assert result.new_profile_name == "openai"
+
+
+def test_profile_switch_to_same_is_noop(ctx: SlashContext, isolated_config: Path) -> None:
+    result = dispatch("/profile claude", ctx)
+    assert isinstance(result, Handled)
+    assert "already on" in ctx.console.export_text()
+
+
+def test_profile_switch_to_unknown_surfaces_error(ctx: SlashContext, isolated_config: Path) -> None:
+    result = dispatch("/profile does-not-exist", ctx)
+    assert isinstance(result, Handled)
+    assert "no profile" in ctx.console.export_text()

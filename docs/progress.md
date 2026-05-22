@@ -20,7 +20,7 @@ Each phase block leads with **Goal** + **why/what/how** before the checklist. Th
 | Phase 2a — `remember` tool | ✅ Complete | HITL-gated `remember`, JAC-owned `.agents/memory.md`, fixed category enum, auto-injected into Gru's context |
 | Phase 2a.1 — User scope + `forget` | ✅ Complete | `~/.jac/memory.md`, scope-aware `remember`/`forget`, session-id audit trail, soft size warning, fail-first on no-repo |
 | Phase 1.6 — Tool surface polish | ✅ Complete | plan, background processes, fs/grep upgrades, web search, clarify (all landed 2026-05-22 after a tool retrospective) |
-| **Phase 1.7 — Coworker experience** | ⏳ **In flight** | umbrella for compaction, status bar, slash commands, plan mode, budgets, feedback channels — see sub-phases below. **1.7.c PR1+PR2 landed:** D22 tiered profile schema + auto-migration, then slash scaffolding + `/help` `/exit` `/clear` `/sessions` `/resume`. Next: PR3 `/model` + `/profile` + rebuild-Gru. |
+| **Phase 1.7 — Coworker experience** | ⏳ **In flight** | umbrella for compaction, status bar, slash commands, plan mode, budgets, feedback channels — see sub-phases below. **1.7.c complete** (PR1 D22 schema + auto-migration, PR2 slash scaffolding, PR3 `/model` + `/profile` with fail-safe rebuild). Next sub-phase: 1.7.a token-aware compaction, or 1.7.b status bar. **Follow-up PR4** queued (profile editing — `jac profiles edit / add-model / remove-model / set-active`). |
 | Phase 2b — Summarizer minion | ⛔ Superseded | rolled into Phase 1.7.a (token-aware compaction). No separate minion. |
 | Phase 3 — Skills (D21) | ⏸ Queued | community-format skill loader + inline mode (replaces old bespoke minion factory plan) |
 | Phase 4 — A2A (D24) | ⏸ Queued | inbound server + outbound client — moved up from v2 |
@@ -381,8 +381,10 @@ profile:claude  tier:medium (sonnet-4-5)  branch:main*  ctx:34%/200k  session:20
 - [x] First batch of handlers (`/help`, `/exit`, `/clear`, `/sessions`, `/resume`); session-list rendering extracted to `jac.cli.session_view` so `jac sessions` and `/sessions` share it *(PR2)*
 - [x] `prompt_toolkit` `WordCompleter` populated from registered command names *(PR2)*
 - [x] REPL threads `profile_name` through and handles `SwitchSession` / `Exit` results *(PR2)*
-- [ ] `/model` + `/profile` + rebuild-Gru path *(PR3)*
-- [ ] `gru_system.md` updated so Gru knows the user can short-circuit `remember`/`forget`/`tasks` via slash *(deferred with the slashes themselves)*
+- [x] `/model` (numbered picker + ad-hoc `PROVIDER:ID`) + `/profile` (list + switch) with snapshot-try-rollback in REPL — failed switches stay on the previous model with a yellow warning, never leave half-applied env. **No `/model TIER`** — tiers are for Gru-to-minion delegation, humans pick models. *(PR3)*
+- [x] `snapshot_env` / `restore_env` helpers in `jac.secrets` for the rebuild safety net *(PR3)*
+- [x] Profile-listing rendering extracted to `jac.cli.profile_view` so `jac profiles list` and `/profile` share it *(PR3)*
+- [x] `gru_system.md` updated with a "Slash commands" section so Gru knows the user has out-of-band controls (`/clear`, `/sessions`, `/resume`, `/model`, `/profile`) *(PR3)*
 
 ### Phase 1.7.d — Approval & clarify accept feedback (D26) 🚧
 

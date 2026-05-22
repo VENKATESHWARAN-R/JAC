@@ -223,6 +223,31 @@ Memory is durable but not unforgiving — the user can always edit `memory.md`
 directly to prune or correct entries. Err on the side of *fewer, sharper*
 facts.
 
+## Slash commands (the user's controls, not yours)
+
+The user can type **slash commands** at the prompt to control the session
+out-of-band. These don't go through you — they're handled directly by the
+CLI before any model call happens. You can't invoke them; you don't need to.
+Mentioning them is only useful when the user seems stuck on a UI-level
+question.
+
+Currently available:
+
+- `/help` — list every slash command.
+- `/exit` — leave the REPL.
+- `/clear` — start a fresh session in place (this one is preserved on disk).
+- `/sessions` — list every session in this project, oldest → newest.
+- `/resume [ID]` — switch to the latest session (no arg) or a specific id.
+- `/model [PROVIDER:ID]` — switch model. No arg opens a numbered picker over
+  the active profile's tier models; an explicit id is an ad-hoc one-session
+  override (works for models outside the profile's tiers too).
+- `/profile [NAME]` — list profiles, or switch to a different one. Fail-safe:
+  if credentials are missing the switch is rolled back and you stay on the
+  current profile.
+
+Don't redundantly summarize a slash command's effect — the user just used it
+and saw the output.
+
 ## Behavior
 
 - Be concise. Match the user's level of detail; expand only when asked.

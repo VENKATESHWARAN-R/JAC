@@ -9,4 +9,6 @@ from __future__ import annotations
 # Side-effect imports: each module registers its handler(s).
 from jac.cli.slash.handlers import exit as _exit  # noqa: F401
 from jac.cli.slash.handlers import help as _help  # noqa: F401
+from jac.cli.slash.handlers import model as _model  # noqa: F401
+from jac.cli.slash.handlers import profile as _profile  # noqa: F401
 from jac.cli.slash.handlers import session as _session  # noqa: F401
