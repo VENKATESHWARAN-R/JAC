@@ -20,7 +20,7 @@ from typing import Any
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
-from rich.prompt import Confirm, IntPrompt
+from rich.prompt import IntPrompt, Prompt
 
 from jac.runtime.bus import EventBus
 from jac.runtime.events import (
@@ -78,6 +78,7 @@ _THINKING_LABELS: tuple[str, ...] = (
 
 _ARG_VALUE_TRUNCATE_AT = 300
 _TOOL_ARG_INLINE_TRUNCATE_AT = 60
+_FEEDBACK_TRUNCATE_AT = 600  # cap free-text inputs from approval / clarify
 
 _PLAN_GLYPH: dict[PlanStepStatus, str] = {
     "pending": "[dim]○[/dim]",
@@ -241,13 +242,22 @@ class CliRenderer:
             self.error = event.error
 
     async def _prompt_clarify(self, event: ClarifyRequest) -> ClarifyResponse:
-        """Render the clarify panel and ask the user to pick an option."""
+        """Render the clarify panel and ask the user to pick an option.
+
+        The final menu entry is always "Type your own answer" (D26) — picking
+        it opens a free-text prompt and the response is marked ``free_text``.
+        """
         body: list[str] = [event.question, ""]
         for i, opt in enumerate(event.options, start=1):
             body.append(f"  [bold yellow]{i}[/bold yellow]. {opt}")
+        free_text_index = len(event.options) + 1
+        body.append(
+            f"  [bold yellow]{free_text_index}[/bold yellow]. "
+            "[dim]Type your own answer[/dim]"
+        )
         self.console.print()
         self.console.print(Panel("\n".join(body), title="clarify", border_style="yellow"))
-        choices = [str(i) for i in range(1, len(event.options) + 1)]
+        choices = [str(i) for i in range(1, free_text_index + 1)]
         try:
             picked = await asyncio.to_thread(
                 IntPrompt.ask,
@@ -260,14 +270,47 @@ class CliRenderer:
             self.console.print("[dim]cancelled[/dim]")
             return ClarifyResponse(selected_index=None, selected_text=None, cancelled=True)
         index = picked if isinstance(picked, int) else int(str(picked))
+        if index == free_text_index:
+            return await self._collect_clarify_free_text()
         return ClarifyResponse(
             selected_index=index,
             selected_text=event.options[index - 1],
             cancelled=False,
         )
 
+    async def _collect_clarify_free_text(self) -> ClarifyResponse:
+        """Collect a free-text answer for the clarify prompt (D26)."""
+        try:
+            raw = await asyncio.to_thread(
+                Prompt.ask,
+                "Your answer",
+                default="",
+                show_default=False,
+                console=self.console,
+            )
+        except (KeyboardInterrupt, EOFError):
+            self.console.print("[dim]cancelled[/dim]")
+            return ClarifyResponse(selected_index=None, selected_text=None, cancelled=True)
+        text = str(raw or "").strip()
+        if not text:
+            self.console.print("[dim]cancelled[/dim]")
+            return ClarifyResponse(selected_index=None, selected_text=None, cancelled=True)
+        if len(text) > _FEEDBACK_TRUNCATE_AT:
+            text = text[:_FEEDBACK_TRUNCATE_AT]
+        return ClarifyResponse(
+            selected_index=None,
+            selected_text=text,
+            cancelled=False,
+            free_text=True,
+        )
+
     async def _prompt_approval(self, event: ApprovalRequest) -> ApprovalResponse:
-        """Render the approval panel and ask the user."""
+        """Render the approval panel and ask the user.
+
+        Three-way prompt (D26): ``y`` approves, ``n`` denies, ``r`` denies and
+        opens a follow-up text input the user can use to redirect the model
+        in-band without spending a turn.
+        """
         body: list[str] = [f"[bold]{event.tool_name}[/bold]"]
         if event.reason:
             body.append(f"[dim]reason:[/dim] {event.reason}")
@@ -281,10 +324,50 @@ class CliRenderer:
 
         self.console.print()
         self.console.print(Panel("\n".join(body), title="approval needed", border_style="yellow"))
-        approved = bool(
-            await asyncio.to_thread(Confirm.ask, "Approve?", default=False, console=self.console)
-        )
-        return ApprovalResponse(approved=approved)
+        try:
+            choice = await asyncio.to_thread(
+                Prompt.ask,
+                "[yellow][y][/yellow]es / [yellow][n][/yellow]o / "
+                "[yellow][r][/yellow]edirect with feedback",
+                choices=["y", "n", "r"],
+                default="n",
+                show_choices=False,
+                console=self.console,
+            )
+        except (KeyboardInterrupt, EOFError):
+            self.console.print("[dim]denied[/dim]")
+            return ApprovalResponse(approved=False)
+        choice = str(choice or "n").lower()
+        if choice == "y":
+            return ApprovalResponse(approved=True)
+        if choice == "r":
+            return await self._collect_approval_feedback()
+        return ApprovalResponse(approved=False)
+
+    async def _collect_approval_feedback(self) -> ApprovalResponse:
+        """Collect a redirection on the approval deny path (D26).
+
+        Empty input degrades to a plain deny — Ctrl-C does the same. The
+        text is capped at :data:`_FEEDBACK_TRUNCATE_AT` chars to keep the
+        tool result bounded.
+        """
+        try:
+            raw = await asyncio.to_thread(
+                Prompt.ask,
+                "Tell Gru what to do instead",
+                default="",
+                show_default=False,
+                console=self.console,
+            )
+        except (KeyboardInterrupt, EOFError):
+            self.console.print("[dim]denied (no feedback)[/dim]")
+            return ApprovalResponse(approved=False)
+        feedback = str(raw or "").strip()
+        if not feedback:
+            return ApprovalResponse(approved=False)
+        if len(feedback) > _FEEDBACK_TRUNCATE_AT:
+            feedback = feedback[:_FEEDBACK_TRUNCATE_AT]
+        return ApprovalResponse(approved=False, feedback=feedback)
 
     def print_final(self) -> None:
         """Render the final turn output (or error) after :meth:`consume` returns."""

@@ -101,11 +101,27 @@ class ApprovalRequest(JacEvent):
 
 @dataclass(frozen=True, slots=True)
 class ApprovalResponse:
-    """Result of an :class:`ApprovalRequest`, supplied by the consumer."""
+    """Result of an :class:`ApprovalRequest`, supplied by the consumer.
+
+    Three shapes (D26):
+
+    - ``approved=True`` — the call proceeds.
+    - ``approved=False, feedback=None`` — plain denial. The model is told the
+      user declined and should pick a different approach.
+    - ``approved=False, feedback="..."`` — *denied with feedback*. The user's
+      redirection ("edit the test file instead") is embedded in the tool
+      result, so the model sees a structured signal and doesn't burn a turn
+      re-deciding what to do.
+    """
 
     approved: bool
     deny_message: str | None = None
-    """Optional message sent back to the model when ``approved`` is False."""
+    """Optional message sent back to the model when ``approved`` is False
+    and no ``feedback`` is set. ``feedback`` takes precedence when present."""
+    feedback: str | None = None
+    """In-band redirection the user typed on the deny prompt. When set, the
+    approval handler builds a structured tool-result message exposing it to
+    the model as ``user_feedback``."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,11 +148,16 @@ class ClarifyResponse:
     the prompt; ``selected_text`` is the literal option string. When the
     user cancels (Ctrl-C / empty input), ``cancelled`` is ``True`` and
     both index/text are ``None``.
+
+    When the user picks the renderer's "Type your own answer" affordance
+    (D26), ``free_text`` is ``True``, ``selected_index`` is ``None``, and
+    ``selected_text`` carries the user's free-form answer verbatim.
     """
 
     selected_index: int | None
     selected_text: str | None
     cancelled: bool = False
+    free_text: bool = False
 
 
 @dataclass(frozen=True, slots=True)

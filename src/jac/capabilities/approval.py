@@ -44,6 +44,22 @@ def _coerce_args(raw: Any) -> dict[str, Any]:
     return {}
 
 
+def _deny_message(response: ApprovalResponse) -> str:
+    """Build the tool-result message the model sees on a denial.
+
+    When the user redirected with feedback (D26), the message embeds the
+    feedback as a labeled ``user_feedback`` field so the model treats it
+    as a structured signal and adapts rather than retrying.
+    """
+    if response.feedback:
+        return (
+            "The user declined this tool call and provided feedback. "
+            f'user_feedback: "{response.feedback}". '
+            "Use this feedback to adjust your approach; do not retry the same call."
+        )
+    return response.deny_message or "The user declined this tool call."
+
+
 def make_approval_handler(bus: EventBus) -> HandleDeferredToolCalls[Any]:
     """Build a ``HandleDeferredToolCalls`` capability that asks the user via ``bus``."""
 
@@ -73,9 +89,7 @@ def make_approval_handler(bus: EventBus) -> HandleDeferredToolCalls[Any]:
             if response.approved:
                 approvals[call.tool_call_id] = True
             else:
-                approvals[call.tool_call_id] = ToolDenied(
-                    message=response.deny_message or "The user declined this tool call."
-                )
+                approvals[call.tool_call_id] = ToolDenied(message=_deny_message(response))
 
         return requests.build_results(approvals=approvals)
 

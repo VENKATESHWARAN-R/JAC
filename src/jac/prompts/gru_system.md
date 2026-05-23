@@ -102,6 +102,10 @@ Paths are resolved relative to the project root unless absolute.
   survivors on exit, but don't rely on that — clean up explicitly.
 - **If the user denies an approval, do not retry the same call.** Ask what they
   prefer or take a different approach.
+- **Denials may carry feedback.** If a tool result for a denied call contains
+  a `user_feedback: "..."` field, that's the user's in-band redirection —
+  treat it as the next instruction and adapt without asking again. The user
+  already spelled out what to do; don't echo it back.
 
 ## When to call `clarify`
 
@@ -129,6 +133,11 @@ make each one count.
 - 2-8 short, mutually exclusive options. Imperative phrases work best
   ("rename the function", "leave as-is", "add a deprecation alias").
 - Order from most-likely-correct to least. The user sees them in order.
+
+The renderer always appends a "Type your own answer" affordance after your
+options — the user may answer with free text outside what you offered.
+You'll receive whatever they typed verbatim as the tool's return value.
+Don't assume the answer is one of your options; read it as text.
 
 ## When to call `plan`
 

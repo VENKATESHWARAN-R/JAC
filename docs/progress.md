@@ -20,7 +20,7 @@ Each phase block leads with **Goal** + **why/what/how** before the checklist. Th
 | Phase 2a — `remember` tool | ✅ Complete | HITL-gated `remember`, JAC-owned `.agents/memory.md`, fixed category enum, auto-injected into Gru's context |
 | Phase 2a.1 — User scope + `forget` | ✅ Complete | `~/.jac/memory.md`, scope-aware `remember`/`forget`, session-id audit trail, soft size warning, fail-first on no-repo |
 | Phase 1.6 — Tool surface polish | ✅ Complete | plan, background processes, fs/grep upgrades, web search, clarify (all landed 2026-05-22 after a tool retrospective) |
-| **Phase 1.7 — Coworker experience** | ⏳ **In flight** | umbrella for compaction, status bar, slash commands, plan mode, budgets, feedback channels — see sub-phases below. **Complete:** 1.7.c (D22 schema + slash scaffolding + `/model` + `/profile` + `jac profiles edit`), 1.7.a (token-aware compaction, 200k default budget), 1.7.b (bottom-toolbar status bar). **Next:** 1.7.d approval/clarify feedback, then 1.7.e Plan Mode. |
+| **Phase 1.7 — Coworker experience** | ⏳ **In flight** | umbrella for compaction, status bar, slash commands, plan mode, budgets, feedback channels — see sub-phases below. **Complete:** 1.7.c (D22 schema + slash scaffolding + `/model` + `/profile` + `jac profiles edit`), 1.7.a (token-aware compaction, 200k default budget), 1.7.b (bottom-toolbar status bar), 1.7.d (approval/clarify feedback channels — D26). **Next:** 1.7.e Plan Mode. |
 | Phase 2b — Summarizer minion | ⛔ Superseded | rolled into Phase 1.7.a (token-aware compaction). No separate minion. |
 | Phase 3 — Skills (D21) | ⏸ Queued | community-format skill loader + inline mode (replaces old bespoke minion factory plan) |
 | Phase 4 — A2A (D24) | ⏸ Queued | inbound server + outbound client — moved up from v2 |
@@ -380,25 +380,28 @@ Each phase block leads with **Goal** + **why/what/how** before the checklist. Th
 - [x] `gru_system.md` updated with a "Slash commands" section so Gru knows the user has out-of-band controls (`/clear`, `/sessions`, `/resume`, `/model`, `/profile`) *(PR3)*
 - [x] `jac profiles edit NAME` — single minimal command, opens the profile's YAML in `$EDITOR`, validates on save, offers re-open on error. No add-model/remove-model/set-active subcommands (deliberately minimal CLI surface — hand-edit covers every case). *(PR4)*
 
-### Phase 1.7.d — Approval & clarify accept feedback (D26) 🚧
+### Phase 1.7.d — Approval & clarify accept feedback (D26) ✅
 
 **Why:** today denying a tool call costs a turn — the model has to re-decide what to do. With in-band feedback the user types "edit the test file instead" on the deny prompt and the model gets the redirection as a tool result. Same for clarify — adding a "type your own" option avoids a follow-up turn.
 
 **What:**
-- Approval prompt gets a third option: `[y]es / [n]o / [r]edirect with feedback`. Selecting `r` opens a multi-line input; the response becomes a `denied_with_feedback(text)` variant
+- Approval prompt gets a third option: `[y]es / [n]o / [r]edirect with feedback`. Selecting `r` opens a follow-up text input; the response becomes a `denied_with_feedback(text)` variant
 - Clarify prompt gets a final numbered option "Type your own answer" that opens a text input; resolves with `free_text=True`
-- Tool result for `denied_with_feedback` is structured: `{"approved": false, "user_feedback": "..."}` so the model has a clear signal
+- Tool result for `denied_with_feedback` is structured: the deny-message string the model sees on `ToolDenied.message` embeds a labeled `user_feedback: "..."` field plus an explicit "do not retry" hint so Gru reads it as a redirection.
 
 **How:**
-- Reuses the existing event-bus `Future` plumbing — no new approval channel
-- `ApprovalResponse` event grows a `feedback: str | None` field (default None — non-breaking for events that don't carry feedback)
-- `ClarifyResponse` event grows `free_text: bool = False`
-- Renderer: small extension of `_prompt_approval` and `_prompt_clarify`
+- Reuses the existing event-bus `Future` plumbing — no new approval channel.
+- `ApprovalResponse` grew `feedback: str | None = None` (default `None`, non-breaking for existing callers).
+- `ClarifyResponse` grew `free_text: bool = False`; the clarify capability returns `selected_text` verbatim, so the runtime needed no further changes.
+- Approval handler centralizes the deny-message build in `_deny_message(response)` — feedback wins over `deny_message` when both are set, falls back to the default copy when neither is.
+- Renderer: `_prompt_approval` is now a 3-way `Prompt.ask` over `[y, n, r]` (`r` → `_collect_approval_feedback`); `_prompt_clarify` always appends "Type your own answer" as the last numbered option (picking it → `_collect_clarify_free_text`). Empty input or Ctrl-C on either follow-up degrades to plain deny / plain cancel — never a half-set response. Free-text inputs cap at 600 chars.
+- Tests: `tests/test_hitl_feedback.py` covers `_deny_message` plain / explicit / feedback / feedback-beats-deny-message; the approval handler under approve, plain-deny, and deny-with-feedback (asserts the embedded `user_feedback` label survives into `ToolDenied.message`); clarify under free-text, picked-option, and cancel paths (regression-guarded).
 
-- [ ] `ApprovalResponse.feedback` field + `denied_with_feedback` semantics
-- [ ] `ClarifyResponse.free_text` field + extra menu option
-- [ ] Renderer updates for both
-- [ ] `gru_system.md` notes that denials may carry redirections (Gru should read `user_feedback` when present)
+- [x] `ApprovalResponse.feedback` field + `denied_with_feedback` semantics
+- [x] `ClarifyResponse.free_text` field + extra menu option
+- [x] Renderer updates for both (`_prompt_approval` 3-way, `_prompt_clarify` free-text affordance)
+- [x] `gru_system.md` notes that denials may carry `user_feedback` and that clarify always offers a free-text answer
+- [x] 10 tests in `tests/test_hitl_feedback.py`
 
 ### Phase 1.7.e — Plan Mode (D23) 🚧
 
