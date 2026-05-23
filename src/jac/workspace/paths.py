@@ -85,6 +85,17 @@ def project_memory_file() -> Path:
     return project_workspace() / "memory.md"
 
 
+def project_usage_file() -> Path:
+    """``<project_root>/.agents/usage.jsonl`` — per-turn token usage log (D25).
+
+    One JSONL line is appended per completed agent turn:
+    ``{session_id, ts, input_tokens, output_tokens}``. ``project_total_tokens``
+    budgets sum across this file on startup; the running session's
+    contributions accumulate live in :class:`jac.runtime.usage.UsageTracker`.
+    """
+    return project_workspace() / "usage.jsonl"
+
+
 def project_prompts_dir() -> Path:
     return project_workspace() / "prompts"
 

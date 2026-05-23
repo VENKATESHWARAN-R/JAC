@@ -107,6 +107,11 @@ class StatusState:
     profile: Profile | None = None
     message_history: list[ModelMessage] = field(default_factory=list)
     branch_cache: _BranchCache = field(default_factory=_BranchCache)
+    budget_pct: int | None = None
+    """Highest-used percent across configured token budgets (D25). ``None``
+    means no budget is configured — the toolbar hides the ``bud:`` segment.
+    The REPL refreshes this after every turn via
+    :meth:`jac.runtime.usage.UsageTracker.status_pct`."""
 
 
 # ---------- pure helpers ----------
@@ -166,6 +171,24 @@ def _format_branch_segment(branch: str, dirty: bool) -> str:
     return f'  <style fg="ansicyan">branch:</style>{escape(branch)}{dirty_mark}'
 
 
+def _budget_color(pct: int) -> str:
+    """Color thresholds mirror the budget ladder (D25)."""
+    s = get_settings().budget
+    if pct >= s.hardstop_pct:
+        return "ansired"
+    if pct >= s.warn_pct:
+        return "ansiyellow"
+    return "ansiwhite"
+
+
+def _format_budget_segment(pct: int | None) -> str:
+    """Hidden when no budget is configured (``pct is None``)."""
+    if pct is None:
+        return ""
+    color = _budget_color(pct)
+    return f'  <style fg="ansicyan">bud:</style><style fg="{color}">{pct}%</style>'
+
+
 def _format_model_segment(state: StatusState) -> str:
     short = escape(short_model(state.model_id)) if state.model_id else "?"
     tier = tier_for_model(state.profile, state.model_id)
@@ -197,6 +220,7 @@ def format_toolbar(state: StatusState) -> HTML:
         _format_branch_segment(branch, dirty),
         "  ",
         _format_ctx_segment(used, budget),
+        _format_budget_segment(state.budget_pct),
         "  ",
         f'<style fg="ansicyan">session:</style>'
         f'<style fg="ansibrightblack">{escape(state.session_id) or "?"}</style>',

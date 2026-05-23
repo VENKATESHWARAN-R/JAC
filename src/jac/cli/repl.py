@@ -52,10 +52,17 @@ from jac.errors import JacConfigError
 from jac.profiles import Profile, get_profile
 from jac.providers.registry import get_provider_registry, provider_prefix
 from jac.runtime.bus import EventBus
-from jac.runtime.events import CompactionRefused, PlanReplaced, RunCompleted, RunFailed
+from jac.runtime.events import (
+    BudgetHardStop,
+    CompactionRefused,
+    PlanReplaced,
+    RunCompleted,
+    RunFailed,
+)
 from jac.runtime.gru import build_gru
 from jac.runtime.session import Session
 from jac.runtime.session_ctx import set_current_session_id
+from jac.runtime.usage import BudgetLimits, UsageTracker, make_usage_tracker
 from jac.secrets import (
     apply_ad_hoc_model_env,
     apply_profile_env,
@@ -164,8 +171,19 @@ def _greet(
     console.print("[dim]type 'exit' or Ctrl-D to quit[/dim]", highlight=False)
 
 
-async def _run_turn(gru: Agent, bus: EventBus, text: str, message_history: list) -> list:
-    """Run one agent turn through the bus. Returns the updated message history."""
+async def _run_turn(
+    gru: Agent,
+    bus: EventBus,
+    text: str,
+    message_history: list,
+    usage_tracker: UsageTracker | None = None,
+) -> list:
+    """Run one agent turn through the bus. Returns the updated message history.
+
+    On successful completion, records the turn's input / output token
+    counts into ``usage_tracker`` (D25). The tracker handles JSONL
+    persistence and threshold-crossing events; we just hand it the deltas.
+    """
     renderer = CliRenderer(console)
 
     async def run_agent_and_signal() -> AgentRunResult[str]:
@@ -188,6 +206,12 @@ async def _run_turn(gru: Agent, bus: EventBus, text: str, message_history: list)
         return message_history
 
     renderer.print_final()
+    if usage_tracker is not None:
+        usage = result.usage()
+        await usage_tracker.record(
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+        )
     return result.all_messages()
 
 
@@ -261,8 +285,24 @@ async def _repl_loop(
             console.print(f"[red]config error:[/red] {exc}")
             return
 
-    model_id = model_override or get_settings().model or "unknown"
+    settings = get_settings()
+    model_id = model_override or settings.model or "unknown"
     message_history: list = list(session.message_history)
+
+    # Token-budget tracker (D25). Baseline is summed from usage.jsonl
+    # (excluding this session) so project_total survives across sessions.
+    usage_tracker = make_usage_tracker(
+        session_id=session.session_id,
+        bus=bus,
+        usage_file=paths.project_usage_file(),
+        limits=BudgetLimits(
+            session_input_tokens=settings.budget.session_input_tokens,
+            session_total_tokens=settings.budget.session_total_tokens,
+            project_total_tokens=settings.budget.project_total_tokens,
+            warn_pct=settings.budget.warn_pct,
+            hardstop_pct=settings.budget.hardstop_pct,
+        ),
+    )
 
     # Status bar — the toolbar callable reads from this on every render.
     # We keep the same reference across the session and mutate fields in
@@ -273,6 +313,7 @@ async def _repl_loop(
         profile_name=profile_name,
         profile=active_profile,
         message_history=message_history,
+        budget_pct=usage_tracker.status_pct(),
     )
 
     prompt_session = _make_prompt_session(status)
@@ -319,6 +360,7 @@ async def _repl_loop(
                     profile_name=profile_name,
                     profile=active_profile,
                     model_id=model_id,
+                    usage_tracker=usage_tracker,
                 )
                 try:
                     result = dispatch(text, ctx)
@@ -340,8 +382,18 @@ async def _repl_loop(
                     await plan_capability.switch_session(
                         session.plan_file, restored or None
                     )
+                    # Rebuild the usage tracker for the new session — fresh
+                    # in-memory counters, project baseline recomputed from
+                    # usage.jsonl (excluding the new session id).
+                    usage_tracker = make_usage_tracker(
+                        session_id=session.session_id,
+                        bus=bus,
+                        usage_file=paths.project_usage_file(),
+                        limits=usage_tracker.limits,
+                    )
                     status.session_id = session.session_id
                     status.message_history = message_history
+                    status.budget_pct = usage_tracker.status_pct()
                 elif isinstance(result, RebuildGru):
                     rebuilt = _rebuild_gru(
                         new_model_id=result.new_model_id,
@@ -360,9 +412,14 @@ async def _repl_loop(
 
             if await _refuse_if_over_budget(bus, message_history, text):
                 continue
+            if await _refuse_if_over_token_budget(bus, usage_tracker):
+                continue
 
-            message_history = await _run_turn(gru, bus, text, message_history)
+            message_history = await _run_turn(
+                gru, bus, text, message_history, usage_tracker
+            )
             status.message_history = message_history
+            status.budget_pct = usage_tracker.status_pct()
             # Persist after every completed turn so kills mid-turn don't lose prior turns.
             try:
                 session.save(message_history)
@@ -375,6 +432,28 @@ async def _repl_loop(
             await process_capability.shutdown()
         except Exception as exc:
             console.print(f"[yellow]warning:[/yellow] process shutdown: {exc}")
+
+
+async def _refuse_if_over_token_budget(bus: EventBus, tracker: UsageTracker) -> bool:
+    """Pre-flight: refuse the turn if any token budget is already at hardstop.
+
+    Per D25 + the locked decision for 1.7.f: strict check — only refuse
+    when already past the line. The 80% warn already gave the user a
+    heads-up. Emits :class:`BudgetHardStop` so other surfaces (status
+    bar, future TUI) get the same signal.
+    """
+    tripped = tracker.is_over_hardstop()
+    if tripped is None:
+        return False
+    kind, used, budget = tripped
+    await bus.emit(BudgetHardStop(kind=kind, used=used, budget=budget))
+    console.print(
+        f"[red]token budget exceeded[/red] — {kind} at "
+        f"[bold]{used:,}/{budget:,}[/bold] tokens.\n"
+        "[dim]raise it with [bold]/budget extend N[/bold] for this session, "
+        "or edit the [bold]budget:[/bold] block in your config.[/dim]"
+    )
+    return True
 
 
 async def _refuse_if_over_budget(bus: EventBus, message_history: list, user_text: str) -> bool:

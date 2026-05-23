@@ -16,6 +16,7 @@ from rich.console import Console
 
 from jac.profiles import Profile
 from jac.runtime.session import Session
+from jac.runtime.usage import UsageTracker
 
 
 @dataclass
@@ -42,3 +43,8 @@ class SlashContext:
     model_id: str
     """The model id currently bound to Gru — surfaces in ``/help`` output
     and in ``/model`` no-arg display (with an ``(active)`` marker)."""
+
+    usage_tracker: UsageTracker | None = None
+    """Live token-usage tracker (D25). ``/budget`` and ``/tokens`` read
+    from it; ``/budget extend N`` mutates its in-memory limits. ``None``
+    only in tests that don't exercise the budget surface."""

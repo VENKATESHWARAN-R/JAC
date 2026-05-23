@@ -66,6 +66,35 @@ class CompactionSettings(BaseModel):
     percent of the budget, then stops."""
 
 
+class BudgetSettings(BaseModel):
+    """Token budgets (D25). Cost guardrail against paid providers.
+
+    Three independent knobs, all defaulting to ``None`` — budgets are
+    **opt-in only**. No surprise hard-stops on first run. Set any of them
+    in YAML or via env (``JAC_BUDGET__SESSION_TOTAL_TOKENS=200000``) to
+    activate. When a knob is ``None`` its threshold checks are skipped.
+
+    The status bar shows a ``bud:`` segment only when at least one knob is
+    set. ``warn_pct``/``hardstop_pct`` apply uniformly across knobs.
+    """
+
+    session_input_tokens: int | None = None
+    """Cap on cumulative *input* tokens for the current session."""
+
+    session_total_tokens: int | None = None
+    """Cap on cumulative input + output tokens for the current session."""
+
+    project_total_tokens: int | None = None
+    """Cap on cumulative input + output tokens across every session in
+    this project — summed from ``<repo>/.agents/usage.jsonl``."""
+
+    warn_pct: int = 80
+    """Threshold (% of budget) at which :class:`BudgetWarning` fires once."""
+
+    hardstop_pct: int = 100
+    """Threshold at which the next user turn is pre-flight refused."""
+
+
 class Settings(BaseSettings):
     """Top-level JAC configuration.
 
@@ -97,6 +126,9 @@ class Settings(BaseSettings):
     """History-compaction thresholds (D20). Override per-key via env
     ``JAC_COMPACTION__MAX_CONTEXT_TOKENS=400000`` or the ``compaction:``
     block in ``~/.jac/config.yaml`` / ``<repo>/.agents/config.yaml``."""
+
+    budget: BudgetSettings = Field(default_factory=BudgetSettings)
+    """Token budgets (D25). Opt-in only — see :class:`BudgetSettings`."""
 
     @classmethod
     def settings_customise_sources(

@@ -283,6 +283,12 @@ Currently available:
 - `/profile [NAME]` — list profiles, or switch to a different one. Fail-safe:
   if credentials are missing the switch is rolled back and you stay on the
   current profile.
+- `/budget [extend [KIND] N]` — show configured token budgets and current
+  usage, or raise a limit for the rest of the session (defaults to the
+  `session_total` knob; `KIND` may be `session_input` / `session_total` /
+  `project_total`). No-arg view is read-only.
+- `/tokens` — detailed token counters (session input/output/total +
+  project total across every session in this repo). No dollar conversion.
 
 Don't redundantly summarize a slash command's effect — the user just used it
 and saw the output.

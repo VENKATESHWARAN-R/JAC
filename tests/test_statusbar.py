@@ -253,3 +253,40 @@ def test_format_toolbar_omits_branch_when_no_git(
     monkeypatch.setattr(_BranchCache, "get", lambda self: ("", False))
     rendered = str(format_toolbar(_state_with_profile()))
     assert "branch:" not in rendered
+
+
+# ---------- budget segment (D25) ----------
+
+
+def test_format_toolbar_omits_budget_segment_when_pct_is_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No budget configured → no `bud:` segment in the toolbar."""
+    monkeypatch.setattr(_BranchCache, "get", lambda self: ("", False))
+    state = _state_with_profile()
+    state.budget_pct = None
+    rendered = str(format_toolbar(state))
+    assert "bud:" not in rendered
+
+
+def test_format_toolbar_shows_budget_segment_with_pct(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(_BranchCache, "get", lambda self: ("", False))
+    state = _state_with_profile()
+    state.budget_pct = 42
+    rendered = str(format_toolbar(state))
+    assert "bud:" in rendered
+    assert "42%" in rendered
+
+
+def test_format_toolbar_budget_segment_appears_at_zero_too(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``0`` is a configured-but-unused budget — segment still visible."""
+    monkeypatch.setattr(_BranchCache, "get", lambda self: ("", False))
+    state = _state_with_profile()
+    state.budget_pct = 0
+    rendered = str(format_toolbar(state))
+    assert "bud:" in rendered
+    assert "0%" in rendered

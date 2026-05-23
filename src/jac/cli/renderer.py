@@ -26,6 +26,8 @@ from jac.runtime.bus import EventBus
 from jac.runtime.events import (
     ApprovalRequest,
     ApprovalResponse,
+    BudgetHardStop,
+    BudgetWarning,
     ClarifyRequest,
     ClarifyResponse,
     CompactionRefused,
@@ -235,6 +237,17 @@ class CliRenderer:
         elif isinstance(event, CompactionRefused):
             # The REPL prints its own actionable message; this lets future
             # surfaces (TUI / status bar in 1.7.b) react to the same signal.
+            pass
+        elif isinstance(event, BudgetWarning):
+            self.console.print(
+                f"[yellow]budget {event.kind} at {event.pct}%[/yellow] "
+                f"[dim]({event.used:,}/{event.budget:,} tokens; "
+                "hard-stop fires at 100% — /budget extend N to raise)[/dim]"
+            )
+        elif isinstance(event, BudgetHardStop):
+            # The REPL prints the actionable message on the refusal path; this
+            # event lets other surfaces (status bar) react. We don't print
+            # again here to avoid double notices.
             pass
         elif isinstance(event, RunCompleted):
             self.final_output = event.output

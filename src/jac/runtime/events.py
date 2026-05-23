@@ -244,6 +244,39 @@ class CompactionRefused(JacEvent):
     usage_pct: int
 
 
+BudgetKind = Literal["session_input", "session_total", "project_total"]
+
+
+@dataclass(frozen=True, slots=True)
+class BudgetWarning(JacEvent):
+    """A token budget crossed its warn threshold (D25).
+
+    Emitted once per ``(kind, threshold)`` pair per session — the tracker
+    dedups so the user isn't spammed every turn after the threshold is
+    crossed. ``kind`` identifies which budget tripped; the status bar /
+    renderer use it to label the notice.
+    """
+
+    kind: BudgetKind
+    used: int
+    budget: int
+    pct: int
+
+
+@dataclass(frozen=True, slots=True)
+class BudgetHardStop(JacEvent):
+    """A token budget crossed its hard-stop threshold (D25).
+
+    Emitted before ``gru.run()`` is invoked when ``used >= budget`` for
+    any configured budget. The REPL refuses the turn — no model call.
+    Mid-session ``/budget extend N`` is the documented way out.
+    """
+
+    kind: BudgetKind
+    used: int
+    budget: int
+
+
 @dataclass(frozen=True, slots=True)
 class RunCompleted(JacEvent):
     """Terminal: ``agent.run()`` completed normally. Carries the final output."""
@@ -273,6 +306,8 @@ type JacEventT = (
     | CompactionWarning
     | CompactionTriggered
     | CompactionRefused
+    | BudgetWarning
+    | BudgetHardStop
     | RunCompleted
     | RunFailed
 )

@@ -7,6 +7,7 @@ decorator at import time. Add new handler modules to the import list below.
 from __future__ import annotations
 
 # Side-effect imports: each module registers its handler(s).
+from jac.cli.slash.handlers import budget as _budget  # noqa: F401
 from jac.cli.slash.handlers import exit as _exit  # noqa: F401
 from jac.cli.slash.handlers import help as _help  # noqa: F401
 from jac.cli.slash.handlers import model as _model  # noqa: F401

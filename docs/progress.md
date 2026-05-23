@@ -20,7 +20,7 @@ Each phase block leads with **Goal** + **why/what/how** before the checklist. Th
 | Phase 2a — `remember` tool | ✅ Complete | HITL-gated `remember`, JAC-owned `.agents/memory.md`, fixed category enum, auto-injected into Gru's context |
 | Phase 2a.1 — User scope + `forget` | ✅ Complete | `~/.jac/memory.md`, scope-aware `remember`/`forget`, session-id audit trail, soft size warning, fail-first on no-repo |
 | Phase 1.6 — Tool surface polish | ✅ Complete | plan, background processes, fs/grep upgrades, web search, clarify (all landed 2026-05-22 after a tool retrospective) |
-| **Phase 1.7 — Coworker experience** | ⏳ **In flight** | umbrella for compaction, status bar, slash commands, budgets, feedback channels — see sub-phases below. **Complete:** 1.7.c (D22 schema + slash scaffolding + `/model` + `/profile` + `jac profiles edit`), 1.7.a (token-aware compaction, 200k default budget), 1.7.b (bottom-toolbar status bar), 1.7.d (approval/clarify feedback channels — D26), 1.7.g (plan persistence on resume — D27). **Deferred to v2:** 1.7.e Plan Mode + `ModeCapability` base — design needs more time (multi-plan handoff, plan-injection budget hazard, mode-base scope). **Next:** 1.7.f budgets, then 1.7.h Tavily. |
+| **Phase 1.7 — Coworker experience** | ⏳ **In flight** | umbrella for compaction, status bar, slash commands, budgets, feedback channels — see sub-phases below. **Complete:** 1.7.c (D22 schema + slash scaffolding + `/model` + `/profile` + `jac profiles edit`), 1.7.a (token-aware compaction, 200k default budget), 1.7.b (bottom-toolbar status bar), 1.7.d (approval/clarify feedback channels — D26), 1.7.g (plan persistence on resume — D27), 1.7.f (token budgets — D25). **Deferred to v2:** 1.7.e Plan Mode + `ModeCapability` base — design needs more time (multi-plan handoff, plan-injection budget hazard, mode-base scope). **Next:** 1.7.h Tavily. |
 | Phase 2b — Summarizer minion | ⛔ Superseded | rolled into Phase 1.7.a (token-aware compaction). No separate minion. |
 | Phase 3 — Skills (D21) | ⏸ Queued | community-format skill loader + inline mode (replaces old bespoke minion factory plan) |
 | Phase 4 — A2A (D24) | ⏸ Queued | inbound server + outbound client — moved up from v2 |
@@ -414,27 +414,26 @@ Each phase block leads with **Goal** + **why/what/how** before the checklist. Th
 
 Decisions D23 / D29 (the YOLO sketch) stay in `architecture.md §11` as the design we'll use when this lands — the deferral is about timing, not direction. v2 entry below carries the work item.
 
-### Phase 1.7.f — Token budgets (D25) 🚧
+### Phase 1.7.f — Token budgets (D25) ✅
 
 **Why:** running a learning project against paid providers without a stop button is asking for a surprise bill. Token-based (not dollar-based — D25) budgets give us a provider-agnostic guardrail.
 
-**What:**
-- New `budget:` block in profile/project config: `session_input_tokens:`, `session_total_tokens:`, `project_total_tokens:`
-- All defaults are `null` (opt-in only — no surprise stops on first run)
-- Warn at 80% (`BudgetWarning` event, status bar yellow), hard-stop at 100% (`BudgetHardStop` event, refuses next user turn)
-- `/budget extend N` overrides for the rest of the session
-- `<repo>/.agents/usage.jsonl` aggregates per-session totals so `project_total_tokens` works across sessions
+**Landed (2026-05-23):**
+- [x] `jac.runtime.usage.UsageTracker` — accumulates input/output deltas from `AgentRunResult.usage()` after every successful turn. Holds `BudgetLimits` (the three knobs plus warn/hardstop pcts) and a dedup set so each `(kind, threshold)` event fires at most once per session.
+- [x] `<repo>/.agents/usage.jsonl` append-on-turn — one line `{session_id, ts, input_tokens, output_tokens}` per completed turn. Crash-safe (mirrors 1.7.g's "crash-recovery is first-class" stance — kills mid-session don't lose prior turns from `project_total`).
+- [x] `load_project_baseline(usage_file, exclude_session_id)` sums all input+output across prior sessions on REPL startup; running session contributes via in-memory counters. Malformed JSONL lines are skipped silently (per the 1.7.g discipline).
+- [x] Three independent knobs in new `BudgetSettings`: `session_input_tokens`, `session_total_tokens`, `project_total_tokens` (all default `None` — opt-in only). Pulled via the existing layered `JAC_BUDGET__*` env override path for free.
+- [x] `BudgetWarning(kind, used, budget, pct)` + `BudgetHardStop(kind, used, budget)` events added to `JacEventT`. Renderer prints the warning as an inline yellow notice; the hardstop is silent at renderer level because the REPL prints the actionable refusal message.
+- [x] Pre-turn refusal helper `_refuse_if_over_token_budget` mirrors the context-budget refusal — strict check (`session_total >= limit`), per the locked decision. Refused turns never reach `agent.run`.
+- [x] Status bar `bud:` segment (`bud:42%`) appears only when at least one budget is configured. Color follows the warn (yellow at ≥80%) / hardstop (red at ≥100%) thresholds. Hidden by default so opt-out users see no clutter.
+- [x] `UsageTracker.status_pct()` returns the highest-used percent across configured budgets (drives `bud:`). `is_over_hardstop()` returns `(kind, used, budget)` or `None` (drives refusal). `extend(kind, n)` raises the limit in memory + resets the dedup set so warn/hardstop can fire again at the new threshold.
+- [x] Session-switch path (`/clear`, `/resume`) rebuilds the tracker against the new session id so the project baseline excludes the right session.
+- [x] `/budget` slash — no-arg view (table of all three knobs with used / limit / pct, color-coded); `extend N` adds to `session_total` by default; `extend KIND N` for precision. Commas and underscores in the amount are accepted (`50,000`, `1_000_000`).
+- [x] `/tokens` slash — detailed counters (session input / output / total + project total with baseline split).
+- [x] `gru_system.md` slash-commands section grew `/budget` and `/tokens` entries.
+- [x] 31 tests: 20 in `tests/test_usage.py` (tracker mechanics, JSONL persistence, baseline loading, threshold dedup, status_pct, is_over_hardstop, extend), 11 in `tests/test_budget_slash.py` (handler view / extend / error paths), plus 3 in `tests/test_statusbar.py` for the `bud:` segment.
 
-**How:**
-- New `jac.runtime.usage` module — observes `after_model_request`, accumulates into per-session + per-project counters
-- Status bar reads from this module
-- `/cost` is intentionally absent — D25 explicitly refuses dollar conversion
-
-- [ ] `jac.runtime.usage.UsageTracker` accumulating from `RunUsage`
-- [ ] `<repo>/.agents/usage.jsonl` append-on-turn-close
-- [ ] `BudgetWarning` / `BudgetHardStop` events; renderer + status bar integration
-- [ ] `/budget` slash + `budget:` config block
-- [ ] architecture.md §11 D25 recorded ✅ (done in this change)
+**Deliberately absent (D25):** `/cost` — Pydantic AI exposes tokens but not cost, and a per-model price table goes stale fast. Users map tokens to whatever pricing they have.
 
 ### Phase 1.7.g — Plan-list persistence on resume (D27) ✅
 
