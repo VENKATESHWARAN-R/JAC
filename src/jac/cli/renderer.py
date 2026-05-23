@@ -327,8 +327,8 @@ class CliRenderer:
         try:
             choice = await asyncio.to_thread(
                 Prompt.ask,
-                "[yellow][y][/yellow]es / [yellow][n][/yellow]o / "
-                "[yellow][r][/yellow]edirect with feedback",
+                "[bold yellow]y[/bold yellow]es / [bold yellow]n[/bold yellow]o / "
+                "[bold yellow]r[/bold yellow]edirect with feedback",
                 choices=["y", "n", "r"],
                 default="n",
                 show_choices=False,
