@@ -224,6 +224,18 @@ def _resolve_env_keys(keys: list[str]) -> list[str]:
     return missing
 
 
+def resolve_optional_keys(keys: list[str]) -> None:
+    """Best-effort resolve ``keys`` from the configured backend into ``os.environ``.
+
+    Mirrors :func:`_resolve_env_keys` but **never raises** on missing keys —
+    callers use this for keys that enable optional features (e.g.
+    ``TAVILY_API_KEY`` upgrades ``web_search`` from DDG to Tavily). The REPL
+    runs this once at startup so users who stored the key via ``jac keys
+    set`` get it auto-injected before any tool call.
+    """
+    _resolve_env_keys(keys)
+
+
 def apply_profile_env(profile_name: str, profile: Profile) -> None:
     """Inject the profile's default model + env + resolved secrets into ``os.environ``.
 

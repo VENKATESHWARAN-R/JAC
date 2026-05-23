@@ -66,6 +66,7 @@ from jac.runtime.usage import BudgetLimits, UsageTracker, make_usage_tracker
 from jac.secrets import (
     apply_ad_hoc_model_env,
     apply_profile_env,
+    resolve_optional_keys,
     restore_env,
     snapshot_env,
 )
@@ -240,6 +241,13 @@ async def _repl_loop(
     # Make the active session id discoverable to tools (e.g. `remember`)
     # without threading a session object through every call site.
     set_current_session_id(session.session_id)
+
+    # Best-effort resolve optional feature-keys from the configured secrets
+    # backend into os.environ before any tool fires. Today this is just
+    # TAVILY_API_KEY (upgrades web_search from DDG to Tavily); future
+    # optional keys for non-model features go here too. Missing keys are
+    # silently skipped — these gate optional features, not required ones.
+    resolve_optional_keys(["TAVILY_API_KEY"])
 
     # Restore the in-session plan checklist if one was persisted (D27).
     # Malformed files are non-fatal: we warn yellow and continue empty.

@@ -20,7 +20,7 @@ Each phase block leads with **Goal** + **why/what/how** before the checklist. Th
 | Phase 2a — `remember` tool | ✅ Complete | HITL-gated `remember`, JAC-owned `.agents/memory.md`, fixed category enum, auto-injected into Gru's context |
 | Phase 2a.1 — User scope + `forget` | ✅ Complete | `~/.jac/memory.md`, scope-aware `remember`/`forget`, session-id audit trail, soft size warning, fail-first on no-repo |
 | Phase 1.6 — Tool surface polish | ✅ Complete | plan, background processes, fs/grep upgrades, web search, clarify (all landed 2026-05-22 after a tool retrospective) |
-| **Phase 1.7 — Coworker experience** | ⏳ **In flight** | umbrella for compaction, status bar, slash commands, budgets, feedback channels — see sub-phases below. **Complete:** 1.7.c (D22 schema + slash scaffolding + `/model` + `/profile` + `jac profiles edit`), 1.7.a (token-aware compaction, 200k default budget), 1.7.b (bottom-toolbar status bar), 1.7.d (approval/clarify feedback channels — D26), 1.7.g (plan persistence on resume — D27), 1.7.f (token budgets — D25). **Deferred to v2:** 1.7.e Plan Mode + `ModeCapability` base — design needs more time (multi-plan handoff, plan-injection budget hazard, mode-base scope). **Next:** 1.7.h Tavily. |
+| **Phase 1.7 — Coworker experience** | ✅ Complete (minus deferred) | umbrella for compaction, status bar, slash commands, budgets, feedback channels. **Shipped:** 1.7.a (D20 token-aware compaction), 1.7.b (D22 status bar), 1.7.c (D22 slash commands + tier schema), 1.7.d (D26 approval/clarify feedback), 1.7.f (D25 token budgets), 1.7.g (D27 plan persistence on resume), 1.7.h (Tavily/DDG dual-backend web search). **Deferred to v2:** 1.7.e Plan Mode + `ModeCapability` base — design needs more time (multi-plan handoff, plan-injection budget hazard, mode-base scope). |
 | Phase 2b — Summarizer minion | ⛔ Superseded | rolled into Phase 1.7.a (token-aware compaction). No separate minion. |
 | Phase 3 — Skills (D21) | ⏸ Queued | community-format skill loader + inline mode (replaces old bespoke minion factory plan) |
 | Phase 4 — A2A (D24) | ⏸ Queued | inbound server + outbound client — moved up from v2 |
@@ -450,15 +450,20 @@ Decisions D23 / D29 (the YOLO sketch) stay in `architecture.md §11` as the desi
 
 **Naming note (2026-05-23):** D27's architecture text uses the `tasks` names that D23 was going to introduce. With 1.7.e deferred, this phase ships using the **current** names — `PlanCapability`, `plan`/`update_plan`/`get_plan` tools, file `<session>/plan.json`. The rename comes back when Plan Mode actually lands (v2).
 
-### Phase 1.7.h — Tavily web search backend 🚧
+### Phase 1.7.h — Tavily web search backend ✅
 
 **Why:** Tavily is becoming the standard search backend for agent harnesses; DDG works but is the fallback, not the lead. Wire Tavily as primary when an API key is present, DDG otherwise. Provider-native search (Anthropic/OpenAI/Google) was considered and rejected — it would force per-provider code paths and break portability. One client-side `web_search` tool, two backends.
 
-- [ ] Add `tavily-python` to optional extras (or hit the HTTP API directly — TBD when implementing)
-- [ ] `TAVILY_API_KEY` added to provider catalog as a non-provider-bound key (or to the `web:` block in config)
-- [ ] `web_search` tool picks backend based on key presence; signature unchanged
-- [ ] `jac init` prompts for Tavily key as optional
-- [ ] `gru_system.md` unchanged (tool surface identical)
+**Landed (2026-05-23):**
+- [x] `tavily` extra added to the `pydantic-ai-slim` extras list — pulls in `tavily-python>=0.5.0`. Lock + sync refreshed.
+- [x] `web_search` refactored into a thin dispatcher with two helpers: `_search_tavily(query, max_results, api_key)` uses `AsyncTavilyClient` directly (we keep our own `@jac_tool` shape with `reason:` rather than going through pydantic-ai's `tavily_search_tool()` factory, which would skip the discipline); `_search_ddg(query, max_results)` is the existing DDG path. Tool signature + return shape (`{title, url, snippet}`) unchanged across both backends — Tavily's `content` field is mapped to `snippet` to match DDG's `body`.
+- [x] Backend selection is a single `os.environ.get("TAVILY_API_KEY")` check inside the tool. No config block, no `web:` namespace — keeping the surface flat.
+- [x] `resolve_optional_keys(keys)` helper in `jac.secrets` — best-effort resolves keys from the configured secrets backend (keyring/dotenv) into `os.environ` without raising on missing values. The REPL calls it once at startup with `["TAVILY_API_KEY"]` so users who stored the key via `jac keys set TAVILY_API_KEY` get auto-injection before any tool fires.
+- [x] **Tavily errors surface, never silently fall back to DDG.** A failed Tavily call (network / quota / auth) raises; the user explicitly opted in by setting the key, so masking a failure would be misleading.
+- [x] `.env.template` gained an optional `TAVILY_API_KEY=xxxx` entry pointing at app.tavily.com for sign-up.
+- [x] 5 tests in `tests/test_web_backends.py`: DDG runs when no key, Tavily runs when key set (constructed with the right key, query forwarded, result shape mapped), validation errors don't construct any client, Tavily errors don't silently fall back to DDG.
+- [x] `gru_system.md` — tool surface unchanged (deliberate), no edits.
+- [x] `jac init` prompt — **deferred**, out of scope for MVP. Users `export TAVILY_API_KEY=...`, drop it in `.env`, or store via `jac keys set TAVILY_API_KEY` (works today because the keys CLI is backend-generic). Will revisit if onboarding feedback demands it.
 
 ---
 
