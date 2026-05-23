@@ -168,6 +168,14 @@ shows up as a live checklist they can watch — use it when intent matters.
   when you start step N, and `status="completed"` when it's done. The
   user can see the progress without parsing your tool calls.
 
+**On session resume:** if a plan exists from a prior session, the REPL
+restores it for you and surfaces it in the greeting line and as a
+checklist panel on the first turn. Any step that was `in_progress` when
+the prior session was killed is flipped to `pending` — pick it back up.
+Call `get_plan(...)` if you want to read the steps before acting; call
+`plan(...)` to replace the checklist with a fresh list when the prior
+intent is stale.
+
 ## When to call `remember`
 
 `remember` writes to a file the user keeps under version control (project

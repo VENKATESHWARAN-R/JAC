@@ -12,10 +12,12 @@ Design notes:
   capability; their work is scoped via a task packet, not a freeform plan.
 - **No approval required.** The plan is a side-effect-free todo list.
   Adding a HITL gate here would be a double prompt without value.
-- **Ephemeral by design.** The plan is working memory for the current
-  session, not a durable fact. Durable facts go through ``remember``.
-  Session resume does not restore a prior plan (yet) — by the time you're
-  resuming, the prior intent is stale anyway and Gru can re-declare.
+- **Persists on every mutation (D27).** When constructed with a
+  ``plan_file=`` path, the capability writes the full plan to disk after
+  each ``plan(...)`` / ``update_plan(...)`` call. On resume, the REPL
+  loads the file via :meth:`jac.runtime.session.Session.load_plan` and
+  bootstraps the store via ``initial_steps=``. Without a ``plan_file``
+  the capability is ephemeral (tests, headless callers).
 - **Bus is optional.** Construct with ``make_plan_capability(bus)`` when
   you want renderer integration; pass ``None`` (or use ``PlanCapability()``
   directly) for headless / test contexts.
@@ -26,8 +28,10 @@ state for the renderer to redraw without reaching into the capability.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
-from typing import Any
+from pathlib import Path
+from typing import Any, cast
 
 from pydantic_ai.capabilities import AbstractCapability
 
@@ -43,6 +47,7 @@ from jac.tools import jac_function_toolset, jac_tool
 _VALID_STATUSES: frozenset[PlanStepStatus] = frozenset({"pending", "in_progress", "completed"})
 _MAX_STEPS = 25
 _MAX_STEP_CHARS = 240
+_PLAN_SCHEMA_VERSION = 1
 _STATUS_GLYPH: dict[PlanStepStatus, str] = {
     "pending": "○",
     "in_progress": "◐",
@@ -61,7 +66,8 @@ class PlanStore:
     """In-memory holder for the current plan.
 
     Pure data — no I/O, no event emission. The capability wires bus
-    emission around store mutations so the store stays trivial to test.
+    emission and disk persistence around store mutations so the store
+    stays trivial to test.
     """
 
     steps: list[_PlanStep] = field(default_factory=list)
@@ -100,6 +106,30 @@ class PlanStore:
         step.status = status
         return step
 
+    def load(self, items: list[dict[str, str]]) -> None:
+        """Bootstrap the store from already-validated step dicts.
+
+        Used by the REPL on resume to seed the capability with the
+        previous session's checklist. ``items`` is expected to be the
+        output of :meth:`jac.runtime.session.Session.load_plan` —
+        per-step ``{"text", "status"}`` with statuses already normalized
+        (``in_progress`` flipped to ``pending``).
+        """
+        # `status` has already been validated by Session.load_plan, but the
+        # dict's value type is plain `str` — cast to satisfy the Literal.
+        self.steps = [
+            _PlanStep(text=i["text"], status=cast(PlanStepStatus, i["status"]))
+            for i in items
+        ]
+
+    def clear(self) -> None:
+        """Drop all steps. Used on ``/clear`` / ``/resume`` session swap.
+
+        Mutates in place so the capability's tool closures (which captured
+        ``store`` by reference) keep working against the same object.
+        """
+        self.steps = []
+
     def render(self) -> str:
         if not self.steps:
             return "(no plan — Gru hasn't declared one yet)"
@@ -115,6 +145,24 @@ class PlanStore:
             for i, s in enumerate(self.steps, start=1)
         )
 
+    def to_json(self) -> str:
+        """Serialize the store to the persisted ``plan.json`` shape."""
+        return json.dumps(
+            {
+                "version": _PLAN_SCHEMA_VERSION,
+                "steps": [{"text": s.text, "status": s.status} for s in self.steps],
+            },
+            indent=2,
+        )
+
+
+def _atomic_write(path: Path, content: str) -> None:
+    """Write ``content`` to ``path`` atomically (tempfile + rename)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(content, encoding="utf-8")
+    tmp.replace(path)
+
 
 @dataclass
 class PlanCapability(AbstractCapability[Any]):
@@ -122,17 +170,50 @@ class PlanCapability(AbstractCapability[Any]):
 
     Pass a ``bus`` to get renderer-visible events. With ``bus=None`` the
     tools still work; they just don't broadcast.
+
+    Pass ``plan_file`` to enable disk persistence (D27): every mutation
+    rewrites the file atomically. Without it the capability is
+    ephemeral — fine for tests and headless callers.
     """
 
     bus: EventBus | None = None
     store: PlanStore = field(default_factory=PlanStore)
+    plan_file: Path | None = None
 
     def get_toolset(self) -> Any:
         return jac_function_toolset(*self._build_tools())
 
+    def _persist(self) -> None:
+        """Persist the current store to ``plan_file`` if configured."""
+        if self.plan_file is not None:
+            _atomic_write(self.plan_file, self.store.to_json())
+
+    async def switch_session(
+        self,
+        new_plan_file: Path | None,
+        restored_steps: list[dict[str, str]] | None,
+    ) -> None:
+        """Repoint the capability at a different session's ``plan.json``.
+
+        Called by the REPL on ``/clear`` and ``/resume`` so subsequent
+        mutations write to the correct file and the renderer paints the
+        new session's checklist on the next turn.
+
+        Mutates ``self.store`` in place (rather than replacing it) so the
+        tool closures from :meth:`_build_tools` — which captured the
+        store object by reference — keep working against the new state.
+        """
+        self.plan_file = new_plan_file
+        self.store.clear()
+        if restored_steps:
+            self.store.load(restored_steps)
+            if self.bus is not None:
+                await self.bus.emit(PlanReplaced(steps=self.store.snapshot()))
+
     def _build_tools(self) -> list[Any]:
         bus = self.bus
         store = self.store
+        persist = self._persist
 
         async def _emit(event: Any) -> None:
             if bus is not None:
@@ -157,6 +238,7 @@ class PlanCapability(AbstractCapability[Any]):
                 Rendered plan as a numbered checklist.
             """
             store.replace(steps)
+            persist()
             await _emit(PlanReplaced(steps=store.snapshot()))
             return store.render()
 
@@ -178,6 +260,7 @@ class PlanCapability(AbstractCapability[Any]):
                 Rendered plan as a numbered checklist.
             """
             updated = store.update(step, status)
+            persist()
             await _emit(PlanStepUpdated(index=step, status=updated.status, text=updated.text))
             return store.render()
 
@@ -194,6 +277,28 @@ class PlanCapability(AbstractCapability[Any]):
         return [plan, update_plan, get_plan]
 
 
-def make_plan_capability(bus: EventBus | None = None) -> PlanCapability:
-    """Build a fresh :class:`PlanCapability`. One per agent / session."""
-    return PlanCapability(bus=bus)
+def make_plan_capability(
+    bus: EventBus | None = None,
+    *,
+    plan_file: Path | None = None,
+    initial_steps: list[dict[str, str]] | None = None,
+) -> PlanCapability:
+    """Build a fresh :class:`PlanCapability`. One per agent / session.
+
+    Args:
+        bus: Optional event bus for renderer integration. ``None`` is
+            valid for headless / test contexts; events are simply not
+            emitted.
+        plan_file: Optional path to persist the plan to. When set, every
+            mutation atomically rewrites the file. Without it the
+            capability is ephemeral.
+        initial_steps: Pre-existing steps to bootstrap the store with
+            (typically from :meth:`jac.runtime.session.Session.load_plan`
+            on resume). Each entry is ``{"text", "status"}``. Statuses
+            should already be normalized — ``in_progress`` flipped to
+            ``pending`` — by the loader.
+    """
+    store = PlanStore()
+    if initial_steps:
+        store.load(initial_steps)
+    return PlanCapability(bus=bus, store=store, plan_file=plan_file)

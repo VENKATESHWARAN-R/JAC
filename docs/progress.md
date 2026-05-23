@@ -1,6 +1,6 @@
 # JAC — Implementation Progress
 
-> **Just Another Companion/CLI** · **Updated:** 2026-05-22 · keep this in sync as work lands.
+> **Just Another Companion/CLI** · **Updated:** 2026-05-23 · keep this in sync as work lands.
 
 This file tracks **what is implemented**, **what is in flight**, and **what is queued**.
 For the *why* see `idea.md`. For the *how* see `architecture.md` and `CLAUDE.md`.
@@ -20,7 +20,7 @@ Each phase block leads with **Goal** + **why/what/how** before the checklist. Th
 | Phase 2a — `remember` tool | ✅ Complete | HITL-gated `remember`, JAC-owned `.agents/memory.md`, fixed category enum, auto-injected into Gru's context |
 | Phase 2a.1 — User scope + `forget` | ✅ Complete | `~/.jac/memory.md`, scope-aware `remember`/`forget`, session-id audit trail, soft size warning, fail-first on no-repo |
 | Phase 1.6 — Tool surface polish | ✅ Complete | plan, background processes, fs/grep upgrades, web search, clarify (all landed 2026-05-22 after a tool retrospective) |
-| **Phase 1.7 — Coworker experience** | ⏳ **In flight** | umbrella for compaction, status bar, slash commands, plan mode, budgets, feedback channels — see sub-phases below. **Complete:** 1.7.c (D22 schema + slash scaffolding + `/model` + `/profile` + `jac profiles edit`), 1.7.a (token-aware compaction, 200k default budget), 1.7.b (bottom-toolbar status bar), 1.7.d (approval/clarify feedback channels — D26). **Next:** 1.7.e Plan Mode. |
+| **Phase 1.7 — Coworker experience** | ⏳ **In flight** | umbrella for compaction, status bar, slash commands, budgets, feedback channels — see sub-phases below. **Complete:** 1.7.c (D22 schema + slash scaffolding + `/model` + `/profile` + `jac profiles edit`), 1.7.a (token-aware compaction, 200k default budget), 1.7.b (bottom-toolbar status bar), 1.7.d (approval/clarify feedback channels — D26), 1.7.g (plan persistence on resume — D27). **Deferred to v2:** 1.7.e Plan Mode + `ModeCapability` base — design needs more time (multi-plan handoff, plan-injection budget hazard, mode-base scope). **Next:** 1.7.f budgets, then 1.7.h Tavily. |
 | Phase 2b — Summarizer minion | ⛔ Superseded | rolled into Phase 1.7.a (token-aware compaction). No separate minion. |
 | Phase 3 — Skills (D21) | ⏸ Queued | community-format skill loader + inline mode (replaces old bespoke minion factory plan) |
 | Phase 4 — A2A (D24) | ⏸ Queued | inbound server + outbound client — moved up from v2 |
@@ -298,7 +298,7 @@ Each phase block leads with **Goal** + **why/what/how** before the checklist. Th
 
 ## Phase 1.7 — Coworker experience ⏳
 
-**Goal:** turn JAC from "a single agent that works" into "an agent you'd actually want to sit next to all day." Eight small-to-medium changes that share renderer surface area and ship as one batch. The ordering follows brainstorm 2026-05-22 — biggest-pain items first.
+**Goal:** turn JAC from "a single agent that works" into "an agent you'd actually want to sit next to all day." A batch of small-to-medium changes that share renderer surface area. The ordering follows brainstorm 2026-05-22 — biggest-pain items first. **Plan Mode (1.7.e) was pulled out of the batch on 2026-05-23 — see below for the deferral rationale.**
 
 **Why this exists (single paragraph):** by the end of Phase 1.6 Gru has a real tool surface but no visibility (you don't know what model is active, how much context you've burned, what session you're on), no slash commands (every action is a CLI restart), the sliding-window cap is exchange-count not token-count (a real cost trap — D20), and approval / clarify are yes-no choices that cost a model turn when the user wants to redirect. Phase 1.7 closes all of those at once because they fight over the same UI real estate (status bar + bottom prompt + inline panels).
 
@@ -403,28 +403,16 @@ Each phase block leads with **Goal** + **why/what/how** before the checklist. Th
 - [x] `gru_system.md` notes that denials may carry `user_feedback` and that clarify always offers a free-text answer
 - [x] 10 tests in `tests/test_hitl_feedback.py`
 
-### Phase 1.7.e — Plan Mode (D23) 🚧
+### Phase 1.7.e — Plan Mode (D23) ⛔ Deferred to v2
 
-**Why:** "plan mode" has converged on a specific meaning across the agent ecosystem — restricted read-only context where the model produces a plan artifact, the user reviews, then execution begins. Our current `plan` tool was just a checklist (now renamed to `tasks` per D27). This phase adds the *mode*.
+**Status (2026-05-23):** deferred along with the `ModeCapability` base and the `plan`→`tasks` rename. The design surface area is larger than 1.7.e's slot can absorb without rushing — flagged risks (in the order they bit):
 
-**What:**
-- Rename existing `plan` / `update_plan` / `get_plan` → `tasks` / `update_task` / `get_tasks` (capability becomes `TaskListCapability`, events become `TaskListReplaced` / `TaskStepUpdated`)
-- New `PlanMode` capability swaps Gru's active toolset for a read-only subset (`read_file`, `grep`, `glob`, `list_dir`, `web_search`, `fetch_url`, `clarify`, the task-list family) plus a single write tool `write_plan(reason, content)` that writes to `<session>/plans/<n>.md`
-- All other mutating tools are *removed at construction* — Gru cannot call them
-- `/plan` enters the mode (layers a planning system prompt addendum); `/approve` exits and the plan markdown is auto-referenced in Gru's instructions for execution; `/cancel` discards
+- **Multi-plan handoff.** If Plan Mode is entered twice in one session, does the second approved plan replace or append to the first in the executor's instructions? Replace is simpler but loses prior context; append bloats. Needs a real decision, not a guess.
+- **Plan-injection budget hazard.** Auto-injecting an approved plan into every subsequent turn's system prompt costs tokens proportional to plan size. An unbounded `write_plan` is a quiet cost trap on top of D20/D25. Needs an explicit cap (and a `write_plan` size limit) before it ships.
+- **`ModeCapability` base scope.** Brainstorming surfaced ≥4 plausible modes (Plan, Explore/read-only, Curate/memory, YOLO). The base needs both `filter_capabilities` and `approval_override` to cover all of them — but only Plan Mode currently uses the first, only YOLO the second. Building the base for one mode risks the abstraction being wrong for the rest.
+- **Rename collateral.** The `plan`→`tasks` rename was bundled with D23 to free the word "plan" for the artifact. With D23 deferred, the rename also defers — current code (`PlanCapability`, `plan`/`update_plan`/`get_plan` tools, `<session>/plan.json` filename for D27 persistence) stays put until Plan Mode actually ships in v2.
 
-**How:**
-- `PlanMode` extends a new `ModeCapability` base class — toolset filter + prompt overlay. Future modes (YOLO, review-only) reuse the same shape
-- The toolset swap is *structural* (D23) — re-instantiate the agent with the filtered capability list, not a runtime check
-- Plan artifacts are markdown so they survive into git review naturally
-
-- [ ] Rename plan tools → task tools (one breaking change, pre-1.0)
-- [ ] `ModeCapability` base — toolset filter + prompt addendum slot
-- [ ] `PlanMode` subclass with the read-only subset
-- [ ] `write_plan` tool (the only write exception)
-- [ ] Slash handlers for `/plan`, `/approve`, `/cancel`
-- [ ] `prompts/plan_mode.md` addendum
-- [ ] architecture.md §11 D23 recorded ✅ (done in this change)
+Decisions D23 / D29 (the YOLO sketch) stay in `architecture.md §11` as the design we'll use when this lands — the deferral is about timing, not direction. v2 entry below carries the work item.
 
 ### Phase 1.7.f — Token budgets (D25) 🚧
 
@@ -448,20 +436,20 @@ Each phase block leads with **Goal** + **why/what/how** before the checklist. Th
 - [ ] `/budget` slash + `budget:` config block
 - [ ] architecture.md §11 D25 recorded ✅ (done in this change)
 
-### Phase 1.7.g — Task-list persistence on resume (D27) 🚧
+### Phase 1.7.g — Plan-list persistence on resume (D27) ✅
 
-**Why:** the current task list (formerly plan) is in-memory only. Process killed → cross-terminal resume → lost. D27 revises D15 to persist tasks per session.
+**Why:** the in-session checklist (`PlanCapability`) was in-memory only. Process killed → cross-terminal resume → lost. D27 revises D15 to persist it per session — and this is the first cost-control phase to actually ship in 1.7.
 
-**What:**
-- `<session>/tasks.json` written on every `tasks` / `update_task` call
-- On `--resume`, state is reloaded; `in_progress` steps flip to `pending` (the actor was killed)
-- Greeting surfaces restored task list; Gru's first-turn context says "you have a restored task list — continue or call `tasks()` to replace"
+**Landed (2026-05-23):**
+- [x] `PlanCapability` learned `plan_file: Path | None` + `initial_steps: list[dict] | None`. Every `plan(...)` / `update_plan(...)` call atomically rewrites `<session>/plan.json` (tempfile + rename, matches the memory.md pattern). Without `plan_file` the capability stays ephemeral for tests / headless callers.
+- [x] JSON schema: `{"version": 1, "steps": [{"text", "status"}]}`. Future-proofed with a version field; loader rejects unknown statuses, wrong shapes, empty step text.
+- [x] `Session.plan_file` property + `Session.load_plan()` method returning `(steps, warning_or_None)`. In-progress flips to pending on load — the actor was killed mid-step. Malformed files **log a yellow warning and return empty** (per locked decision) instead of failing the resume.
+- [x] REPL wiring: `_repl_loop` calls `session.load_plan()`, surfaces any warning, seeds `make_plan_capability(plan_file=, initial_steps=)`, prints a one-line "N step(s) restored (M pending)" hint in the greeting, and emits a synthesized `PlanReplaced` event so the renderer paints the checklist panel on the first turn (no special startup render path — all rendering still flows through the bus).
+- [x] `PlanCapability.switch_session(new_plan_file, restored_steps)` re-points an existing capability at a different session's file on `/clear` and `/resume`. Mutates `self.store` in place (rather than replacing it) so the tool closures from `_build_tools()` — which captured the store by reference — stay valid. The REPL invokes it right after `_switch_session`.
+- [x] `gru_system.md` extended with an "On session resume" note under the plan section so Gru knows to expect restored state.
+- [x] 15 tests in `tests/test_plan_persistence.py` covering persist-on-mutation, atomic write (no leftover `.tmp`), ephemeral mode, initial-steps seeding, missing/malformed/wrong-shape/unknown-status/empty-text load paths, switch_session repoint+clear, event emission shape, end-to-end persist→load→seed→continue cycle.
 
-- [ ] Persistence in `TaskListCapability` (after rename per 1.7.e)
-- [ ] Resume path in `Session.resume(id)` loads `tasks.json`, flips in-progress → pending
-- [ ] REPL greeting surfaces it
-- [ ] `gru_system.md` covers the restored-tasks signal
-- [ ] architecture.md §11 D27 recorded ✅ (done in this change)
+**Naming note (2026-05-23):** D27's architecture text uses the `tasks` names that D23 was going to introduce. With 1.7.e deferred, this phase ships using the **current** names — `PlanCapability`, `plan`/`update_plan`/`get_plan` tools, file `<session>/plan.json`. The rename comes back when Plan Mode actually lands (v2).
 
 ### Phase 1.7.h — Tavily web search backend 🚧
 
@@ -557,7 +545,8 @@ Each phase block leads with **Goal** + **why/what/how** before the checklist. Th
 
 ## v2 ⏸
 
-- [ ] YOLO mode + sandboxing (Monty + sandbox-exec / bwrap + Git-Clean Guard)
+- [ ] **Plan Mode + `ModeCapability` base (D23 + D29 YOLO sketch)** — deferred from 1.7.e on 2026-05-23. Carries the bundled `plan`→`tasks` rename: tools (`plan`/`update_plan`/`get_plan` → `tasks`/`update_task`/`get_tasks`), capability (`PlanCapability` → `TaskListCapability`), events (`PlanReplaced`/`PlanStepUpdated` → `TaskListReplaced`/`TaskStepUpdated`), session file (`<session>/plan.json` → `<session>/tasks.json`). Build the base + Plan Mode together so the abstraction is exercised on day one; YOLO follows when sandboxing lands.
+- [ ] YOLO mode + sandboxing (Monty + sandbox-exec / bwrap + Git-Clean Guard) — uses `ModeCapability`'s `approval_override` knob (D29 sketch)
 - [ ] CodeMode integration (`pydantic-ai-harness`)
 - [ ] Stuck-loop detection
 - [ ] Night Shift / cron scheduling

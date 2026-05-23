@@ -66,8 +66,8 @@ uv run python -m jac             # equivalent invocation
 | Project context (auto-loaded) | `<repo>/AGENTS.md` (at repo root, community convention) | **Markdown** |
 | User context (auto-loaded) | `~/.jac/AGENTS.md` | **Markdown** |
 | Session message history | `<repo>/.agents/sessions/<ts>/messages.json` | **JSON** |
-| Session task list (D27) | `<repo>/.agents/sessions/<ts>/tasks.json` | **JSON** |
-| Session plan artifacts (D23 Plan Mode) | `<repo>/.agents/sessions/<ts>/plans/<n>.md` | **Markdown** |
+| Session plan checklist (D27 — file becomes `tasks.json` when D23 ships in v2) | `<repo>/.agents/sessions/<ts>/plan.json` | **JSON** |
+| Session plan artifacts (D23 Plan Mode — v2) | `<repo>/.agents/sessions/<ts>/plans/<n>.md` | **Markdown** |
 | Project memory (JAC-managed, auto-loaded) | `<repo>/.agents/memory.md` | **Markdown** |
 | User memory (JAC-managed, auto-loaded) | `~/.jac/memory.md` | **Markdown** |
 | Per-session token usage (D25 budgets) | `<repo>/.agents/usage.jsonl` | **JSONL** |
@@ -163,8 +163,8 @@ Profile activation lives in `jac.secrets.apply_profile_env` and writes `os.envir
 │   └── <name>/SKILL.md
 └── sessions/<timestamp>/
     ├── messages.json
-    ├── tasks.json            # restored on --resume (D27)
-    ├── plans/<n>.md          # Plan Mode artifacts (D23)
+    ├── plan.json             # in-session checklist; restored on --resume (D27)
+    ├── plans/<n>.md          # Plan Mode artifacts — v2 (D23)
     └── compacted/<n>.json    # original slices preserved after compaction (D20)
 ```
 

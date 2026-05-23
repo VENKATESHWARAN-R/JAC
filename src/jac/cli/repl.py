@@ -52,7 +52,7 @@ from jac.errors import JacConfigError
 from jac.profiles import Profile, get_profile
 from jac.providers.registry import get_provider_registry, provider_prefix
 from jac.runtime.bus import EventBus
-from jac.runtime.events import CompactionRefused, RunCompleted, RunFailed
+from jac.runtime.events import CompactionRefused, PlanReplaced, RunCompleted, RunFailed
 from jac.runtime.gru import build_gru
 from jac.runtime.session import Session
 from jac.runtime.session_ctx import set_current_session_id
@@ -120,7 +120,13 @@ def _make_prompt_session(status: StatusState) -> PromptSession[str]:
     )
 
 
-def _greet(*, model_id: str, session: Session, resumed: bool) -> None:
+def _greet(
+    *,
+    model_id: str,
+    session: Session,
+    resumed: bool,
+    restored_plan: list[dict[str, str]] | None = None,
+) -> None:
     # TTY + width gate: don't dump a banner into pipes / CI / cramped panes.
     # highlight=False disables Rich's auto-highlighter so the model id and
     # session timestamp aren't rainbow-painted as if they were URLs/numbers.
@@ -145,6 +151,14 @@ def _greet(*, model_id: str, session: Session, resumed: bool) -> None:
     else:
         console.print(
             f"[dim]session:[/dim] {session.session_id} [green](new)[/green]",
+            highlight=False,
+        )
+    if restored_plan:
+        pending = sum(1 for s in restored_plan if s["status"] == "pending")
+        console.print(
+            f"[dim]plan:[/dim]    {len(restored_plan)} step(s) restored "
+            f"[yellow]({pending} pending)[/yellow] "
+            "[dim]— Gru can read it via [bold]get_plan()[/bold][/dim]",
             highlight=False,
         )
     console.print("[dim]type 'exit' or Ctrl-D to quit[/dim]", highlight=False)
@@ -203,12 +217,22 @@ async def _repl_loop(
     # without threading a session object through every call site.
     set_current_session_id(session.session_id)
 
+    # Restore the in-session plan checklist if one was persisted (D27).
+    # Malformed files are non-fatal: we warn yellow and continue empty.
+    restored_plan, plan_warning = session.load_plan()
+    if plan_warning is not None:
+        console.print(f"[yellow]warning:[/yellow] {plan_warning}")
+
     # Build Gru (default tools + caller-supplied hooks/approval/extra caps).
     try:
         bus = EventBus()
         hooks = make_hooks(bus)
         approval = make_approval_handler(bus)
-        plan_capability = make_plan_capability(bus)
+        plan_capability = make_plan_capability(
+            bus,
+            plan_file=session.plan_file,
+            initial_steps=restored_plan or None,
+        )
         process_capability = make_process_capability(bus)
         clarify_capability = make_clarify_capability(bus)
         gru = build_gru(
@@ -252,7 +276,18 @@ async def _repl_loop(
     )
 
     prompt_session = _make_prompt_session(status)
-    _greet(model_id=model_id, session=session, resumed=resumed)
+    _greet(
+        model_id=model_id,
+        session=session,
+        resumed=resumed,
+        restored_plan=restored_plan or None,
+    )
+
+    # Surface the restored plan as a synthesized `PlanReplaced` event so the
+    # renderer paints the checklist panel on the first turn — no special
+    # startup-time render path. The event sits buffered until the user types.
+    if restored_plan:
+        await bus.emit(PlanReplaced(steps=plan_capability.store.snapshot()))
 
     persisted_capabilities = [
         hooks,
@@ -299,6 +334,12 @@ async def _repl_loop(
                     return
                 if isinstance(result, SwitchSession):
                     session, message_history = _switch_session(session, result.session)
+                    restored, warning = session.load_plan()
+                    if warning is not None:
+                        console.print(f"[yellow]warning:[/yellow] {warning}")
+                    await plan_capability.switch_session(
+                        session.plan_file, restored or None
+                    )
                     status.session_id = session.session_id
                     status.message_history = message_history
                 elif isinstance(result, RebuildGru):
