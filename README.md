@@ -9,7 +9,7 @@ It runs on your machine — your keys, your files, your context.
 > **Status:** **v0.2.0 alpha** (pre-release). Phase 1.7 is complete — compaction,
 > tiered profiles, slash commands, token budgets, plan persistence on resume.
 > Phase 4 A2A is in flight (PR1–PR3 shipped: server, guest-Gru, outbound tools, peer auth). See
-> [`docs/progress.md`](docs/progress.md) for the current state.
+> [implementation progress](https://venkateshwaran-r.github.io/JAC/progress/) for the current state.
 
 ## What it does
 
@@ -48,17 +48,19 @@ jac             # start a session
 jac --resume    # continue the last session
 ```
 
-Full user guide: **[docs/user-guide/getting-started.md](docs/user-guide/getting-started.md)**
+Full user guide: **[Getting started](https://venkateshwaran-r.github.io/JAC/user-guide/getting-started/)**
 
 ## Documentation
 
+**Published site:** [https://venkateshwaran-r.github.io/JAC/](https://venkateshwaran-r.github.io/JAC/)
+
 | | |
 | --- | --- |
-| **User guide** | [Getting started](docs/user-guide/getting-started.md) · [CLI reference](docs/user-guide/cli-reference.md) · [Configuration](docs/user-guide/configuration.md) · [Sessions & memory](docs/user-guide/sessions-and-memory.md) · [Examples](docs/user-guide/examples.md) · [A2A operator](docs/user-guide/a2a-operator.md) |
-| **Developer** | [Contributing](docs/developer/contributing.md) · [Module strategy](docs/developer/module-strategy.md) · [Codebase map](docs/developer/codebase-map.md) · [Capabilities](docs/developer/capabilities.md) |
-| **Design** | [Idea](docs/idea.md) · [Architecture](docs/architecture.md) · [Progress](docs/progress.md) |
+| **User guide** | [Getting started](https://venkateshwaran-r.github.io/JAC/user-guide/getting-started/) · [CLI reference](https://venkateshwaran-r.github.io/JAC/user-guide/cli-reference/) · [Configuration](https://venkateshwaran-r.github.io/JAC/user-guide/configuration/) · [Sessions & memory](https://venkateshwaran-r.github.io/JAC/user-guide/sessions-and-memory/) · [Examples](https://venkateshwaran-r.github.io/JAC/user-guide/examples/) · [A2A operator](https://venkateshwaran-r.github.io/JAC/user-guide/a2a-operator/) |
+| **Developer** | [Contributing](https://venkateshwaran-r.github.io/JAC/developer/contributing/) · [Module strategy](https://venkateshwaran-r.github.io/JAC/developer/module-strategy/) · [Codebase map](https://venkateshwaran-r.github.io/JAC/developer/codebase-map/) · [Capabilities & hooks](https://venkateshwaran-r.github.io/JAC/developer/capabilities/) |
+| **Design** | [Idea](https://venkateshwaran-r.github.io/JAC/idea/) · [Architecture](https://venkateshwaran-r.github.io/JAC/architecture/) · [Progress](https://venkateshwaran-r.github.io/JAC/progress/) |
 
-Published as a static site: `just docs-serve` → http://127.0.0.1:8000
+To edit docs locally: `just docs-serve` → http://127.0.0.1:8000 (sources live under `docs/`).
 
 ## Development
 
@@ -68,7 +70,7 @@ just fix         # auto-format + lint fix
 just docs-serve  # live-reload docs site
 ```
 
-Contributions welcome — fork, branch, open a PR; CI must pass before merge. See [Contributing](docs/developer/contributing.md) for the open-source workflow, required reading, and GitHub Actions details.
+Contributions welcome — fork, branch, open a PR; CI must pass before merge. See [Contributing](https://venkateshwaran-r.github.io/JAC/developer/contributing/) for the open-source workflow, required reading, and GitHub Actions details.
 
 ## Built on
 
