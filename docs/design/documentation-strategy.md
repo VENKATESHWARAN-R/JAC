@@ -41,7 +41,7 @@ When code and docs disagree, **code wins until the doc is fixed** — track gaps
 
 1. **No placeholders** — no `TODO`, `TBD`, or "coming soon" without a link to `progress.md` and a phase name.
 2. **Relative links** — use paths under `docs/` (e.g. `[Configuration](../user-guide/configuration.md)`), not absolute GitHub URLs, except for external specs (A2A protocol, Pydantic AI).
-3. **Version honesty** — state what ships in **v0.1.2** (Phase 1.7 complete). Mark Phase 4 A2A as partial where PR4/PR5 are still queued (`progress.md`).
+3. **Version honesty** — state what ships in **v0.2.0** (Phase 1.7 complete). Mark Phase 4 A2A as partial where PR4/PR5 are still queued (`progress.md`).
 4. **Commands are verified** — every `jac` / slash example must exist in `src/jac/cli/`. Prefer `just run -- …` in contributor docs when `.env` matters.
 5. **One format per category** — YAML for human config, JSON/JSONL for machine state, Markdown for prose (see [`architecture.md`](../architecture.md) format table).
 6. **Tables for reference** — CLI flags, tools, env vars, and file locations belong in tables, not bullet lists of identifiers.

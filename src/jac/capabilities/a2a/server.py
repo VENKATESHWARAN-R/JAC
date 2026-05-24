@@ -148,7 +148,7 @@ class AuditingAgentWorker(AgentWorker):
             raise
         finally:
             duration_ms = int((time.monotonic() - started_at) * 1000)
-            tokens_used = 0  # PR3 wires real usage accounting; PR1 logs zero
+            tokens_used = 0  # PR4 wires real usage accounting; PR1 logs zero
             await self._emit(
                 A2AInboundCompleted(
                     peer_id=peer_id,

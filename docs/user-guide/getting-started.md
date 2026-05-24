@@ -4,7 +4,7 @@
 
 JAC (**J**ust **A**nother **C**ompanion/CLI) is a Python CLI agent built on [Pydantic AI](https://ai.pydantic.dev/). It runs on your machine with your API keys, your files, and persistent sessions per git project.
 
-**Current release:** v0.1.2 (Phase 1.7 complete). A2A interoperability is partial — see [A2A operator](a2a-operator.md).
+**Current release:** v0.2.0 (Phase 1.7 complete). A2A interoperability is partial (PR1–PR3) — see [A2A operator](a2a-operator.md).
 
 ## Requirements
 
@@ -102,7 +102,7 @@ jac sessions
 
 Inside the REPL: `/sessions`, `/resume [ID]`, `/clear` — see [CLI reference](cli-reference.md).
 
-## What Gru can do in v0.1.2
+## What Gru can do in v0.2.0
 
 - Read and search the repo (`read_file`, `grep`, `glob`, `list_dir`)
 - Edit files and run shell commands **with your approval**

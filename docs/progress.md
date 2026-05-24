@@ -1,6 +1,6 @@
 # JAC — Implementation Progress
 
-> **Just Another Companion/CLI** · **Updated:** 2026-05-24 · keep this in sync as work lands.
+> **Just Another Companion/CLI** · **Updated:** 2026-05-25 · keep this in sync as work lands.
 
 This file tracks **what is implemented**, **what is in flight**, and **what is queued**.
 For the *why* see `idea.md`. For the *how* see `architecture.md` and `CLAUDE.md`.
@@ -26,7 +26,7 @@ Each phase block leads with **Goal** + **why/what/how** before the checklist. Th
 | Phase 4 — A2A (D24, D30, D31) | 🚧 In flight | **PR1 + PR2 + PR3 landed 2026-05-24** (server + guest + auth + card + storage + audit + slash + headless + outbound `a2a_call`/`a2a_discover` + peer config + `/a2a peers` + **pluggable auth strategies** (`bearer` / `api_key` / `oauth2_client_credentials`) + **`/a2a peer add|remove`** for in-memory session peers). PR4 (polish: status / budget / retention timer) next; PR5 (Phase 4.d, OIDC + GCP ID tokens) after. |
 | Phase 5 — Minions | ⏸ Queued | runtime for skills with `mode: minion` — **needs grooming session before implementation** |
 | Phase 6 — MCP | ⏸ Queued | external MCP servers + the `reason:` discipline call (D26 reasoning) |
-| Phase 7 — Quality | ⏸ Queued | broader pytest, ruff, mypy, user docs |
+| Phase 7 — Quality | 🚧 In flight | ruff + ty shipped; user guide on Zensical; gaps: Phase 1 core + memory tests, skills/MCP docs as features land |
 | **v0.2 source restructuring (2026-05-24)** | ✅ Complete | **Released as v0.2.0.** Moved misplaced files (`hooks.py`, `approval.py`, `observability.py` → `runtime/`; `session_ctx.py` → `workspace/`). Trimmed dead weight (renderer no-op branches, 24-line label list → 4). Folded `workspace/prompts.py` into `paths.py`. Merged `EventBus` into `runtime/events.py`. Collapsed `ProcessStore` + `_BranchCache` indirections. Extracted shared `_a2a_banner.py`. Split `cli/slash/handlers/` into one-file-per-command (with `a2a/` subpackage for subcommands). Decomposed `profiles.py` → `profiles.py` (schema) + `profiles_io.py` (YAML) + `profiles_crud.py` (CRUD). Added `ContextCapability` so mid-session `remember()` writes are visible without rebuild (uses PAI's `get_instructions()` callable). Adopted PAI's `Instrumentation` capability pattern. New developer doc: [`developer/module-strategy.md`](developer/module-strategy.md) — the where-things-go rulebook. |
 | v2 | ⏸ Future | YOLO + Monty + CodeMode + stuck-loop + Night Shift + user-tier predict-calibrate memory |
 
@@ -37,7 +37,7 @@ Each phase block leads with **Goal** + **why/what/how** before the checklist. Th
 **Goal:** smallest possible working JAC. `uv run jac` opens a REPL and chats with a bare Gru.
 
 - [x] Project scaffold + `uv` + `pyproject.toml` (build system + console script entry)
-- [x] Logfire instrumentation (`logfire.configure(send_to_logfire="if-token-present")` + `instrument_pydantic_ai`)
+- [x] Logfire instrumentation (`logfire.configure(send_to_logfire="if-token-present")` in `jac.runtime.observability` + PAI `Instrumentation()` on Gru via `jac.runtime.gru`)
 - [x] Typer CLI entry (`jac`, `python -m jac`)
 - [x] Prompt-toolkit + rich REPL
 - [x] Bare `Gru` agent (no tools, no capabilities yet)
@@ -54,7 +54,7 @@ Each phase block leads with **Goal** + **why/what/how** before the checklist. Th
 - [x] Layered settings loader: package defaults → user YAML → project YAML → env → CLI (`jac.workspace.config_loader`)
 - [x] Shipped `src/jac/data/defaults.yaml` (non-required tunables only; fail-first for model/keys)
 - [x] `JacConfigError` with actionable messages everywhere a required value is missing
-- [x] Layered prompt loader (`jac.workspace.prompts`) — project → user → package, first hit wins
+- [x] Layered prompt loader (`jac.workspace.paths.load_prompt`) — project → user → package, first hit wins
 - [x] AGENTS.md auto-loader (`jac.workspace.context`) — concatenates user + project context into Gru's instructions
 - [x] First-run silent bootstrap (`jac.workspace.bootstrap.ensure_user_workspace`) — idempotent, creates skeleton + template files
 - [x] Workspace path resolver (`jac.workspace.paths`) — one source of truth for every path
@@ -66,14 +66,14 @@ Each phase block leads with **Goal** + **why/what/how** before the checklist. Th
 
 ---
 
-## Phase 1 — Solo Gru ⏳
+## Phase 1 — Solo Gru ✅
 
 **Recommended order:** event bus **before** tools. The bus is the architectural inversion; every later piece slots into it cleanly.
 
 ### Step 1: event bus + tool guard ✅
 
-- [x] `Hooks` capability emitting `JacEvent`s onto an `asyncio.Queue` (`jac.capabilities.hooks.make_hooks`)
-- [x] `EventBus` (`jac.runtime.bus`) + typed event dataclasses (`jac.runtime.events`)
+- [x] `Hooks` capability emitting `JacEvent`s onto an `asyncio.Queue` (`jac.runtime.hooks.make_hooks`)
+- [x] `EventBus` (`jac.runtime.events.EventBus`) + typed event dataclasses (`jac.runtime.events`)
 - [x] `CliRenderer` consumes the bus and draws status + final markdown (`jac.cli.renderer`)
 - [x] `repl.py` runs the agent in a background task while the renderer consumes events concurrently — direct `await gru.run` no longer in the CLI control flow
 - [x] `build_gru(extra_capabilities=...)` parameter so the CLI wires hooks without touching the function's defaults
@@ -87,7 +87,7 @@ Each phase block leads with **Goal** + **why/what/how** before the checklist. Th
 - [x] Search capability: `grep`, `glob` — read-only (`jac.capabilities.search`)
 - [x] Shell capability: `run_shell` — always approval-required (`jac.capabilities.shell`)
 - [x] `resolve_under_project` helper — project-relative paths anchor to the git root
-- [x] `HandleDeferredToolCalls`-based approval handler that emits `ApprovalRequest` events with embedded futures (`jac.capabilities.approval`)
+- [x] `HandleDeferredToolCalls`-based approval handler that emits `ApprovalRequest` events with embedded futures (`jac.runtime.approval`)
 - [x] `ApprovalRequest` / `ApprovalResponse` event types; bus is now bidirectional via the future
 - [x] CLI renderer prompts for approval inline (panel with `reason` + args; pauses spinner)
 - [x] `build_gru` ships default tool capabilities (fs / search / shell) with an `include_default_tools=False` escape hatch
@@ -101,8 +101,8 @@ Each phase block leads with **Goal** + **why/what/how** before the checklist. Th
 - [x] CLI flags `--resume / -r` (latest) and `--session / -s ID` (specific)
 - [x] `jac sessions` subcommand lists ids oldest → newest with a "(latest)" marker
 - [x] Greeting shows session id and "(resumed, N prior messages)" / "(new)"
-- [x] `ProcessHistory`-based exchange-aware sliding window (`jac.capabilities.history`) — slices on user-prompt boundaries so tool-call/return pairs stay paired; default cap 40 exchanges
-- [x] History capability included in `_default_tool_capabilities` so every session gets it for free
+- [x] History capability via `make_history_capability` (`jac.capabilities.history`) — `ProcessHistory` wrapper with token-aware compaction (D20, Phase 1.7.a); slices on user-prompt boundaries so tool-call/return pairs stay paired
+- [x] History capability included in `_default_tool_capabilities` so every session gets it for free (supersedes the original 40-exchange cap planned here)
 - [x] Fail-first when resuming a missing id or `--resume` with no sessions
 
 ## Phase 1.5 — Profiles & secrets ✅
@@ -146,12 +146,12 @@ Each phase block leads with **Goal** + **why/what/how** before the checklist. Th
 - [x] `remember(reason, content, category, scope)` — `scope` is `Literal["user", "project"]`, required, no default
 - [x] `forget(reason, content, scope)` — symmetric removal, exact-normalized match, errors on 0 / >1 matches with actionable disambiguation
 - [x] `scope="project"` outside a git repo raises `JacConfigError` with a clear "use scope=user instead" message — no silent fallback
-- [x] Session-id stamping: `jac.runtime.session_ctx` ContextVar-backed `set_current_session_id` / `get_current_session_id`; REPL sets it once per session; audit comment becomes `<!-- jac: <ts> session: <sid> -->`
+- [x] Session-id stamping: `jac.workspace.session_ctx` ContextVar-backed `set_current_session_id` / `get_current_session_id`; REPL sets it once per session; audit comment becomes `<!-- jac: <ts> session: <sid> -->`
 - [x] Soft size warning surfaced through the tool result when a section crosses 25 entries — loud, no automation
 - [x] Context loader refactored into per-source loaders (`load_user_context`, `load_user_memory`, `load_project_context`, `load_project_memory`); `load_session_context` concatenates in the order user-AGENTS → user-memory → project-AGENTS → project-memory
 - [x] `gru_system.md` extended with `scope` semantics, `forget` discipline, and a "Picking scope" heuristic table (preference→user, conv/gotcha/decision→project, fact case-by-case)
 
-## Phase 1.6 — Tool surface polish ⏳
+## Phase 1.6 — Tool surface polish ✅
 
 **Goal:** close the most concrete gaps in Gru's current tool surface before we layer on minion infra. Five small, mostly independent capability additions / upgrades, each with a clear payoff.
 
@@ -297,7 +297,7 @@ Each phase block leads with **Goal** + **why/what/how** before the checklist. Th
 
 ---
 
-## Phase 1.7 — Coworker experience ⏳
+## Phase 1.7 — Coworker experience ✅
 
 **Goal:** turn JAC from "a single agent that works" into "an agent you'd actually want to sit next to all day." A batch of small-to-medium changes that share renderer surface area. The ordering follows brainstorm 2026-05-22 — biggest-pain items first. **Plan Mode (1.7.e) was pulled out of the batch on 2026-05-23 — see below for the deferral rationale.**
 
@@ -337,17 +337,17 @@ Each phase block leads with **Goal** + **why/what/how** before the checklist. Th
 ```
 
 **Landed (2026-05-23):**
-- [x] `jac.cli.statusbar` — `StatusState` dataclass (mutable bag the REPL keeps fresh), `_BranchCache` (5s-debounced git shellout, fails-quiet on no-git), `tier_for_model` / `short_model` pure helpers, `format_toolbar(state)` returning a prompt-toolkit `HTML`.
+- [x] `jac.cli.statusbar` — `StatusState` dataclass (mutable bag the REPL keeps fresh), module-level branch cache (5s-debounced git shellout, fails-quiet on no-git), `tier_for_model` / `short_model` pure helpers, `format_toolbar(state)` returning a prompt-toolkit `HTML`.
 - [x] Ctx % is measured against `compaction.max_context_tokens` (the user-configurable budget from 1.7.a) and color-flips through the same ladder — neutral / yellow at warn_pct / orange at auto_compact_pct / red at refuse_pct. Single source of truth.
 - [x] Wired into `_make_prompt_session` via `bottom_toolbar=lambda: format_toolbar(state)`. State updates on every turn (`message_history`), `/clear` + `/resume` (`session_id`), and `/model` + `/profile` rebuilds (`model_id`, `profile_name`, `profile`).
 - [x] Branch shown only when we're in a git repo; `*` suffix when the working tree is dirty.
 - [x] When the running model isn't in any tier of the active profile (ad-hoc `/model PROVIDER:ID`), the segment becomes `model:short-name` instead of `tier:NAME (...)` so what's running is always visible at a glance.
 - [x] Profile/tier fields hidden entirely when the REPL is started with `--model` (no profile).
-- [x] 20 tests: helper coverage (tier lookup, short-model splits), branch-cache debounce + no-git + dirty, ctx-color thresholds, toolbar rendering across profile/ad-hoc/no-git/dirty branches.
+- [x] 23 tests (`tests/test_statusbar.py`): helper coverage (tier lookup, short-model splits), branch-cache debounce + no-git + dirty, ctx-color thresholds, toolbar rendering across profile/ad-hoc/no-git/dirty branches.
 
 **Deferred:** `BudgetWarning` / `BudgetHardStop` re-render hooks live with their owning phase (1.7.f token budgets) — those events don't exist yet. The ctx-color path already covers what we can compute today.
 
-### Phase 1.7.c — Slash commands + tiered profile schema (D22) 🚧
+### Phase 1.7.c — Slash commands + tiered profile schema (D22) ✅
 
 **Why:** every meaningful in-session action today (switch model, see sessions, compact, see cost, exit) requires killing the REPL and restarting with new args. Slash commands fix that and *share internals with the CLI subcommands* — no duplicate logic. Tiered profiles (D22) ship in this phase because `/model` is meaningless without them.
 
@@ -485,7 +485,7 @@ Decisions D23 / D29 (the YOLO sketch) stay in `architecture.md §11` as the desi
 
 ---
 
-## Phase 4 — A2A (D24, D30) 🚧
+## Phase 4 — A2A (D24, D30, D31) 🚧
 
 **Goal:** speak the A2A protocol both ways so JAC can talk to other A2A-compatible agents — other JAC instances *or* third-party deployed agents (cloud-hosted data-science agent, enterprise A2A endpoint, anything that follows the spec). Cross-repo coworking via two JAC instances is the headline differentiator from `idea.md`.
 
@@ -531,9 +531,9 @@ Decisions D23 / D29 (the YOLO sketch) stay in `architecture.md §11` as the desi
 - [x] All 240 tests in the repo pass (existing 199 + new 41); `just check` (ruff format + lint + ty typecheck) clean.
 - [x] architecture.md §11 D24 **revised** + new **D30** (file layout) recorded — 2026-05-24
 
-**Known gaps (PR3-scoped):**
-- Inbound `A2AInboundCompleted.tokens_used` is hardcoded to `0`; the budget integration that pulls real usage from the agent's `result.usage()` lands in PR3 alongside `/tokens` integration.
-- Context retention cleanup runs only on server start; the 1-hour while-running timer is PR3.
+**Known gaps (PR4-scoped):**
+- Inbound `A2AInboundCompleted.tokens_used` is hardcoded to `0`; the budget integration that pulls real usage from the agent's `result.usage()` lands in **PR4** (`UsageTracker.add_external`, guest line in `/tokens`).
+- Context retention cleanup runs only on server start; the 1-hour while-running timer is **PR4**.
 - `cancel_task` is a no-op (inherited from fasta2a's `AgentWorker`); `tasks/cancel` returns the standard `TaskNotCancelable` error. Revisit when fasta2a implements cancel.
 - The agent card declares `streaming: false` because fasta2a 0.6.1 raises `NotImplementedError` on `message/stream`. Revisit when fasta2a ships streaming.
 
@@ -575,7 +575,7 @@ Decisions D23 / D29 (the YOLO sketch) stay in `architecture.md §11` as the desi
 - [x] REPL passes `profile_peers` (instead of legacy `peers`) into `make_a2a_capability` and refreshes via in-place `.clear() + .update()` on `/profile` rebuild. Session peers survive profile switches (intentional — they're the operator's per-session overrides).
 - [x] `gru_system.md` "Auth model" section rewritten: explicit on the two-surface design (stable in profile, ephemeral via `/a2a peer add`), `getpass` prompt for secrets, "you never handle credentials" guarantee. Slash commands section gains the `/a2a peer add|remove` entries.
 - [x] **31 new tests** across 2 files (17 in `test_a2a_auth_strategies.py`, 14 in `test_a2a_slash.py`): strategy dispatch, bearer/api_key with env-var expansion, OAuth2 end-to-end via in-process Starlette token endpoint (correct grant_type, Basic auth header, scope passthrough, caching across calls, expiry-driven refresh, 4xx / non-JSON / no-access-token error paths, env-var expansion in every field), plus all `/a2a peer add` variants (unauth / bearer / api_key / oauth2), invalid URL/name/flag rejection, cancellation via empty input, shadowing with loud warning, `/a2a peer remove` with revert-to-profile, peers listing with shadowed-row rendering.
-- [x] All 294 tests pass (263 prior + 31 new); `just check` clean (ruff format ✓, lint ✓, ty ✓).
+- [x] All 296 tests pass at last count (263 prior + 31 new at PR3; +2 since); `just check` clean (ruff format ✓, lint ✓, ty ✓).
 - [x] architecture.md §11 **D31** recorded — pluggable auth strategies + in-memory/config split + privacy guarantee.
 
 ### Phase 4.d — Polish: status, audit, budget integration (PR4) ⏸
@@ -637,14 +637,15 @@ Decisions D23 / D29 (the YOLO sketch) stay in `architecture.md §11` as the desi
 
 ---
 
-## Phase 7 — Quality ⏸
+## Phase 7 — Quality 🚧
 
 - [ ] CodeMode integration moved to v2 (no concrete pain yet — D9 in idea.md notes)
 - [ ] Stuck-loop detection moved to v2 (low value in HITL where human catches loops)
 - [x] Provider registry tests (`tests/test_provider_registry.py`, `just test`)
-- [ ] Broader test suite (pytest) — capability-level coverage for the Phase 1.7 additions
-- [ ] Ruff / mypy config
-- [ ] User docs (publish under `docs/user-guide/` via the existing Zensical site)
+- [x] Phase 1.7 capability tests — compaction, status bar, budgets, plan persistence, HITL feedback, web backends (`test_history`, `test_statusbar`, `test_usage`, `test_budget_slash`, `test_plan_persistence`, `test_hitl_feedback`, `test_web_backends`; ~98 tests)
+- [ ] Broader test suite (pytest) — Phase 1 core (session, fs/shell bus), memory (`remember`/`forget`), slash edge cases
+- [x] Ruff + ty config (`pyproject.toml` `[tool.ruff]` / `[tool.ty]`; `just check` runs format, lint, `ty check src`)
+- [x] User docs on Zensical — six pages under `docs/user-guide/` (getting-started, cli-reference, configuration, sessions-and-memory, examples, a2a-operator); expand as Phase 3/4 features ship
 
 ---
 

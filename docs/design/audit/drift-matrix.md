@@ -2,7 +2,7 @@
 
 > **Audience:** maintainers auditing alignment between documentation and `src/jac/`.
 >
-> **Last audited:** 2026-05-24 · **Release:** v0.1.2 · **Phase:** 1.7 complete, 4 partial
+> **Last audited:** 2026-05-25 · **Release:** v0.2.0 · **Phase:** 1.7 complete, 4 partial (PR1–PR3)
 
 Legend: **OK** aligned · **GAP** doc missing or stale · **PARTIAL** shipped but incomplete vs roadmap · **N/A** not claimed yet
 
@@ -19,10 +19,10 @@ Legend: **OK** aligned · **GAP** doc missing or stale · **PARTIAL** shipped bu
 | Slash: `/help`, `/exit` | cli-reference | `slash/handlers/help.py`, `exit.py` | OK | |
 | Slash: `/sessions`, `/resume`, `/clear` | cli-reference | `slash/handlers/session.py` | OK | |
 | Slash: `/profile`, `/model` | cli-reference | `slash/handlers/profile.py`, `model.py` | OK | |
-| Slash: `/budget`, `/tokens` | cli-reference, configuration | `slash/handlers/budget.py` | OK | |
-| Slash: `/a2a` serve/stop/status/token/peers/peer | a2a-operator | `slash/handlers/a2a.py` | OK | |
-| Slash: `/compact` | — | — | N/A | Compaction is automatic (D20); gru_system mentions `/compact` historically — no slash registered |
-| Status bar (profile, tier, branch, ctx%, session) | getting-started (implicit) | `jac.cli.statusbar` | OK | Not a separate user page |
+| Slash: `/budget`, `/tokens` | cli-reference, configuration | `slash/handlers/budget.py`, `tokens.py` | OK | |
+| Slash: `/a2a` serve/stop/status/token/peers/peer | a2a-operator | `slash/handlers/a2a/` | OK | |
+| Slash: `/compact` | progress (deferred) | — | N/A | Compaction is automatic (D20); no slash registered |
+| Status bar (profile, tier, branch, ctx%, session, bud%) | progress 1.7.b | `jac.cli.statusbar` | OK | Not a separate user page |
 
 ## Tools (Gru)
 
@@ -41,6 +41,18 @@ Legend: **OK** aligned · **GAP** doc missing or stale · **PARTIAL** shipped bu
 | `clarify` | cli-reference | `capabilities/clarify.py` | No (is the prompt) | OK |
 | `a2a_discover`, `a2a_call` | a2a-operator | `capabilities/a2a/client.py` | No | OK |
 | `@jac_tool` + `reason:` | capabilities.md | `tools/decorator.py` | — | OK |
+
+## Runtime modules (v0.2 paths)
+
+| Topic | progress.md / CLAUDE | Code | Status |
+| --- | --- | --- | --- |
+| Hooks | `jac.runtime.hooks` | `runtime/hooks.py` | OK |
+| EventBus | `jac.runtime.events` | `runtime/events.py` | OK |
+| Approval handler | `jac.runtime.approval` | `runtime/approval.py` | OK |
+| Session context CV | `jac.workspace.session_ctx` | `workspace/session_ctx.py` | OK |
+| Prompt loader | `jac.workspace.paths.load_prompt` | `workspace/paths.py` | OK |
+| Logfire | `observability` + `Instrumentation` on Gru | `runtime/observability.py`, `runtime/gru.py` | OK |
+| Mid-session context refresh | v0.2 restructuring note | `capabilities/context.py` | OK |
 
 ## Configuration & workspace
 
@@ -61,11 +73,21 @@ Legend: **OK** aligned · **GAP** doc missing or stale · **PARTIAL** shipped bu
 | Inbound guest server + bearer auth | a2a-operator | `capabilities/a2a/server.py` | OK | |
 | Guest Gru read-only toolset | a2a-operator | `capabilities/a2a/guest.py` | OK | write tools in capability but no approval handler → blocked |
 | Outbound `a2a_call` / `a2a_discover` | a2a-operator | `capabilities/a2a/client.py` | OK | |
-| Peer auth: bearer, api_key, oauth2_client_credentials | a2a-operator | `profiles.py`, `auth_strategies.py` | OK | |
+| Peer auth: bearer, api_key, oauth2_client_credentials | a2a-operator | `profiles.py`, `auth_strategies.py` | OK | D31 |
 | Session peers `/a2a peer add\|remove` | a2a-operator | `A2ACapability.session_peers` | OK | |
-| Context retention cleanup on serve | a2a-operator | `audit.cleanup_old_contexts` | OK | |
-| PR4 polish (status/budget/retention timer) | progress.md | — | GAP | Documented as queued, not shipped |
-| PR5 OIDC / GCP ID tokens | progress.md | — | N/A | Phase 4.d |
+| Context retention cleanup on serve | a2a-operator | `audit.cleanup_old_contexts` | PARTIAL | Startup only; hourly timer is PR4 |
+| Guest token budget integration | progress PR4 | `server.py` `tokens_used = 0` | GAP | PR4 queued |
+| PR5 OIDC / GCP ID tokens | progress.md | — | N/A | Phase 4.e |
+
+## Quality (Phase 7)
+
+| Feature | progress.md | Code | Status |
+| --- | --- | --- | --- |
+| Ruff + ty in `just check` | `[x]` | `pyproject.toml`, justfile | OK |
+| User guide on Zensical | `[x]` | `docs/user-guide/*.md`, `zensical.toml` nav | OK |
+| Phase 1.7 pytest coverage | `[x]` | `tests/test_history.py`, etc. | OK |
+| Memory tool unit tests | `[ ]` | — | GAP | No `test_memory.py` |
+| Phase 1 session/fs integration tests | `[ ]` | partial via other tests | GAP |
 
 ## Deferred (must not appear as shipped)
 

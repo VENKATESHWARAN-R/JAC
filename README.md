@@ -6,9 +6,9 @@ JAC is a Python CLI that wraps an LLM with persistent memory, tools,
 human-in-the-loop gates, multi-provider credentials, and session continuity.
 It runs on your machine — your keys, your files, your context.
 
-> **Status:** **v0.1.2 alpha** (pre-release). Phase 1.7 is complete — compaction,
+> **Status:** **v0.2.0 alpha** (pre-release). Phase 1.7 is complete — compaction,
 > tiered profiles, slash commands, token budgets, plan persistence on resume.
-> Phase 4 A2A is in flight (server, guest-Gru, outbound tools). See
+> Phase 4 A2A is in flight (PR1–PR3 shipped: server, guest-Gru, outbound tools, peer auth). See
 > [`docs/progress.md`](docs/progress.md) for the current state.
 
 ## What it does

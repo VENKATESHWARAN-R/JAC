@@ -23,7 +23,7 @@ flowchart LR
 ```
 
 - **`build_gru`** (`jac.runtime.gru`) composes instructions from `gru_system.md` + session context, then attaches capabilities.
-- **Default tools** — filesystem, search, shell, memory, web, token-aware history (`_default_tool_capabilities`).
+- **Default tools** — filesystem, search, shell, memory, web, token-aware history, dynamic context (`ContextCapability`), Logfire (`Instrumentation`) via `_default_tool_capabilities`.
 - **REPL extras** — hooks, approval, plan, process, clarify, A2A (`jac.cli.repl`).
 
 Set `include_default_tools=False` for tests or minimal agents.
@@ -37,9 +37,11 @@ Set `include_default_tools=False` for tests or minimal agents.
 | `ShellCapability` | `capabilities/shell.py` | `run_shell` — always approval-gated |
 | `MemoryCapability` | `capabilities/memory.py` | `remember`, `forget` — approval-gated |
 | `WebCapability` | `capabilities/web.py` | `web_search` (Tavily if key set, else DuckDuckGo), `fetch_url` |
+| `ContextCapability` | `capabilities/context.py` | Dynamic `get_instructions()` — AGENTS.md + memory.md re-read each turn |
 | `ProcessHistory` (via `make_history_capability`) | `capabilities/history.py` | Token-aware compaction (D20); emits warn/compact/refuse events |
-| `Hooks` | `capabilities/hooks.py` | Pushes lifecycle events to `EventBus` |
-| `HandleDeferredToolCalls` | `capabilities/approval.py` | Turns deferred tools into approval prompts |
+| `Instrumentation` | PAI built-in | Logfire tracing on every Gru run (wired in `runtime/gru.py`) |
+| `Hooks` | `runtime/hooks.py` | Pushes lifecycle events to `EventBus` |
+| `HandleDeferredToolCalls` | `runtime/approval.py` | Turns deferred tools into approval prompts |
 | `PlanCapability` | `capabilities/plan.py` | `plan`, `update_plan`, `get_plan` — persists to `<session>/plan.json` |
 | `ProcessCapability` | `capabilities/process.py` | Background processes — `start_process` / `kill_process` approval-gated |
 | `ClarifyCapability` | `capabilities/clarify.py` | `clarify` — numbered user picker via bus |
@@ -59,7 +61,7 @@ Risky tools are wrapped with `toolset.approval_required(predicate)`:
 The REPL installs `make_approval_handler(bus)`. On a deferred call:
 
 1. Hook emits `ApprovalRequest` with a future.
-2. `CliRenderer` shows tool name, **reason**, and args; user answers `y` / `n`.
+2. `CliRenderer` shows tool name, **reason**, and args; user answers `y` / `n` / `r` (redirect with feedback).
 3. Future resolves; Pydantic AI continues or denies the tool.
 
 Do not implement a parallel approval system.
@@ -74,7 +76,7 @@ Use `jac_function_toolset(...)` (`jac.tools.toolset`) so non-`@jac_tool` functio
 
 ## Hooks and the event bus
 
-`make_hooks(bus)` subscribes to Pydantic AI hook points and emits typed events (`jac.runtime.events`) onto `jac.runtime.bus.EventBus`.
+`make_hooks(bus)` (`jac.runtime.hooks`) subscribes to Pydantic AI hook points and emits typed events onto `jac.runtime.events.EventBus`.
 
 The REPL runs:
 

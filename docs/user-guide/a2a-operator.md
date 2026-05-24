@@ -2,7 +2,7 @@
 
 > **Audience:** operators exposing JAC to other agents or calling remote A2A peers.
 >
-> **Status (v0.1.2):** Phase 4 partial — server, guest Gru, outbound tools, pluggable peer auth, and session peers are shipped. PR4 polish (status/budget/retention timer) and PR5 OIDC/GCP tokens are queued — see [`progress.md`](../progress.md).
+> **Status (v0.2.0):** Phase 4 partial — server, guest Gru, outbound tools, pluggable peer auth, and session peers are shipped (PR1–PR3). PR4 polish (status/budget/retention timer) and PR5 OIDC/GCP tokens are queued — see [`progress.md`](../progress.md).
 
 JAC implements the [Agent-to-Agent (A2A)](https://a2a-protocol.org/latest/) protocol via `fasta2a`. Two directions:
 

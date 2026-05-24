@@ -148,7 +148,7 @@ Registration: import handlers in `jac/cli/slash/handlers/__init__.py`. Completer
 
 **Guest Gru (inbound A2A only):** `read_file`, `list_dir`, `grep`, `glob`.
 
-History compaction is not a tool — it runs inside `ProcessHistory` on each model turn. System-prompt context (AGENTS.md + memory.md) is injected dynamically by `ContextCapability.get_instructions()` so mid-session `remember` writes are visible immediately. Tracing comes from PAI's `Instrumentation` capability (per-agent, in every default capability set).
+History compaction is not a tool — `make_history_capability` registers a `ProcessHistory` processor that applies **token-budget-aware** compaction (D20: warn / auto-compact / refuse ladder against `compaction.max_context_tokens`). System-prompt context (AGENTS.md + memory.md) is injected dynamically by `ContextCapability.get_instructions()` so mid-session `remember` writes are visible immediately. Tracing comes from PAI's `Instrumentation` capability (per-agent, in every default capability set).
 
 ## Typer CLI commands
 
@@ -178,16 +178,23 @@ User workspace: `~/.jac/config.yaml`, `memory.md`, `AGENTS.md`, `history`, optio
 
 ## Tests (orientation)
 
-| Area | Typical files |
-| --- | --- |
-| Tools / paths | `tests/test_tools.py`, `tests/test_paths.py` |
-| Sessions / memory | `tests/test_session.py`, `tests/test_memory.py` |
-| Context capability | `tests/test_context_capability.py` |
-| Profiles / secrets | `tests/test_profiles.py`, `tests/test_secrets.py` |
-| A2A | `tests/test_a2a_*.py` |
-| Slash / budget | `tests/test_slash_*.py`, `tests/test_usage.py` |
+**296 tests** at last count (`uv run pytest --collect-only -q`). No dedicated `test_memory.py` or `test_session.py` yet — see Phase 7 in `progress.md`.
 
-Run: `just check` or `uv run pytest tests/ -q`.
+| Area | Files |
+| --- | --- |
+| Compaction / history | `test_history.py` |
+| Status bar | `test_statusbar.py` |
+| Usage / budgets | `test_usage.py`, `test_budget_slash.py` |
+| Plan persistence | `test_plan_persistence.py` |
+| HITL feedback | `test_hitl_feedback.py` |
+| Web backends | `test_web_backends.py` |
+| Context capability | `test_context_capability.py` |
+| Profiles / secrets / editor | `test_profiles.py`, `test_secrets.py`, `test_editor.py` |
+| Provider registry | `test_provider_registry.py` |
+| Slash | `test_slash.py` |
+| A2A (9 files) | `test_a2a_auth.py`, `test_a2a_card.py`, `test_a2a_audit.py`, `test_a2a_storage.py`, `test_a2a_guest.py`, `test_a2a_slash.py`, `test_a2a_server.py`, `test_a2a_client.py`, `test_a2a_auth_strategies.py` |
+
+Run: `just check` (ruff format + lint + `ty check src` + pytest) or `uv run pytest tests/ -q`.
 
 ## Related docs
 
