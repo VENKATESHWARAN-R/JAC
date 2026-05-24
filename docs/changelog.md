@@ -8,18 +8,22 @@ All notable changes to JAC are documented here. Format follows
 
 ### Added
 
-- Provider catalog (`src/jac/data/providers.yaml`) with optional `~/.jac/providers.yaml` overlay — centralizes provider→API-key mappings and `jac init` wizard defaults; `providers.yaml.example` on first-run bootstrap
+- **Phase 1.7 — Coworker experience:** token-aware history compaction (D20), status bar with tier/model display (D22), slash commands (`/model`, `/profile`, `/budget`, `/tokens`, `/clear`, `/sessions`, `/resume`), tiered model profiles (small/medium/large), approval/clarify deny-with-feedback (D26), token budgets with `/budget extend` (D25), plan checklist persistence on `--resume` (D27), Tavily web search backend when `TAVILY_API_KEY` is set
+- **Phase 4 A2A (partial):** inbound guest-Gru server (`/a2a serve`, `jac a2a serve`), bearer auth, outbound `a2a_discover` / `a2a_call` tools, pluggable outbound auth strategies (bearer, API key, OAuth2 client credentials), session peers via `/a2a peer add`
+- User guide and developer documentation (`docs/user-guide/`, `docs/developer/`)
+- Provider catalog (`src/jac/data/providers.yaml`) with optional `~/.jac/providers.yaml` overlay
 
 ### Changed
 
-- Docs and metadata: JAC acronym documented as Just Another Companion/CLI; replaced "local-first AI coworker harness" tagline.
-- `.env.template` aligned with the provider catalog (removed undocumented `LITELLM_API_KEY`; added `GROQ_API_KEY` / `COHERE_API_KEY`)
-- `secrets.backend: keyring` default moved to shipped `src/jac/data/defaults.yaml` (Settings layering)
+- Docs restructure: slimmed `CLAUDE.md`, refreshed `idea.md` and `architecture.md`, new Zensical nav
+- Docs and metadata: JAC acronym documented as Just Another Companion/CLI
+- `.env.template` aligned with the provider catalog
+- `secrets.backend: keyring` default moved to shipped `src/jac/data/defaults.yaml`
 
-### Planned
+### In flight
 
-- Phase 2b — summarizer minion routing through the existing `remember` approval flow
-- Phase 3 — minion factory and YAML templates
+- Phase 4 A2A PR4–PR5 (status enrichment, OIDC/GCP ID token auth strategies)
+- Phase 3 Skills (community Anthropic format — D21)
 
 ## [0.1.2] - 2026-05-22
 

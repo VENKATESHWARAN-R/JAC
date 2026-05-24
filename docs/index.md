@@ -6,21 +6,28 @@ JAC is a Python CLI that wraps an LLM with persistent memory, tools,
 human-in-the-loop gates, multi-provider credentials, and session continuity.
 It runs on your machine — your keys, your files, your context.
 
-## Documentation map
+## Start here
 
-- **[Idea](idea.md)** — why JAC exists, what it is and what it isn't.
-- **[Architecture](architecture.md)** — system design with diagrams, locked
-  decisions, the phased roadmap.
-- **[Progress](progress.md)** — current implementation state, phase by phase.
-- **[Changelog](changelog.md)** — released versions.
+| I want to… | Start at |
+| --- | --- |
+| **Install and run JAC** | [Getting started](user-guide/getting-started.md) |
+| **Look up a command or slash** | [CLI reference](user-guide/cli-reference.md) |
+| **Configure profiles, tiers, budgets** | [Configuration](user-guide/configuration.md) |
+| **Understand sessions and memory** | [Sessions & memory](user-guide/sessions-and-memory.md) |
+| **Run or expose A2A** | [A2A operator guide](user-guide/a2a-operator.md) |
+| **Contribute or extend JAC** | [Contributing](developer/contributing.md) |
+| **Navigate the codebase** | [Codebase map](developer/codebase-map.md) |
+| **Add a capability or tool** | [Capabilities & hooks](developer/capabilities.md) |
+| **Understand the product vision** | [Idea](idea.md) |
+| **Review locked design decisions** | [Architecture](architecture.md) |
+| **See what's shipped vs queued** | [Progress](progress.md) |
 
-### Usage (in progress)
+## Design & maintenance
 
-- [CLI reference](usage/cli.md)
-- [Examples](usage/examples.md)
-- [Features](usage/features.md)
+- [Documentation strategy](design/documentation-strategy.md) — audiences, single source of truth, writing rules.
+- [Drift matrix](design/audit/drift-matrix.md) — doc/code alignment audit (maintainers).
 
 ## Source
 
-JAC's source, contributor guide, and quickstart live in the
+JAC's source and quickstart also live in the
 [repository README](https://github.com/VENKATESHWARAN-R/JAC#readme).

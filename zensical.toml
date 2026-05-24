@@ -18,14 +18,26 @@ site_dir = "site"
 
 nav = [
     { "Overview" = "index.md" },
-    { "Idea" = "idea.md" },
-    { "Architecture" = "architecture.md" },
-    { "Progress" = "progress.md" },
-    { "Changelog" = "changelog.md" },
-    { "Usage" = [
-        { "CLI reference" = "usage/cli.md" },
-        { "Examples" = "usage/examples.md" },
-        { "Features" = "usage/features.md" },
+    { "User Guide" = [
+        { "Getting started" = "user-guide/getting-started.md" },
+        { "CLI reference" = "user-guide/cli-reference.md" },
+        { "Configuration" = "user-guide/configuration.md" },
+        { "Sessions & memory" = "user-guide/sessions-and-memory.md" },
+        { "Examples" = "user-guide/examples.md" },
+        { "A2A operator" = "user-guide/a2a-operator.md" },
+    ] },
+    { "Developer" = [
+        { "Contributing" = "developer/contributing.md" },
+        { "Codebase map" = "developer/codebase-map.md" },
+        { "Capabilities & hooks" = "developer/capabilities.md" },
+    ] },
+    { "Design" = [
+        { "Idea" = "idea.md" },
+        { "Architecture" = "architecture.md" },
+        { "Progress" = "progress.md" },
+        { "Changelog" = "changelog.md" },
+        { "Documentation strategy" = "design/documentation-strategy.md" },
+        { "Drift matrix" = "design/audit/drift-matrix.md" },
     ] },
 ]
 
