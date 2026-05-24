@@ -1,6 +1,6 @@
 # JAC — Implementation Progress
 
-> **Just Another Companion/CLI** · **Updated:** 2026-05-23 · keep this in sync as work lands.
+> **Just Another Companion/CLI** · **Updated:** 2026-05-24 · keep this in sync as work lands.
 
 This file tracks **what is implemented**, **what is in flight**, and **what is queued**.
 For the *why* see `idea.md`. For the *how* see `architecture.md` and `CLAUDE.md`.
@@ -23,7 +23,7 @@ Each phase block leads with **Goal** + **why/what/how** before the checklist. Th
 | **Phase 1.7 — Coworker experience** | ✅ Complete (minus deferred) | umbrella for compaction, status bar, slash commands, budgets, feedback channels. **Shipped:** 1.7.a (D20 token-aware compaction), 1.7.b (D22 status bar), 1.7.c (D22 slash commands + tier schema), 1.7.d (D26 approval/clarify feedback), 1.7.f (D25 token budgets), 1.7.g (D27 plan persistence on resume), 1.7.h (Tavily/DDG dual-backend web search). **Deferred to v2:** 1.7.e Plan Mode + `ModeCapability` base — design needs more time (multi-plan handoff, plan-injection budget hazard, mode-base scope). |
 | Phase 2b — Summarizer minion | ⛔ Superseded | rolled into Phase 1.7.a (token-aware compaction). No separate minion. |
 | Phase 3 — Skills (D21) | ⏸ Queued | community-format skill loader + inline mode (replaces old bespoke minion factory plan) |
-| Phase 4 — A2A (D24) | ⏸ Queued | inbound server + outbound client — moved up from v2 |
+| Phase 4 — A2A (D24, D30) | 🚧 In flight | **PR1 landed 2026-05-24** (server + guest + auth + card + storage + audit + slash + headless). PR2 (outbound) next. |
 | Phase 5 — Minions | ⏸ Queued | runtime for skills with `mode: minion` — **needs grooming session before implementation** |
 | Phase 6 — MCP | ⏸ Queued | external MCP servers + the `reason:` discipline call (D26 reasoning) |
 | Phase 7 — Quality | ⏸ Queued | broader pytest, ruff, mypy, user docs |
@@ -484,26 +484,89 @@ Decisions D23 / D29 (the YOLO sketch) stay in `architecture.md §11` as the desi
 
 ---
 
-## Phase 4 — A2A (D24) ⏸
+## Phase 4 — A2A (D24, D30) 🚧
 
-**Goal:** speak the A2A protocol both ways so JAC can talk to other A2A-compatible agents (other JAC instances *or* third-party deployed agents — D24 explicitly covers the case of a cloud-deployed data-science agent exposing A2A).
+**Goal:** speak the A2A protocol both ways so JAC can talk to other A2A-compatible agents — other JAC instances *or* third-party deployed agents (cloud-hosted data-science agent, enterprise A2A endpoint, anything that follows the spec). Cross-repo coworking via two JAC instances is the headline differentiator from `idea.md`.
 
-**Why now (not v2):** D24. A2A has no hard dependency on minions or skills, and it's the project's headline differentiator. Continuing to defer it makes the differentiator vapor.
+**Why this exists (the research pass on 2026-05-24):** A2A v1.0 (announced Nov 2025 by AWS / Cisco / Google / IBM / Microsoft / Salesforce / SAP / ServiceNow) is now a real standard — stable wire format (JSON-RPC 2.0 over HTTPS), standardized AgentCard discovery at `/.well-known/agent-card.json`, OpenTelemetry tracing baked into the spec. `fasta2a` 0.6.1 ships a Pydantic AI bridge (`fasta2a.pydantic_ai.agent_to_a2a`) that takes a pydantic-ai Agent and returns a Starlette ASGI app — auto-builds the AgentCard, registers `POST /` for JSON-RPC, registers the discovery endpoint, and includes a Worker that maps A2A `Message` ↔ pydantic-ai `ModelMessage` and skips `ToolCallPart` in responses (no tool internals leak to peers). That eliminates almost all wire-protocol work; this phase is mostly *isolation*, *auth*, *config*, *audit*, and *UX*.
 
-**Inbound (server):**
-- [ ] `fasta2a` server wrapped as a `Capability`, spawned on a background asyncio task by `/a2a serve` or `jac a2a serve`
-- [ ] Generated bearer token printed at start; `Authorization: Bearer <token>` enforced unless `--unsafe`
-- [ ] **Guest Gru** — each inbound request spawns a *fresh* Gru with empty session memory, read-only toolset by default (configurable per profile via `a2a.guest_capabilities:`), separate Logfire span tagged with caller identity
-- [ ] Server survives until REPL exits or `/a2a stop`
-- [ ] Headless mode (`jac a2a serve --port N`) for running A2A without an interactive REPL
+**Locked decisions (brainstorm 2026-05-24, see D24 revision + D30):**
 
-**Outbound (client):**
-- [ ] `a2a_call(reason, url, message)` tool — read-only (no approval needed for the *call*, but the model's *use* of the returned data may trigger approval on downstream tools)
-- [ ] Follow the [A2A protocol spec](https://a2a-protocol.org/latest/)
-- [ ] Auth header support — config block for known peers' tokens
-- [ ] Gru may delegate A2A back-and-forth to a minion (once minions exist) to keep its own context clean
+| # | Locked |
+|---|---|
+| 1 | Single guest-Gru instance reused; per-call isolation via fasta2a's per-context Storage (not literal fresh agent — pydantic-ai is stateless between `.run()`) |
+| 2 | Guest toolset: `read_file`, `list_dir`, `grep`, `glob` only |
+| 3 | Auto-approve guest tool calls + inline `[a2a]` event + Logfire span tagged with caller |
+| 4 | Single generic skill in AgentCard for v1; community-skill auto-publish → Phase 4.1 (after Phase 3) |
+| 5 | Two outbound tools: `a2a_discover(reason, url) → AgentCard`, `a2a_call(reason, peer_or_url, message, context_id=None)` |
+| 6 | Bind `127.0.0.1` default; `--host 0.0.0.0` to expose; ephemeral bearer token printed once at startup; `--unsafe` skips auth + omits `securitySchemes` |
+| 7 | Headless `jac a2a serve --profile NAME` (falls back to `default_profile`) |
+| 8 | Guest tokens count against host's `project_total_tokens`, **not** `session_total_tokens` |
+| 9 | Persist contexts + `inbound.jsonl` under `<project>/.agents/a2a/`; default 3-day retention, configurable via `a2a.context_retention_days` |
+| 10 | Streaming + cancel NOT in v1 (fasta2a 0.6.1 doesn't implement them); card declares `streaming: false` |
 
-- [ ] architecture.md §11 D24 recorded ✅ (done in this change)
+**Non-negotiables (same as every phase):** every new tool carries `reason: str` and goes through `@jac_tool`; new events extend `JacEventT`; CLI subcommand and slash share internals (no duplication); architecture decisions ride to `§11` in the same change.
+
+### Phase 4.a — Server scaffold + guest Gru (PR1) ✅
+
+**Why:** the foundational lift. Stand up the server, build the guest Gru with the narrowed toolset, gate it with bearer auth, persist contexts, and wire the lifecycle to slash + headless command. Outbound and polish come in later PRs but are useless without this.
+
+**Landed (2026-05-24):**
+- [x] `jac.capabilities.a2a.__init__` — `A2ACapability` (server lifecycle methods only; outbound tools land in PR2 / Phase 4.b). Public surface: `start_server` / `stop_server` / `shutdown`. `model` accepts `str | Model | None` so tests pass a `TestModel()` instance directly.
+- [x] `jac.capabilities.a2a.server` — `A2AServer` wrapping `agent_to_a2a()`; runs on background asyncio task; clean shutdown via `uvicorn.Server.should_exit`. Custom `AuditingAgentWorker` subclasses fasta2a's worker to emit `A2AInboundCall`/`Completed` and append to the audit log around every inbound `run_task`. Custom card route registered before fasta2a's so `securitySchemes` actually ships in the AgentCard (fasta2a 0.6.1 builds its own internal card from constructor args and can't declare auth).
+- [x] `jac.capabilities.a2a.guest` — `build_guest_gru(model=)` builds Gru with `FilesystemCapability` + `SearchCapability` only (writes are bundled in `FilesystemCapability` but unreachable — no approval handler installed on the guest). Loads project + user AGENTS.md and memory.md plus a guest-mode addendum.
+- [x] `jac.capabilities.a2a.auth` — `BearerAuthMiddleware` (Starlette `BaseHTTPMiddleware`) using `hmac.compare_digest`; `generate_token() -> str` via `secrets.token_urlsafe(32)`; `redact_token` + `peer_id_from_token` helpers. Public path `/.well-known/agent-card.json` bypasses auth so peers can discover before authenticating.
+- [x] `jac.capabilities.a2a.card` — `build_agent_card(profile_name, base_url, unsafe)` returns the `AgentCard` TypedDict (snake_case keys → camelCase JSON via fasta2a's `alias_generator=to_camel`). Single generic `jac-coding-assistant` skill in v1; bearer scheme declared when `unsafe=False`, omitted otherwise.
+- [x] `jac.capabilities.a2a.storage` — `JacFileStorage(fasta2a.Storage)` keeps tasks in memory (ephemeral execution state) but persists contexts to `<project>/.agents/a2a/contexts/<context_id>.json` via `ModelMessagesTypeAdapter`. Atomic writes (tempfile + rename). Context-id sanitization defends against path-traversal.
+- [x] `jac.capabilities.a2a.audit` — `InboundLog` JSONL appender for `<project>/.agents/a2a/inbound.jsonl` (best-effort, swallows OSError so disk failures don't fail inbound calls); `cleanup_old_contexts(retention_days)` mtime-based pruning, runs on server start (1-hour timer comes in PR3).
+- [x] Profile schema: `a2a.peers.<name>: {url, token, description}` (optional, defaults `{}`) + `a2a.host` (default `127.0.0.1`) + `a2a.port` (default `8001`) + `a2a.context_retention_days` (default `3`). Validated on profile load. PR1 doesn't *use* peers (outbound is PR2) but the schema is locked now to avoid breaking changes later.
+- [x] `/a2a serve [--port N] [--host ADDR] [--unsafe]` + `/a2a stop` + `/a2a status` + `/a2a token` slash commands (`jac.cli.slash.handlers.a2a`). Async work (`serve`/`stop`) goes via new `StartA2AServer` / `StopA2AServer` slash-result types so the REPL drives the coroutine in *its own* event loop — spinning a helper-thread loop would kill the server when the thread exits.
+- [x] `jac a2a serve [--port N] [--host ADDR] [--unsafe] [--profile NAME]` headless typer command (`jac.cli.a2a`) — shares `A2ACapability.start_server` with the slash path; sleeps on `asyncio.Event` until SIGINT/SIGTERM.
+- [x] Events: `A2AServerStarted(url, token_redacted, unsafe, bind_host)`, `A2AServerStopped(reason)`, `A2AInboundCall(peer_id, context_id, task_id, message_preview)`, `A2AInboundCompleted(peer_id, context_id, task_id, state, duration_ms, tokens_used)` — added to `JacEventT`.
+- [x] CLI renderer prints muted cyan `[a2a]` notifications for `A2AInboundCall` (`←`) and `A2AInboundCompleted` (`→` with green/red state coloring). `A2AServerStarted` / `Stopped` events are no-op in renderer because the slash + headless paths already print their own banners (avoids double notifications).
+- [x] REPL wires the capability into every session, threads it through `SlashContext`, handles `StartA2AServer` / `StopA2AServer` in the dispatch loop, reaps the server on REPL exit (best-effort, mirrors the `process_capability.shutdown()` reaper).
+- [x] `uvicorn>=0.32.0` + `httpx>=0.28.0` added as hard deps in `pyproject.toml`.
+- [x] **41 tests across 6 files** (`test_a2a_auth.py`, `test_a2a_card.py`, `test_a2a_audit.py`, `test_a2a_storage.py`, `test_a2a_guest.py`, `test_a2a_slash.py`, `test_a2a_server.py`): bearer middleware (valid/invalid/missing/wrong-scheme/well-known-bypass), card builder (name composition / auth declaration / unsafe omission / fasta2a schema round-trip), audit log + retention (mtime cutoff / disabled-when-zero / non-json-ignored / OSError-swallowed), storage round-trip (task lifecycle / context persist+load / path-traversal sanitization / atomic write), guest toolset introspection (`_cap_toolsets` walk — proves exactly 6 tools, the 4 allowed + 2 unreachable writes; all forbidden tools confirmed absent), slash parsing + dispatch (every subcommand), end-to-end server integration (real uvicorn bind on free port, auth round-trip via httpx).
+- [x] All 240 tests in the repo pass (existing 199 + new 41); `just check` (ruff format + lint + ty typecheck) clean.
+- [x] architecture.md §11 D24 **revised** + new **D30** (file layout) recorded — 2026-05-24
+
+**Known gaps (PR3-scoped):**
+- Inbound `A2AInboundCompleted.tokens_used` is hardcoded to `0`; the budget integration that pulls real usage from the agent's `result.usage()` lands in PR3 alongside `/tokens` integration.
+- Context retention cleanup runs only on server start; the 1-hour while-running timer is PR3.
+- `cancel_task` is a no-op (inherited from fasta2a's `AgentWorker`); `tasks/cancel` returns the standard `TaskNotCancelable` error. Revisit when fasta2a implements cancel.
+- The agent card declares `streaming: false` because fasta2a 0.6.1 raises `NotImplementedError` on `message/stream`. Revisit when fasta2a ships streaming.
+
+### Phase 4.b — Outbound tools + peer config (PR2) ⏸
+
+**Why:** once the server works, give Gru the other half — the ability to *call* peers. Two tools because the A2A spec's `A2ACardResolver` pattern shows clients normally discover first, then send. Single-tool would force Gru to discover blind through trial-and-error.
+
+- [ ] `jac.capabilities.a2a.client.a2a_discover(reason, url) -> dict` — httpx `GET {url}/.well-known/agent-card.json`, validates via `agent_card_ta`, returns the parsed dict so Gru can read skills/auth/capabilities
+- [ ] `jac.capabilities.a2a.client.a2a_call(reason, peer_or_url, message, context_id=None) -> dict` — wraps `fasta2a.client.A2AClient` with our auth-injected `httpx.AsyncClient(headers={"Authorization": f"Bearer {token}"})`
+- [ ] Profile schema extended: `a2a.peers.<name>: {url, token, description}` (optional block); validation rejects empty url/token
+- [ ] Peer resolution: known name → lookup URL+token from profile; else treat as raw URL with no auth header
+- [ ] `/a2a peers` slash command (list configured peers + URLs + truncated descriptions)
+- [ ] Outbound tools registered via `A2ACapability` (carried into every session by default)
+- [ ] Events: `A2AOutboundCall(target, message_preview)`, `A2AOutboundCompleted(target, state, duration_ms)`
+- [ ] Tests: discover (mock httpx returning a real AgentCard payload), call (spin up a local fasta2a server in a fixture, send/receive), peer name resolution, raw-URL fallthrough, auth header injection
+
+### Phase 4.c — Polish: status, audit, budget integration (PR3) ⏸
+
+**Why:** the bits that make A2A *operable* rather than just *functional*. Visibility into running servers, integration with the budget system so guest calls aren't a budget loophole, retention enforcement so audit files don't grow forever.
+
+- [ ] `/a2a status` — running? bind host:port? truncated token? peer count? last 5 calls?
+- [ ] `/a2a token` — re-print current bearer (in case operator missed it on start)
+- [ ] Budget integration: per-inbound-call `result.usage()` feeds host's `UsageTracker.add_external(input, output)` — counts under `project_total` only, **not** `session_total`. Surfaces in `/tokens` as a separate "a2a guest" line
+- [ ] Context retention enforcement: `cleanup_old_contexts(retention_days)` runs on server start AND on a 1-hour timer while server runs
+- [ ] `gru_system.md` updated: "Using `a2a_discover` vs `a2a_call`" section + "What guest Gru is and what peer behavior to expect" — host Gru understands the asymmetry between its own context and what peers can see
+- [ ] `architecture.md §6 + §8` diagrams refreshed to show A2A flow (inbound + outbound + storage + audit)
+
+### Phase 4.1 — Auto-publish community Skills (after Phase 3) ⏸
+
+**Why:** once Phase 3 ships the community-format skill loader, the AgentCard's `skills:` list can advertise real capabilities instead of one generic placeholder. This is what makes Phase 3 and Phase 4 reinforce each other.
+
+- [ ] Loaded inline-mode community skills (from `<repo>/.agents/skills/` and `~/.jac/skills/`) auto-appear as `Skill` entries in the AgentCard; frontmatter `description` → A2A `Skill.description`, frontmatter `name` → A2A `Skill.id`
+- [ ] Optional per-skill enable/disable via `a2a.guest.advertise_skills: [name1, name2]` (default: all installed)
+- [ ] Test: skill loader → card builder integration
 
 ---
 

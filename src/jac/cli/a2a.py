@@ -1,0 +1,197 @@
+"""``jac a2a`` — headless A2A server subcommand (D24, Phase 4.a).
+
+Runs the same server as ``/a2a serve`` does inside the REPL, but
+without a REPL. Useful for:
+
+- Long-running A2A endpoints in tmux / systemd / a CI environment.
+- Exposing a project to peers when you don't need an interactive
+  session yourself.
+- Testing — peers can hit a known port without you babysitting a REPL.
+
+Lifecycle:
+
+1. Activate the resolved profile so :func:`build_guest_gru` has the
+   right model and credentials in ``os.environ`` (same path the REPL
+   uses — :func:`apply_profile_env`).
+2. Build an :class:`A2ACapability` with no event bus (no renderer to
+   feed) and start the server with the parsed flags.
+3. Print the bearer token + serving URL to stdout (the headless
+   "startup banner" — operators capture this for peer config).
+4. Sleep on an asyncio Event until Ctrl-C / SIGTERM, then call
+   :meth:`A2ACapability.shutdown` for clean teardown.
+
+The renderer / hooks / approval surface is NOT installed — there's no
+human to prompt and the guest toolset is auto-approve anyway. Logfire
+captures everything via the spans fasta2a already emits.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import os
+import signal
+from typing import Annotated
+
+import typer
+from rich.console import Console
+
+from jac.capabilities.a2a import make_a2a_capability
+from jac.capabilities.observability import setup_observability
+from jac.errors import JacConfigError
+from jac.profiles import get_profile, resolve_active_profile_name
+from jac.secrets import apply_profile_env
+from jac.workspace.bootstrap import ensure_user_workspace
+
+app = typer.Typer(
+    name="a2a",
+    help="Headless A2A server (D24).",
+    no_args_is_help=True,
+    add_completion=False,
+)
+console = Console()
+
+
+@app.command("serve")
+def serve_command(
+    host: Annotated[
+        str | None,
+        typer.Option(
+            "--host",
+            help="Bind address. Defaults to the active profile's a2a.host (127.0.0.1).",
+        ),
+    ] = None,
+    port: Annotated[
+        int | None,
+        typer.Option(
+            "--port",
+            "-p",
+            help="Bind port. Defaults to the active profile's a2a.port (8001).",
+        ),
+    ] = None,
+    unsafe: Annotated[
+        bool,
+        typer.Option(
+            "--unsafe",
+            help="Skip bearer auth. Card omits securitySchemes. Use only on trusted networks.",
+        ),
+    ] = False,
+    profile: Annotated[
+        str | None,
+        typer.Option(
+            "--profile",
+            help="Profile to run under. Defaults to default_profile.",
+        ),
+    ] = None,
+) -> None:
+    """Start the A2A guest server in the foreground (no REPL).
+
+    Same behavior as ``/a2a serve`` but without an interactive session.
+    Prints the bearer token once, then sleeps until SIGINT/SIGTERM.
+    """
+    ensure_user_workspace()
+    setup_observability()
+
+    try:
+        active_profile_name = resolve_active_profile_name(profile)
+        active_profile = get_profile(active_profile_name)
+        apply_profile_env(active_profile_name, active_profile)
+    except JacConfigError as exc:
+        console.print(f"[red]config error:[/red] {exc}")
+        raise typer.Exit(1) from None
+
+    # Resolve bind defaults: CLI flag > profile default > schema default.
+    effective_host = host if host is not None else active_profile.a2a.host
+    effective_port = port if port is not None else active_profile.a2a.port
+
+    # Pull JAC_MODEL after apply_profile_env so the guest gets the
+    # profile's active-tier default model.
+    model_id = os.environ.get("JAC_MODEL")
+    if not model_id:
+        console.print(
+            "[red]config error:[/red] profile activation didn't set JAC_MODEL "
+            "(profile is malformed?)"
+        )
+        raise typer.Exit(1)
+
+    if unsafe:
+        console.print(
+            "[red bold]⚠ --unsafe:[/red bold] starting A2A server with no authentication. "
+            "[dim]Any client that can reach the port can drive the guest Gru.[/dim]"
+        )
+
+    try:
+        asyncio.run(
+            _serve(
+                profile_name=active_profile_name,
+                model_id=model_id,
+                host=effective_host,
+                port=effective_port,
+                unsafe=unsafe,
+                retention_days=active_profile.a2a.context_retention_days,
+            )
+        )
+    except KeyboardInterrupt:
+        # asyncio.run propagates the cancellation; we land here on Ctrl-C
+        # after the shutdown path has already run.
+        console.print("\n[dim]bye[/dim]")
+
+
+async def _serve(
+    *,
+    profile_name: str,
+    model_id: str,
+    host: str,
+    port: int,
+    unsafe: bool,
+    retention_days: int,
+) -> None:
+    """The actual async lifecycle. Boots the server, waits, tears down."""
+    cap = make_a2a_capability(
+        bus=None,
+        model=model_id,
+        profile_name=profile_name,
+        retention_days=retention_days,
+    )
+    try:
+        info = await cap.start_server(host=host, port=port, unsafe=unsafe)
+    except (JacConfigError, OSError, RuntimeError) as exc:
+        console.print(f"[red]A2A serve failed:[/red] {exc}")
+        return
+
+    console.print(
+        f"[green]✓ A2A server started:[/green] [bold]{info.url}[/bold]  "
+        f"[dim](bind {info.bind_host}:{info.port}, profile {profile_name!r})[/dim]"
+    )
+    if info.unsafe:
+        console.print(
+            "[red]auth: disabled (--unsafe)[/red] "
+            "[dim]— card omits securitySchemes; any caller accepted[/dim]"
+        )
+    else:
+        console.print(
+            "[dim]auth: bearer token (paste below into peer config; rotates on every restart)[/dim]"
+        )
+        console.print(f"  [bold]{info.token}[/bold]")
+    console.print(f"[dim]agent card: {info.url}/.well-known/agent-card.json[/dim]")
+    console.print("[dim]Ctrl-C or SIGTERM to stop[/dim]")
+
+    # Block until a signal arrives. asyncio.Event ensures we yield to
+    # the uvicorn task while we wait, instead of busy-spinning.
+    stop_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+
+    def _request_stop(*_: object) -> None:
+        stop_event.set()
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        # Windows / restricted envs don't allow add_signal_handler; the
+        # KeyboardInterrupt path in serve_command catches Ctrl-C anyway.
+        with contextlib.suppress(NotImplementedError):
+            loop.add_signal_handler(sig, _request_stop)
+
+    try:
+        await stop_event.wait()
+    finally:
+        await cap.shutdown()
+        console.print("[green]✓ A2A server stopped[/green]")

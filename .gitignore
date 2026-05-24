@@ -216,3 +216,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+.agents/.env.local
+.agents/settings.local.json
+.agents/state.db
+.agents/logs/

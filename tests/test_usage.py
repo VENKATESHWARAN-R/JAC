@@ -83,9 +83,7 @@ def test_record_ignores_negative_token_counts(tmp_path: Path) -> None:
 
 def test_record_appends_jsonl_line(tmp_path: Path) -> None:
     usage_file = tmp_path / "usage.jsonl"
-    tracker = UsageTracker(
-        session_id="s1", bus=None, usage_file=usage_file, limits=_limits()
-    )
+    tracker = UsageTracker(session_id="s1", bus=None, usage_file=usage_file, limits=_limits())
     _run(tracker.record(input_tokens=42, output_tokens=8))
 
     lines = usage_file.read_text().strip().splitlines()
@@ -99,9 +97,7 @@ def test_record_appends_jsonl_line(tmp_path: Path) -> None:
 
 def test_record_no_persistence_when_file_is_none() -> None:
     """Headless / test callers can opt out of JSONL writes."""
-    tracker = UsageTracker(
-        session_id="s1", bus=None, usage_file=None, limits=_limits()
-    )
+    tracker = UsageTracker(session_id="s1", bus=None, usage_file=None, limits=_limits())
     _run(tracker.record(input_tokens=100, output_tokens=50))
     # No exception; counters still tick.
     assert tracker.counters.input_tokens == 100
@@ -144,8 +140,7 @@ def test_load_project_baseline_returns_zero_when_no_file(tmp_path: Path) -> None
 def test_make_usage_tracker_preloads_baseline(tmp_path: Path) -> None:
     usage_file = tmp_path / "usage.jsonl"
     usage_file.write_text(
-        json.dumps({"session_id": "old", "input_tokens": 100, "output_tokens": 50})
-        + "\n"
+        json.dumps({"session_id": "old", "input_tokens": 100, "output_tokens": 50}) + "\n"
     )
     tracker = make_usage_tracker(
         session_id="new",
@@ -230,9 +225,7 @@ def test_record_separate_kinds_emit_independently(tmp_path: Path) -> None:
 
 def test_no_events_when_no_budget_configured(tmp_path: Path) -> None:
     bus = EventBus()
-    tracker = UsageTracker(
-        session_id="s1", bus=bus, usage_file=None, limits=_limits()
-    )
+    tracker = UsageTracker(session_id="s1", bus=bus, usage_file=None, limits=_limits())
     _run(tracker.record(input_tokens=10_000_000, output_tokens=10_000_000))
     assert _drain(bus) == []
 
@@ -268,9 +261,7 @@ def test_is_over_hardstop_reports_tripped_kind() -> None:
 
 
 def test_is_over_hardstop_returns_none_when_no_budget() -> None:
-    tracker = UsageTracker(
-        session_id="s1", bus=None, usage_file=None, limits=_limits()
-    )
+    tracker = UsageTracker(session_id="s1", bus=None, usage_file=None, limits=_limits())
     _run(tracker.record(input_tokens=999_999, output_tokens=999_999))
     assert tracker.is_over_hardstop() is None
 
@@ -279,9 +270,7 @@ def test_is_over_hardstop_returns_none_when_no_budget() -> None:
 
 
 def test_status_pct_returns_none_when_no_budget() -> None:
-    tracker = UsageTracker(
-        session_id="s1", bus=None, usage_file=None, limits=_limits()
-    )
+    tracker = UsageTracker(session_id="s1", bus=None, usage_file=None, limits=_limits())
     assert tracker.status_pct() is None
 
 

@@ -160,15 +160,11 @@ class UsageTracker:
             pct = int((used / limit) * 100)
             if pct >= self.limits.hardstop_pct and kind_typed not in self._stopped:
                 self._stopped.add(kind_typed)
-                await self.bus.emit(
-                    BudgetHardStop(kind=kind_typed, used=used, budget=limit)
-                )
+                await self.bus.emit(BudgetHardStop(kind=kind_typed, used=used, budget=limit))
             elif pct >= self.limits.warn_pct and kind_typed not in self._warned:
                 self._warned.add(kind_typed)
                 await self.bus.emit(
-                    BudgetWarning(
-                        kind=kind_typed, used=used, budget=limit, pct=pct
-                    )
+                    BudgetWarning(kind=kind_typed, used=used, budget=limit, pct=pct)
                 )
 
     def is_over_hardstop(self) -> tuple[BudgetKind, int, int] | None:

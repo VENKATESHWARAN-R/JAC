@@ -37,6 +37,74 @@ def validate_profile_name(name: str) -> None:
         )
 
 
+class A2APeerConfig(BaseModel):
+    """One configured A2A peer (D24). Used by ``a2a_call`` for named lookup.
+
+    A peer is just a (url, optional token, description) triple. The token
+    is the bearer secret to send in ``Authorization: Bearer <token>``;
+    leave it unset when the peer is running with ``--unsafe`` (test setups
+    only — production peers always have tokens).
+    """
+
+    url: str
+    """Base URL of the peer's A2A endpoint (e.g. ``http://127.0.0.1:8001``).
+    Trailing slash optional; the client normalizes either form."""
+
+    token: str | None = None
+    """Bearer token; ``None`` means no Authorization header (peer must be
+    running with ``--unsafe`` for the call to succeed)."""
+
+    description: str = ""
+    """Human-readable hint surfaced in ``/a2a peers`` listing."""
+
+
+class A2AProfileConfig(BaseModel):
+    """Per-profile A2A configuration (D24).
+
+    Bundles peer definitions (used by ``a2a_call`` — Phase 4.b) and the
+    server defaults Cur applies when ``/a2a serve`` or ``jac a2a serve``
+    is invoked without explicit CLI flags. Every field has a safe default
+    so an empty ``a2a: {}`` block is valid; even better, omit the block
+    entirely and JAC uses these defaults.
+    """
+
+    peers: dict[str, A2APeerConfig] = Field(default_factory=dict)
+    """Named peers ``a2a.peers.<name>: {url, token, description}``. Names
+    follow the same convention as profile names (lowercase / digits / hyphens)
+    so ``/a2a peers`` displays them safely. Validated on load."""
+
+    host: str = "127.0.0.1"
+    """Default bind address for ``/a2a serve``. Loopback by default — the
+    headline cross-repo use case is local, and exposing on the LAN should
+    be an explicit ``--host 0.0.0.0`` choice."""
+
+    port: int = 8001
+    """Default port for ``/a2a serve``. ``8001`` so it doesn't collide with
+    typical dev servers on ``3000`` / ``8000``."""
+
+    context_retention_days: int = 3
+    """How long persisted A2A contexts (``<project>/.agents/a2a/contexts/``)
+    are kept before the server-start cleanup pass removes them. ``0`` disables
+    retention (keep forever); negative values rejected by the validator."""
+
+    @model_validator(mode="after")
+    def _validate_shape(self) -> A2AProfileConfig:
+        if self.port < 1 or self.port > 65535:
+            raise ValueError(f"a2a.port must be 1-65535; got {self.port}")
+        if self.context_retention_days < 0:
+            raise ValueError(
+                f"a2a.context_retention_days must be ≥0 (0 = keep forever); "
+                f"got {self.context_retention_days}"
+            )
+        for name in self.peers:
+            if not _NAME_RE.fullmatch(name):
+                raise ValueError(
+                    f"a2a.peers.{name!r}: invalid peer name. Use lowercase letters, "
+                    "digits, and hyphens only; cannot start or end with a hyphen."
+                )
+        return self
+
+
 class Profile(BaseModel):
     """A named bundle of tiered models + non-secret env + (optionally) explicit secret requirements."""
 
@@ -55,6 +123,10 @@ class Profile(BaseModel):
     """If set, the explicit list of secret env vars the profile needs.
     If ``None``, JAC infers them from the union of provider prefixes across
     every tier model via the provider catalog (:mod:`jac.providers.registry`)."""
+
+    a2a: A2AProfileConfig = Field(default_factory=A2AProfileConfig)
+    """A2A subsystem config (D24) — peers + server defaults. Optional; the
+    defaults are usable as-is so omitting the block in YAML is fine."""
 
     @model_validator(mode="after")
     def _validate_shape(self) -> Profile:

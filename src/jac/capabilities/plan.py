@@ -118,8 +118,7 @@ class PlanStore:
         # `status` has already been validated by Session.load_plan, but the
         # dict's value type is plain `str` — cast to satisfy the Literal.
         self.steps = [
-            _PlanStep(text=i["text"], status=cast(PlanStepStatus, i["status"]))
-            for i in items
+            _PlanStep(text=i["text"], status=cast(PlanStepStatus, i["status"])) for i in items
         ]
 
     def clear(self) -> None:

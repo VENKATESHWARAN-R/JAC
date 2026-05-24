@@ -278,9 +278,7 @@ def test_full_cycle_persist_load_seed_continue(isolated_project: Path) -> None:
     assert warning is None
 
     bus2 = EventBus()
-    cap_b = make_plan_capability(
-        bus=bus2, plan_file=session.plan_file, initial_steps=restored
-    )
+    cap_b = make_plan_capability(bus=bus2, plan_file=session.plan_file, initial_steps=restored)
     _plan_b, update_b, get_b = cap_b._build_tools()
     rendered = get_b(reason="see what survived")
     assert "[completed]" in rendered
@@ -294,5 +292,3 @@ def test_full_cycle_persist_load_seed_continue(isolated_project: Path) -> None:
     assert statuses["read"] == "completed"
     assert statuses["edit"] == "in_progress"
     assert statuses["test"] == "pending"
-
-

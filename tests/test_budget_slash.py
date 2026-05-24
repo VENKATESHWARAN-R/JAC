@@ -75,9 +75,7 @@ def test_budget_no_args_no_budget_configured_shows_hint() -> None:
     """When no budget is set, the handler points the user at the config block."""
     buf = StringIO()
     console = Console(file=buf, force_terminal=False, width=120)
-    tracker = UsageTracker(
-        session_id="s1", bus=None, usage_file=None, limits=_limits()
-    )
+    tracker = UsageTracker(session_id="s1", bus=None, usage_file=None, limits=_limits())
     asyncio.run(tracker.record(input_tokens=500, output_tokens=200))
     ctx = SlashContext(
         console=console,

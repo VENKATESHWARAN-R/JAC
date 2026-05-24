@@ -90,9 +90,7 @@ def test_web_search_uses_ddg_when_no_tavily_key(
     patched_clients: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
-    hits = asyncio.run(
-        web_mod.web_search(reason="checking the docs", query="pydantic ai")
-    )
+    hits = asyncio.run(web_mod.web_search(reason="checking the docs", query="pydantic ai"))
     assert len(_FakeDDGS.instances) == 1
     assert _FakeAsyncTavilyClient.instances == []
     assert _FakeDDGS.instances[0].queries == ["pydantic ai"]
@@ -109,9 +107,7 @@ def test_web_search_uses_tavily_when_key_set(
     patched_clients: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("TAVILY_API_KEY", "test-key-123")
-    hits = asyncio.run(
-        web_mod.web_search(reason="checking the docs", query="pydantic ai")
-    )
+    hits = asyncio.run(web_mod.web_search(reason="checking the docs", query="pydantic ai"))
     assert len(_FakeAsyncTavilyClient.instances) == 1
     assert _FakeDDGS.instances == []
     assert _FakeAsyncTavilyClient.instances[0].api_key == "test-key-123"

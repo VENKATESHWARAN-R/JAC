@@ -24,6 +24,10 @@ from rich.prompt import IntPrompt, Prompt
 
 from jac.runtime.bus import EventBus
 from jac.runtime.events import (
+    A2AInboundCall,
+    A2AInboundCompleted,
+    A2AServerStarted,
+    A2AServerStopped,
     ApprovalRequest,
     ApprovalResponse,
     BudgetHardStop,
@@ -249,6 +253,30 @@ class CliRenderer:
             # event lets other surfaces (status bar) react. We don't print
             # again here to avoid double notices.
             pass
+        elif isinstance(event, A2AServerStarted):
+            # The slash + headless start paths print their own banner with
+            # the full token; this just lets future surfaces (status bar,
+            # TUI) react to the same signal. No double notification.
+            pass
+        elif isinstance(event, A2AServerStopped):
+            # Same: the slash / shutdown paths print their own "stopped"
+            # confirmation. The event exists for cross-surface consumers.
+            pass
+        elif isinstance(event, A2AInboundCall):
+            unsafe_tag = " [red](unsafe)[/red]" if event.peer_id == "unsafe" else ""
+            self.console.print(
+                f"[cyan][a2a] ←[/cyan] [bold]{event.peer_id}[/bold]{unsafe_tag} "
+                f"[dim](task {event.task_id[:8]})[/dim]: {event.message_preview}",
+                highlight=False,
+            )
+        elif isinstance(event, A2AInboundCompleted):
+            state_color = "green" if event.state == "completed" else "red"
+            self.console.print(
+                f"[cyan][a2a] →[/cyan] [{state_color}]{event.state}[/{state_color}] "
+                f"[dim](task {event.task_id[:8]}, "
+                f"{event.duration_ms}ms, {event.tokens_used} tok)[/dim]",
+                highlight=False,
+            )
         elif isinstance(event, RunCompleted):
             self.final_output = event.output
         elif isinstance(event, RunFailed):
@@ -265,8 +293,7 @@ class CliRenderer:
             body.append(f"  [bold yellow]{i}[/bold yellow]. {opt}")
         free_text_index = len(event.options) + 1
         body.append(
-            f"  [bold yellow]{free_text_index}[/bold yellow]. "
-            "[dim]Type your own answer[/dim]"
+            f"  [bold yellow]{free_text_index}[/bold yellow]. [dim]Type your own answer[/dim]"
         )
         self.console.print()
         self.console.print(Panel("\n".join(body), title="clarify", border_style="yellow"))

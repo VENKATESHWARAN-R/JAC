@@ -14,6 +14,7 @@ from dataclasses import dataclass
 
 from rich.console import Console
 
+from jac.capabilities.a2a import A2ACapability
 from jac.profiles import Profile
 from jac.runtime.session import Session
 from jac.runtime.usage import UsageTracker
@@ -48,3 +49,8 @@ class SlashContext:
     """Live token-usage tracker (D25). ``/budget`` and ``/tokens`` read
     from it; ``/budget extend N`` mutates its in-memory limits. ``None``
     only in tests that don't exercise the budget surface."""
+
+    a2a: A2ACapability | None = None
+    """A2A subsystem capability (D24, Phase 4). ``/a2a serve|stop|status|token``
+    read and mutate its state. ``None`` in tests that don't exercise the
+    A2A surface and in non-REPL contexts."""

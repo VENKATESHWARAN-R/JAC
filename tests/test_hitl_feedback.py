@@ -58,9 +58,7 @@ def test_deny_message_honors_explicit_deny_message() -> None:
 
 
 def test_deny_message_embeds_feedback() -> None:
-    msg = _deny_message(
-        ApprovalResponse(approved=False, feedback="edit the test file instead")
-    )
+    msg = _deny_message(ApprovalResponse(approved=False, feedback="edit the test file instead"))
     assert "user_feedback:" in msg
     assert '"edit the test file instead"' in msg
     # The hint to not retry is part of the contract Gru reads.
@@ -70,9 +68,7 @@ def test_deny_message_embeds_feedback() -> None:
 def test_deny_message_feedback_beats_deny_message() -> None:
     """When both fields are set, feedback wins — it's the richer signal."""
     msg = _deny_message(
-        ApprovalResponse(
-            approved=False, deny_message="ignored", feedback="do this instead"
-        )
+        ApprovalResponse(approved=False, deny_message="ignored", feedback="do this instead")
     )
     assert "do this instead" in msg
     assert "ignored" not in msg
@@ -112,7 +108,9 @@ async def _run_handler(
         ctx = cast(RunContext[Any], None)
         # The handler is async in our build; cast away pydantic-ai's
         # sync-or-async union return type.
-        coro = cast(Coroutine[Any, Any, DeferredToolResults | None], handler_cap.handler(ctx, requests))
+        coro = cast(
+            Coroutine[Any, Any, DeferredToolResults | None], handler_cap.handler(ctx, requests)
+        )
         return await coro
     finally:
         responder_task.cancel()
@@ -126,9 +124,7 @@ def test_handler_denies_with_feedback() -> None:
     results = _run(
         _run_handler(
             requests,
-            ApprovalResponse(
-                approved=False, feedback="touch the test file, not the source"
-            ),
+            ApprovalResponse(approved=False, feedback="touch the test file, not the source"),
         )
     )
     assert results is not None
@@ -227,11 +223,7 @@ def test_clarify_cancel_raises() -> None:
     approach instead of looping."""
     try:
         _run(
-            _clarify_with(
-                ClarifyResponse(
-                    selected_index=None, selected_text=None, cancelled=True
-                )
-            )
+            _clarify_with(ClarifyResponse(selected_index=None, selected_text=None, cancelled=True))
         )
     except RuntimeError as exc:
         assert "cancelled the clarify prompt" in str(exc)

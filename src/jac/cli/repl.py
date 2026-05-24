@@ -30,6 +30,7 @@ from pydantic_ai import Agent, AgentRunResult
 from rich.console import Console
 
 from jac import __version__
+from jac.capabilities.a2a import make_a2a_capability
 from jac.capabilities.approval import make_approval_handler
 from jac.capabilities.clarify import make_clarify_capability
 from jac.capabilities.history import estimate_text_tokens, estimate_tokens
@@ -41,6 +42,8 @@ from jac.cli.slash import (
     Exit,
     RebuildGru,
     SlashContext,
+    StartA2AServer,
+    StopA2AServer,
     SwitchSession,
     UnknownSlashCommand,
     command_names,
@@ -208,7 +211,7 @@ async def _run_turn(
 
     renderer.print_final()
     if usage_tracker is not None:
-        usage = result.usage()
+        usage = result.usage
         await usage_tracker.record(
             input_tokens=usage.input_tokens,
             output_tokens=usage.output_tokens,
@@ -267,6 +270,15 @@ async def _repl_loop(
         )
         process_capability = make_process_capability(bus)
         clarify_capability = make_clarify_capability(bus)
+        # A2A capability holds the (initially-stopped) guest server.
+        # The model is resolved below after `model_id` is finalized;
+        # we pass profile_name now (it doesn't change mid-session
+        # except via /profile, which rebuilds the capability list).
+        a2a_capability = make_a2a_capability(
+            bus=bus,
+            model=None,  # filled after settings.model resolves below
+            profile_name=profile_name,
+        )
         gru = build_gru(
             model_override=model_override,
             extra_capabilities=[
@@ -275,6 +287,7 @@ async def _repl_loop(
                 plan_capability,
                 process_capability,
                 clarify_capability,
+                a2a_capability,
             ],
             bus=bus,
             summarizer_model=_resolve_summarizer_model(profile_name),
@@ -295,6 +308,15 @@ async def _repl_loop(
 
     settings = get_settings()
     model_id = model_override or settings.model or "unknown"
+    # Finalize the a2a capability's model now that we know what's bound.
+    # The guest server can't start without a model, but we don't fail-first
+    # here — the slash handler raises a friendly error if /a2a serve is
+    # invoked with model_id == "unknown" (no profile / no env / no flag).
+    if model_id != "unknown":
+        a2a_capability.model = model_id
+    # Pull retention from the active profile (falls back to schema default).
+    if active_profile is not None:
+        a2a_capability.retention_days = active_profile.a2a.context_retention_days
     message_history: list = list(session.message_history)
 
     # Token-budget tracker (D25). Baseline is summed from usage.jsonl
@@ -344,6 +366,7 @@ async def _repl_loop(
         plan_capability,
         process_capability,
         clarify_capability,
+        a2a_capability,
     ]
     user_prompt = HTML("<ansiyellow><b>» </b></ansiyellow>")
     try:
@@ -369,6 +392,7 @@ async def _repl_loop(
                     profile=active_profile,
                     model_id=model_id,
                     usage_tracker=usage_tracker,
+                    a2a=a2a_capability,
                 )
                 try:
                     result = dispatch(text, ctx)
@@ -387,9 +411,7 @@ async def _repl_loop(
                     restored, warning = session.load_plan()
                     if warning is not None:
                         console.print(f"[yellow]warning:[/yellow] {warning}")
-                    await plan_capability.switch_session(
-                        session.plan_file, restored or None
-                    )
+                    await plan_capability.switch_session(session.plan_file, restored or None)
                     # Rebuild the usage tracker for the new session — fresh
                     # in-memory counters, project baseline recomputed from
                     # usage.jsonl (excluding the new session id).
@@ -416,6 +438,21 @@ async def _repl_loop(
                         status.model_id = model_id
                         status.profile_name = profile_name
                         status.profile = active_profile
+                        # Keep A2A capability's metadata in sync so a future
+                        # /a2a serve spawns its guest with the new model +
+                        # profile. The running server (if any) keeps its
+                        # already-bound model — switching mid-flight is a
+                        # follow-up (likely Phase 4.c).
+                        a2a_capability.model = model_id
+                        a2a_capability.profile_name = profile_name
+                        if active_profile is not None:
+                            a2a_capability.retention_days = (
+                                active_profile.a2a.context_retention_days
+                            )
+                elif isinstance(result, StartA2AServer):
+                    await _handle_start_a2a(a2a_capability, result)
+                elif isinstance(result, StopA2AServer):
+                    await _handle_stop_a2a(a2a_capability)
                 continue
 
             if await _refuse_if_over_budget(bus, message_history, text):
@@ -423,9 +460,7 @@ async def _repl_loop(
             if await _refuse_if_over_token_budget(bus, usage_tracker):
                 continue
 
-            message_history = await _run_turn(
-                gru, bus, text, message_history, usage_tracker
-            )
+            message_history = await _run_turn(gru, bus, text, message_history, usage_tracker)
             status.message_history = message_history
             status.budget_pct = usage_tracker.status_pct()
             # Persist after every completed turn so kills mid-turn don't lose prior turns.
@@ -440,6 +475,55 @@ async def _repl_loop(
             await process_capability.shutdown()
         except Exception as exc:
             console.print(f"[yellow]warning:[/yellow] process shutdown: {exc}")
+        # Reap the A2A server if /a2a stop wasn't called explicitly. Same
+        # best-effort posture as the process reaper — peers see the
+        # connection drop, but at least the port is freed for next time.
+        try:
+            await a2a_capability.shutdown()
+        except Exception as exc:
+            console.print(f"[yellow]warning:[/yellow] a2a shutdown: {exc}")
+
+
+async def _handle_start_a2a(cap, request: StartA2AServer) -> None:
+    """REPL-side driver for the ``StartA2AServer`` slash result.
+
+    Lives here (not in the slash handler) so the uvicorn task is
+    created in the REPL's event loop — that's what keeps the server
+    alive after the slash returns. Mirrors how ``RebuildGru`` is
+    handled in :func:`_rebuild_gru`.
+    """
+    try:
+        info = await cap.start_server(host=request.host, port=request.port, unsafe=request.unsafe)
+    except RuntimeError as exc:
+        console.print(f"[yellow]{exc}[/yellow]")
+        return
+    except (JacConfigError, OSError) as exc:
+        console.print(f"[red]A2A serve failed:[/red] {exc}")
+        return
+
+    console.print(
+        f"[green]✓ A2A server started:[/green] [bold]{info.url}[/bold]  "
+        f"[dim](bind {info.bind_host}:{info.port})[/dim]"
+    )
+    if info.unsafe:
+        console.print(
+            "[red]auth: disabled (--unsafe)[/red] "
+            "[dim]— card omits securitySchemes; any caller accepted[/dim]"
+        )
+    else:
+        console.print("[dim]auth: bearer token (save it; /a2a token re-prints):[/dim]")
+        console.print(f"  [bold]{info.token}[/bold]")
+    console.print(f"[dim]agent card: {info.url}/.well-known/agent-card.json[/dim]")
+
+
+async def _handle_stop_a2a(cap) -> None:
+    """REPL-side driver for ``StopA2AServer``. Best-effort, never raises."""
+    try:
+        await cap.stop_server(reason="user")
+    except Exception as exc:
+        console.print(f"[yellow]a2a stop:[/yellow] {exc}")
+        return
+    console.print("[green]✓ A2A server stopped[/green]")
 
 
 async def _refuse_if_over_token_budget(bus: EventBus, tracker: UsageTracker) -> bool:

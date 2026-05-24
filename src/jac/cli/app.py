@@ -25,6 +25,7 @@ import typer
 from rich.console import Console
 
 from jac.capabilities.observability import setup_observability
+from jac.cli.a2a import app as a2a_app
 from jac.cli.keys_cmd import app as keys_app
 from jac.cli.profiles_cmd import app as profiles_app
 from jac.errors import JacConfigError
@@ -39,6 +40,7 @@ app = typer.Typer(
 )
 app.add_typer(profiles_app, name="profiles")
 app.add_typer(keys_app, name="keys")
+app.add_typer(a2a_app, name="a2a")
 
 console = Console()
 

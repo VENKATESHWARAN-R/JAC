@@ -90,10 +90,7 @@ def _parse_extend_args(args: str) -> tuple[BudgetKind, int] | str:
     if len(parts) == 2:
         kind_str, amount_str = parts
         if kind_str not in _VALID_KINDS:
-            return (
-                f"unknown budget kind {kind_str!r}; "
-                f"expected one of {', '.join(_VALID_KINDS)}."
-            )
+            return f"unknown budget kind {kind_str!r}; expected one of {', '.join(_VALID_KINDS)}."
         try:
             amount = int(amount_str.replace(",", "").replace("_", ""))
         except ValueError:
@@ -116,10 +113,7 @@ def budget_handler(ctx: SlashContext, args: str) -> SlashResult:
 
     verb, _, rest = args.partition(" ")
     if verb.lower() != "extend":
-        ctx.console.print(
-            f"[red]unknown /budget verb:[/red] {verb!r}  "
-            "[dim](valid: extend)[/dim]"
-        )
+        ctx.console.print(f"[red]unknown /budget verb:[/red] {verb!r}  [dim](valid: extend)[/dim]")
         return Handled()
 
     tracker = ctx.usage_tracker
@@ -174,7 +168,5 @@ def tokens_handler(ctx: SlashContext, args: str) -> SlashResult:
         "from prior sessions in this repo)[/dim]"
     )
     if tracker.limits.any_configured():
-        ctx.console.print(
-            "[dim]see [bold]/budget[/bold] for configured limits.[/dim]"
-        )
+        ctx.console.print("[dim]see [bold]/budget[/bold] for configured limits.[/dim]")
     return Handled()

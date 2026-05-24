@@ -55,4 +55,29 @@ class RebuildGru:
     new_profile_name: str | None
 
 
-SlashResult = Handled | Exit | SwitchSession | RebuildGru
+@dataclass(frozen=True)
+class StartA2AServer:
+    """REPL should start the A2A guest server (D24, Phase 4.a).
+
+    Returned by ``/a2a serve``. The slash handler validates args and
+    parses flags; the REPL drives the async ``A2ACapability.start_server``
+    call in its own event loop so the uvicorn task's lifetime matches
+    the REPL's. Failures (port in use, bind error, missing model) are
+    rendered by the REPL as a friendly message; the server stays down.
+    """
+
+    host: str
+    port: int
+    unsafe: bool
+
+
+@dataclass(frozen=True)
+class StopA2AServer:
+    """REPL should stop the A2A guest server (D24, Phase 4.a).
+
+    Returned by ``/a2a stop``. The REPL awaits ``A2ACapability.stop_server``
+    in its own event loop and renders the outcome.
+    """
+
+
+SlashResult = Handled | Exit | SwitchSession | RebuildGru | StartA2AServer | StopA2AServer

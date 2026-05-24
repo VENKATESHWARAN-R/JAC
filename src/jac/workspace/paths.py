@@ -96,6 +96,36 @@ def project_usage_file() -> Path:
     return project_workspace() / "usage.jsonl"
 
 
+def project_a2a_dir() -> Path:
+    """``<project_root>/.agents/a2a/`` — A2A subsystem state (D24).
+
+    Holds persisted task contexts, the inbound call audit log, and any
+    other per-project A2A artifacts. Created lazily on first server start.
+    """
+    return project_workspace() / "a2a"
+
+
+def project_a2a_contexts_dir() -> Path:
+    """``<project_root>/.agents/a2a/contexts/`` — one JSON file per A2A ``context_id``.
+
+    Each file mirrors fasta2a's ``Storage.update_context`` payload (the
+    pydantic-ai ``message_history`` for that conversation thread). Default
+    retention is 3 days; see ``a2a.context_retention_days`` in profile config.
+    """
+    return project_a2a_dir() / "contexts"
+
+
+def project_a2a_inbound_log() -> Path:
+    """``<project_root>/.agents/a2a/inbound.jsonl`` — audit log of inbound A2A calls (D24).
+
+    One JSONL line per call: ``{ts, peer_id, context_id, task_id, state,
+    duration_ms, tokens_used, message_preview}``. Never rotated by us — the
+    user owns retention via ``a2a.context_retention_days`` (which prunes
+    *context* files; the audit log stays as a long-term ledger).
+    """
+    return project_a2a_dir() / "inbound.jsonl"
+
+
 def project_prompts_dir() -> Path:
     return project_workspace() / "prompts"
 

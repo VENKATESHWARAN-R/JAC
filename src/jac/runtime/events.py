@@ -278,6 +278,72 @@ class BudgetHardStop(JacEvent):
 
 
 @dataclass(frozen=True, slots=True)
+class A2AServerStarted(JacEvent):
+    """The A2A guest server bound to a port and started accepting calls (D24).
+
+    Emitted by :mod:`jac.capabilities.a2a.server` after the background
+    uvicorn task is up. ``url`` is the full base URL peers should use
+    (``http://host:port``). ``token_redacted`` is the bearer token with
+    the middle truncated for safe display in the renderer; the full token
+    is printed once to the user's console on startup (or accessible via
+    ``/a2a token``). ``unsafe`` is ``True`` when auth is disabled (the
+    renderer paints the line red so it's hard to miss).
+    """
+
+    url: str
+    token_redacted: str
+    unsafe: bool
+    bind_host: str
+
+
+@dataclass(frozen=True, slots=True)
+class A2AServerStopped(JacEvent):
+    """The A2A guest server shut down (D24).
+
+    ``reason`` is a short tag — ``"user"`` (``/a2a stop``), ``"repl-exit"``
+    (REPL teardown reaping), or ``"error: ..."`` for crashes the runtime
+    caught before propagating.
+    """
+
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class A2AInboundCall(JacEvent):
+    """A peer just sent a ``message/send`` to our guest server (D24).
+
+    Emitted *before* the guest Gru runs so the host operator sees what
+    peers are doing in real time. ``peer_id`` is the caller identity we
+    derived (the bearer token's last 8 chars, or ``"unsafe"`` when auth
+    is off — we don't have richer identity until OAuth2 lands in v2).
+    ``message_preview`` is the first ~120 chars of the inbound text part.
+    """
+
+    peer_id: str
+    context_id: str
+    task_id: str
+    message_preview: str
+
+
+@dataclass(frozen=True, slots=True)
+class A2AInboundCompleted(JacEvent):
+    """The guest Gru finished handling an inbound call (D24).
+
+    ``state`` follows the A2A task state (``completed`` / ``failed`` /
+    ``canceled``). ``duration_ms`` is wall time. ``tokens_used`` is the
+    sum of input + output tokens the guest call consumed (drives PR3's
+    budget integration; renderer just shows it as informational).
+    """
+
+    peer_id: str
+    context_id: str
+    task_id: str
+    state: str
+    duration_ms: int
+    tokens_used: int
+
+
+@dataclass(frozen=True, slots=True)
 class RunCompleted(JacEvent):
     """Terminal: ``agent.run()`` completed normally. Carries the final output."""
 
@@ -308,6 +374,10 @@ type JacEventT = (
     | CompactionRefused
     | BudgetWarning
     | BudgetHardStop
+    | A2AServerStarted
+    | A2AServerStopped
+    | A2AInboundCall
+    | A2AInboundCompleted
     | RunCompleted
     | RunFailed
 )
