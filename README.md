@@ -63,12 +63,12 @@ Published as a static site: `just docs-serve` → http://127.0.0.1:8000
 ## Development
 
 ```bash
-just check       # format + lint + typecheck
+just check       # format + lint + typecheck + tests (same gates as CI)
 just fix         # auto-format + lint fix
 just docs-serve  # live-reload docs site
 ```
 
-See [docs/developer/contributing.md](docs/developer/contributing.md) for the full recipe list.
+Contributions welcome — fork, branch, open a PR; CI must pass before merge. See [Contributing](docs/developer/contributing.md) for the open-source workflow, required reading, and GitHub Actions details.
 
 ## Built on
 

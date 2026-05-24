@@ -1,0 +1,67 @@
+# Validates pull requests and pushes to main before merge.
+# Mirrors `just check` plus lockfile and package-build smoke tests,
+# and `just docs-build-strict` for documentation changes.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  code:
+    name: Code (format, lint, types, tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Ruff format
+        run: uv run ruff format --check .
+
+      - name: Ruff lint
+        run: uv run ruff check .
+
+      - name: Typecheck (ty)
+        run: uv run ty check src
+
+      - name: Tests
+        run: uv run pytest tests/ -q
+
+      - name: Lockfile is up to date
+        run: uv lock --check
+
+      - name: Package build smoke test
+        run: uv build
+
+  docs:
+    name: Docs (strict build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Zensical strict build
+        run: uv run zensical build --strict

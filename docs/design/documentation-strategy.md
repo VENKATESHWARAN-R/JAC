@@ -68,7 +68,7 @@ The old `docs/usage/` placeholder stubs have been removed. All user-facing conte
 | **M2 — Developer** | `contributing.md`, `codebase-map.md`, `capabilities.md` | This batch |
 | **M3 — Design ops** | `documentation-strategy.md`, `drift-matrix.md` | This batch |
 | **M4 — Redirect cleanup** | `docs/usage/*` proxy stubs deleted; directory removed | Done |
-| **M5 — Strict build** | `just docs-build-strict` in CI; fix warnings | Queued (Phase 7) |
+| **M5 — Strict build** | `just docs-build-strict` in CI; fix warnings | Done (`.github/workflows/ci.yml`) |
 | **M6 — ADR split** | Optional `docs/design/decisions/Dnn-*.md` extracted from architecture §11 | Future |
 
 ## Drift control
