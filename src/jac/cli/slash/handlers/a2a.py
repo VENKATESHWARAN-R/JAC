@@ -41,8 +41,12 @@ from jac.cli.slash.result import (
 
 @register(
     "a2a",
-    summary="Manage the A2A guest server + peers (serve / stop / status / token / peers)",
-    usage="/a2a {serve [--port N] [--host ADDR] [--unsafe] | stop | status | token | peers}",
+    summary="Manage the A2A guest server + peers (serve / stop / status / token / peer / peers)",
+    usage=(
+        "/a2a {serve [--port N] [--host ADDR] [--unsafe] | stop | status | token | "
+        "peers | peer add NAME URL [--bearer | --api-key HEADER | --oauth2 ...] | "
+        "peer remove NAME}"
+    ),
 )
 def a2a_handler(ctx: SlashContext, args: str) -> SlashResult:
     if ctx.a2a is None:
@@ -58,8 +62,10 @@ def a2a_handler(ctx: SlashContext, args: str) -> SlashResult:
 
     if not sub:
         ctx.console.print(
-            "[dim]usage:[/dim] /a2a serve | stop | status | token | peers\n"
-            "[dim]      /a2a serve [--port N] [--host ADDR] [--unsafe][/dim]"
+            "[dim]usage:[/dim] /a2a serve | stop | status | token | peers | peer add|remove\n"
+            "[dim]      /a2a serve [--port N] [--host ADDR] [--unsafe][/dim]\n"
+            "[dim]      /a2a peer add NAME URL [--bearer | --api-key HEADER | --oauth2 TOKEN_URL CLIENT_ID [--scope X]][/dim]\n"
+            "[dim]      /a2a peer remove NAME[/dim]"
         )
         return Handled()
 
@@ -73,10 +79,12 @@ def a2a_handler(ctx: SlashContext, args: str) -> SlashResult:
         return _token(ctx)
     if sub == "peers":
         return _peers(ctx)
+    if sub == "peer":
+        return _peer(ctx, rest)
 
     ctx.console.print(
         f"[red]unknown /a2a subcommand:[/red] {sub!r}  "
-        "[dim](try /a2a serve | stop | status | token | peers)[/dim]"
+        "[dim](try /a2a serve | stop | status | token | peers | peer add|remove)[/dim]"
     )
     return Handled()
 
@@ -163,38 +171,310 @@ _DESCRIPTION_TRUNCATE_AT = 60
 
 
 def _peers(ctx: SlashContext) -> SlashResult:
-    """Render the active profile's ``a2a.peers`` block.
+    """Render the merged A2A peers view (profile + session) with provenance tags.
 
-    Pulls from the capability's live ``peers`` dict (which the REPL
-    keeps in sync with the active profile via ``/profile`` rebuilds)
-    rather than re-reading the profile object — that way what we show
-    is what ``a2a_call`` will actually resolve against.
+    Shows session-scoped peers (from ``/a2a peer add``) with a
+    ``[session]`` tag and profile-defined peers with ``[profile]``.
+    When a session peer shadows a profile peer of the same name, the
+    profile one is rendered greyed-out so the operator sees the
+    override is intentional.
     """
     cap = ctx.a2a
     assert cap is not None
-    peers = cap.peers
-    if not peers:
+    profile_peers = cap.profile_peers
+    session_peers = cap.session_peers
+
+    if not profile_peers and not session_peers:
         ctx.console.print("[dim]A2A peers: (none configured)[/dim]")
         ctx.console.print(
-            "[dim]add some under [bold]a2a.peers.<name>[/bold] in your profile YAML "
-            "([bold]jac profiles edit NAME[/bold]).[/dim]"
+            "[dim]for stable peers: add under [bold]a2a.peers.<name>[/bold] in "
+            "your profile YAML ([bold]jac profiles edit NAME[/bold]).[/dim]"
+        )
+        ctx.console.print(
+            "[dim]for ephemeral peers: [bold]/a2a peer add NAME URL ...[/bold] "
+            "(this session only).[/dim]"
         )
         return Handled()
 
     ctx.console.print(f"[bold]A2A peers[/bold] [dim](profile: {ctx.profile_name})[/dim]")
-    name_col = max(len(n) for n in peers)
-    url_col = max(len(p.url) for p in peers.values())
-    for name in sorted(peers):
-        peer = peers[name]
-        auth = "[green]bearer[/green]" if peer.token else "[yellow]none[/yellow]"
-        desc = peer.description or ""
-        if len(desc) > _DESCRIPTION_TRUNCATE_AT:
-            desc = desc[: _DESCRIPTION_TRUNCATE_AT - 1] + "…"
-        desc_tail = f"  [dim]— {desc}[/dim]" if desc else ""
+
+    all_names = sorted(set(profile_peers) | set(session_peers))
+    name_col = max(len(n) for n in all_names)
+    url_col = max(
+        max((len(p.url) for p in profile_peers.values()), default=0),
+        max((len(p.url) for p in session_peers.values()), default=0),
+    )
+
+    for name in all_names:
+        in_session = name in session_peers
+        in_profile = name in profile_peers
+        # Session peer is the *effective* one when both exist.
+        peer = session_peers[name] if in_session else profile_peers[name]
+        # Escape the brackets so Rich doesn't interpret e.g. ``[session]`` as
+        # a markup tag and silently strip it.
+        provenance = r"[cyan]\[session][/cyan]" if in_session else r"[blue]\[profile][/blue]"
         ctx.console.print(
-            f"  [bold]{name:<{name_col}}[/bold]  {peer.url:<{url_col}}  auth: {auth}{desc_tail}"
+            f"  [bold]{name:<{name_col}}[/bold]  {peer.url:<{url_col}}  "
+            f"auth: {_auth_label(peer)}  {provenance}{_desc_tail(peer)}"
         )
+        # When a session peer shadows a profile peer, show the shadowed
+        # one greyed-out underneath so the operator knows it's still in
+        # their profile config (just not active right now).
+        if in_session and in_profile:
+            shadowed = profile_peers[name]
+            ctx.console.print(
+                f"  [dim]{'':<{name_col}}  {shadowed.url:<{url_col}}  "
+                f"auth: {_auth_label_dim(shadowed)}  [blue](shadowed profile)[/blue]"
+                f"{_desc_tail(shadowed)}[/dim]"
+            )
     return Handled()
+
+
+def _auth_label(peer) -> str:
+    """One-word colored auth tag for the peers listing."""
+    from jac.profiles import ApiKeyAuth, BearerAuth, OAuth2ClientCredentialsAuth
+
+    if peer.auth is None:
+        return "[yellow]none[/yellow]"
+    if isinstance(peer.auth, BearerAuth):
+        return "[green]bearer[/green]"
+    if isinstance(peer.auth, ApiKeyAuth):
+        return "[green]api_key[/green]"
+    if isinstance(peer.auth, OAuth2ClientCredentialsAuth):
+        return "[green]oauth2[/green]"
+    return "[red]unknown[/red]"  # pragma: no cover - new auth type without label
+
+
+def _auth_label_dim(peer) -> str:
+    """Like :func:`_auth_label` but uncolored (for shadowed-row rendering)."""
+    from jac.profiles import ApiKeyAuth, BearerAuth, OAuth2ClientCredentialsAuth
+
+    if peer.auth is None:
+        return "none"
+    if isinstance(peer.auth, BearerAuth):
+        return "bearer"
+    if isinstance(peer.auth, ApiKeyAuth):
+        return "api_key"
+    if isinstance(peer.auth, OAuth2ClientCredentialsAuth):
+        return "oauth2"
+    return "unknown"  # pragma: no cover
+
+
+def _desc_tail(peer) -> str:
+    desc = peer.description or ""
+    if not desc:
+        return ""
+    if len(desc) > _DESCRIPTION_TRUNCATE_AT:
+        desc = desc[: _DESCRIPTION_TRUNCATE_AT - 1] + "…"
+    return f"  [dim]— {desc}[/dim]"
+
+
+def _peer(ctx: SlashContext, rest: str) -> SlashResult:
+    """Dispatch ``/a2a peer add ...`` / ``/a2a peer remove ...``."""
+    cap = ctx.a2a
+    assert cap is not None
+    sub, _, args = rest.partition(" ")
+    sub = sub.strip().lower()
+    args = args.strip()
+
+    if sub == "add":
+        return _peer_add(ctx, args)
+    if sub == "remove":
+        return _peer_remove(ctx, args)
+
+    ctx.console.print(
+        f"[red]unknown /a2a peer subcommand:[/red] {sub!r}  "
+        "[dim](try /a2a peer add NAME URL ... | /a2a peer remove NAME)[/dim]"
+    )
+    return Handled()
+
+
+def _peer_add(ctx: SlashContext, args: str) -> SlashResult:
+    """``/a2a peer add NAME URL [--bearer | --api-key HEADER | --oauth2 ...]``.
+
+    Secrets (bearer token / api-key value / OAuth2 client_secret) are
+    NEVER passed on the command line — they're prompted for via
+    :func:`getpass.getpass` so they don't appear in shell or
+    prompt-toolkit history. ``--bearer`` / ``--api-key HEADER`` /
+    ``--oauth2 TOKEN_URL CLIENT_ID [--scope X]`` select the auth shape;
+    the secret values are entered interactively.
+
+    With no auth flag, the peer is added unauthenticated (talks to a
+    peer running ``--unsafe`` only).
+    """
+    from jac.profiles import (
+        A2APeerConfig,
+        ApiKeyAuth,
+        BearerAuth,
+        OAuth2ClientCredentialsAuth,
+        validate_profile_name,
+    )
+
+    cap = ctx.a2a
+    assert cap is not None
+
+    try:
+        name, url, auth_spec = _parse_peer_add(args)
+    except ValueError as exc:
+        ctx.console.print(f"[red]invalid /a2a peer add args:[/red] {exc}")
+        return Handled()
+
+    try:
+        validate_profile_name(name)
+    except Exception as exc:
+        ctx.console.print(f"[red]invalid peer name:[/red] {exc}")
+        return Handled()
+
+    # Build auth config from the parsed shape + interactive prompts.
+    auth = None
+    try:
+        if auth_spec is None:
+            ctx.console.print(
+                "[yellow]no auth flag given;[/yellow] peer will be added "
+                "without authentication (works only against --unsafe peers)."
+            )
+        elif auth_spec["kind"] == "bearer":
+            token = _prompt_secret("bearer token", ctx)
+            if token is None:
+                return Handled()
+            auth = BearerAuth(token=token)
+        elif auth_spec["kind"] == "api_key":
+            value = _prompt_secret(f"value for header {auth_spec['header']!r}", ctx)
+            if value is None:
+                return Handled()
+            auth = ApiKeyAuth(header=auth_spec["header"], value=value)
+        elif auth_spec["kind"] == "oauth2":
+            client_secret = _prompt_secret(f"client_secret for {auth_spec['client_id']!r}", ctx)
+            if client_secret is None:
+                return Handled()
+            auth = OAuth2ClientCredentialsAuth(
+                token_url=auth_spec["token_url"],
+                client_id=auth_spec["client_id"],
+                client_secret=client_secret,
+                scope=auth_spec.get("scope", ""),
+            )
+    except Exception as exc:
+        ctx.console.print(f"[red]invalid auth config:[/red] {exc}")
+        return Handled()
+
+    peer = A2APeerConfig(
+        url=url,
+        auth=auth,
+        description="(added via /a2a peer add — session-scoped)",
+    )
+    previous = cap.add_session_peer(name, peer)
+
+    note = ""
+    if previous is not None:
+        note = " [yellow](replaced existing session entry)[/yellow]"
+    elif name in cap.profile_peers:
+        note = " [yellow](shadows profile entry)[/yellow]"
+
+    auth_name = "none" if auth is None else auth.type
+    ctx.console.print(
+        f"[green]✓ session peer added:[/green] [bold]{name}[/bold] → {url}  "
+        f"[dim](auth: {auth_name})[/dim]{note}"
+    )
+    return Handled()
+
+
+def _peer_remove(ctx: SlashContext, args: str) -> SlashResult:
+    cap = ctx.a2a
+    assert cap is not None
+    name = args.strip()
+    if not name:
+        ctx.console.print("[red]usage:[/red] /a2a peer remove NAME")
+        return Handled()
+    removed = cap.remove_session_peer(name)
+    if not removed:
+        ctx.console.print(
+            f"[dim]no session peer named {name!r}[/dim] "
+            "(profile peers can only be edited in YAML — `jac profiles edit NAME`)"
+        )
+        return Handled()
+    reverted = " [dim](reverted to profile entry)[/dim]" if name in cap.profile_peers else ""
+    ctx.console.print(f"[green]✓ session peer removed:[/green] {name}{reverted}")
+    return Handled()
+
+
+def _prompt_secret(label: str, ctx: SlashContext) -> str | None:
+    """Read a secret from stdin with no echo. Empty input → cancel.
+
+    Uses ``getpass.getpass`` rather than :class:`rich.prompt.Prompt`
+    so the value never echoes back and never lands in scrollback. The
+    REPL is in async-land; ``getpass`` is blocking — slash dispatch
+    is synchronous so this is fine.
+    """
+    import getpass
+
+    try:
+        value = getpass.getpass(f"  {label}: ")
+    except (KeyboardInterrupt, EOFError):
+        ctx.console.print("[dim]cancelled[/dim]")
+        return None
+    value = value.strip()
+    if not value:
+        ctx.console.print("[dim]cancelled (empty input)[/dim]")
+        return None
+    return value
+
+
+def _parse_peer_add(args: str) -> tuple[str, str, dict | None]:
+    """Parse ``NAME URL [--bearer | --api-key HEADER | --oauth2 ...]``.
+
+    Returns ``(name, url, auth_spec_or_None)`` where ``auth_spec`` is
+    a dict with a ``kind`` key plus the non-secret parameters parsed
+    from the command line. Secret values (token, client_secret) are
+    NOT in the spec — they come from the interactive prompt.
+
+    Raises:
+        ValueError: bad arg shape.
+    """
+    tokens = args.split()
+    if len(tokens) < 2:
+        raise ValueError("expected at least NAME URL")
+    name, url = tokens[0], tokens[1]
+    if not url.startswith(("http://", "https://")):
+        raise ValueError(f"URL must start with http:// or https://; got {url!r}")
+    rest = tokens[2:]
+
+    if not rest:
+        return name, url, None
+
+    flag = rest[0]
+    if flag == "--bearer":
+        if len(rest) != 1:
+            raise ValueError("--bearer takes no positional args (token is prompted)")
+        return name, url, {"kind": "bearer"}
+
+    if flag == "--api-key":
+        if len(rest) != 2:
+            raise ValueError("--api-key takes one arg: the HEADER name (value is prompted)")
+        return name, url, {"kind": "api_key", "header": rest[1]}
+
+    if flag == "--oauth2":
+        if len(rest) < 3:
+            raise ValueError(
+                "--oauth2 expects TOKEN_URL CLIENT_ID [--scope SCOPE] (client_secret is prompted)"
+            )
+        spec: dict = {
+            "kind": "oauth2",
+            "token_url": rest[1],
+            "client_id": rest[2],
+        }
+        remaining = rest[3:]
+        if remaining:
+            if len(remaining) != 2 or remaining[0] != "--scope":
+                raise ValueError(
+                    f"unexpected trailing args {remaining!r}; supported: [--scope SCOPE]"
+                )
+            spec["scope"] = remaining[1]
+        return name, url, spec
+
+    raise ValueError(
+        f"unknown auth flag {flag!r}; expected --bearer | --api-key HEADER | "
+        "--oauth2 TOKEN_URL CLIENT_ID [--scope SCOPE]"
+    )
 
 
 # ---------- helpers ----------

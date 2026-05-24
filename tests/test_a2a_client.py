@@ -61,14 +61,17 @@ def test_resolve_target_by_name_uses_peer_config():
     t = resolve_target("backend", peers=peers)
     # trailing slash stripped
     assert t.url == "http://localhost:9000"
-    assert t.token == "t1"
+    # legacy `token=` shorthand promoted to BearerAuth — exposed via the
+    # back-compat .token property + the .peer field
+    assert t.peer is not None
+    assert t.peer.token == "t1"
     assert t.display == "backend"
 
 
-def test_resolve_target_raw_url_has_no_token():
+def test_resolve_target_raw_url_has_no_peer():
     t = resolve_target("http://example.com:8001", peers={})
     assert t.url == "http://example.com:8001"
-    assert t.token is None
+    assert t.peer is None
     assert t.display == "http://example.com:8001"
 
 

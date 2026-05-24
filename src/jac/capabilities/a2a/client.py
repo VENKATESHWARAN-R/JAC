@@ -1,4 +1,4 @@
-"""Outbound A2A tools — ``a2a_discover`` and ``a2a_call`` (D24, Phase 4.b).
+"""Outbound A2A tools — ``a2a_discover`` and ``a2a_call`` (D24, D31).
 
 Two read-only tools Gru uses to talk to A2A peers. Both follow the
 spec's :class:`A2ACardResolver` pattern: clients normally discover an
@@ -13,19 +13,26 @@ inspect a peer, ``a2a_call`` when it wants to ask the peer something.
 The audit trail + bus events then say exactly what happened.
 
 Peer resolution: ``peer_or_url`` accepts either a named peer (from the
-active profile's ``a2a.peers.<name>``) or a raw URL. Named peers get
-their bearer token applied automatically; raw URLs go through
-unauthenticated unless the peer is running ``--unsafe`` on the other
-end. We deliberately don't accept a ``token=`` kwarg — putting bearer
+active profile's ``a2a.peers.<name>`` block OR session-scoped
+``/a2a peer add`` entries) or a raw URL. Named peers get their
+configured auth strategy applied automatically — bearer / api_key /
+OAuth2 / etc. depending on the peer's ``auth`` block. Raw URLs go
+unauthenticated (peer must be running ``--unsafe``).
+
+We deliberately don't accept a ``token=`` kwarg — putting bearer
 secrets in tool args means they end up in the model's context window
-and on disk in session messages.json. Peers with tokens live in the
-profile.
+and on disk in session ``messages.json``. Peers with credentials live
+either in the profile YAML (stable peers, env-var-backed secrets) or
+in session-scoped in-memory state (ephemeral peers via
+:meth:`A2ACapability.add_session_peer`). Either way, the credential
+never crosses the agent boundary.
 """
 
 from __future__ import annotations
 
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -40,6 +47,7 @@ from fasta2a.schema import (
 )
 
 from jac.capabilities.a2a.audit import make_message_preview
+from jac.capabilities.a2a.auth_strategies import AuthStrategy
 from jac.errors import JacConfigError
 from jac.profiles import A2APeerConfig
 from jac.runtime.bus import EventBus
@@ -55,41 +63,50 @@ _CALL_TIMEOUT_S = 60.0
 
 @dataclass(frozen=True)
 class _ResolvedTarget:
-    """The (url, optional token, display name) triple ``a2a_call`` operates on."""
+    """The (url, optional peer config, display name) triple ``a2a_call`` operates on.
+
+    Carrying the *peer config* (not the bearer token) lets the caller
+    look up the right auth strategy via the capability — see
+    :func:`build_outbound_tools` for how it threads through.
+    """
 
     url: str
-    token: str | None
+    peer: A2APeerConfig | None
+    """The resolved peer config (with its ``auth`` block) when looked
+    up by name; ``None`` when the caller passed a raw URL."""
     display: str
     """What goes into the renderer / audit events — the peer name when
     we resolved by name, or the URL when called ad-hoc."""
 
 
 def resolve_target(peer_or_url: str, *, peers: dict[str, A2APeerConfig]) -> _ResolvedTarget:
-    """Map ``peer_or_url`` to a concrete URL + optional bearer.
+    """Map ``peer_or_url`` to a concrete URL + optional peer config.
 
     Resolution rules:
 
     - If ``peer_or_url`` starts with ``http://`` or ``https://``, treat
-      it as a raw URL; no bearer token (peer must be running ``--unsafe``
-      or there's no auth). Display = the URL.
-    - Otherwise look it up in ``peers``. Found → return its
-      ``(url, token)`` with display = the peer name.
+      it as a raw URL; no auth (peer must be running ``--unsafe``).
+      Display = the URL; ``peer`` is ``None``.
+    - Otherwise look it up in ``peers``. Found → return the peer config
+      with display = the peer name. Auth strategy lookup happens in
+      ``a2a_call`` via the strategy provider passed to
+      :func:`build_outbound_tools`.
     - Otherwise raise :class:`JacConfigError` with a list of configured
       peer names so the agent can re-call with a valid one.
 
     Args:
         peer_or_url: peer name (e.g. ``"backend-jac"``) or raw URL.
-        peers: ``a2a.peers`` block from the active profile.
+        peers: the merged ``profile.a2a.peers`` + session-scoped peers
+            map (assembled by :class:`A2ACapability.peers`).
 
     Returns:
-        Resolved target. Tool builds the auth header (if any) from
-        ``target.token``.
+        Resolved target.
 
     Raises:
-        JacConfigError: unknown peer name with no http:// prefix.
+        JacConfigError: unknown peer name with no http(s):// prefix.
     """
     if peer_or_url.startswith(("http://", "https://")):
-        return _ResolvedTarget(url=peer_or_url.rstrip("/"), token=None, display=peer_or_url)
+        return _ResolvedTarget(url=peer_or_url.rstrip("/"), peer=None, display=peer_or_url)
 
     peer = peers.get(peer_or_url)
     if peer is None:
@@ -97,37 +114,59 @@ def resolve_target(peer_or_url: str, *, peers: dict[str, A2APeerConfig]) -> _Res
         raise JacConfigError(
             f"unknown A2A peer {peer_or_url!r}. Configured peers: {configured}. "
             "Either pass a raw URL starting with http:// or https://, or add "
-            f"the peer to your active profile under a2a.peers.{peer_or_url}."
+            f"the peer via `/a2a peer add {peer_or_url} URL ...` for this "
+            f"session, or under a2a.peers.{peer_or_url} in your active profile."
         )
     return _ResolvedTarget(
         url=peer.url.rstrip("/"),
-        token=peer.token,
+        peer=peer,
         display=peer_or_url,
     )
 
 
 def build_outbound_tools(
     *,
-    peers_getter,
+    peers_getter: Callable[[], dict[str, A2APeerConfig]],
+    strategy_provider: Callable[[A2APeerConfig], AuthStrategy | None] | None = None,
     bus: EventBus | None = None,
 ):
-    """Build the outbound tool closures bound to ``peers_getter`` and ``bus``.
+    """Build the outbound tool closures bound to runtime accessors and a bus.
 
-    Why a getter rather than the peers dict directly: the REPL can swap
-    profiles mid-session via ``/profile``, which rebuilds the
-    capability's ``peers`` attribute. Capturing the dict by value would
-    leave the tool stuck with the old map. The getter is called once
-    per tool invocation and always returns the live map.
+    Why getters rather than concrete dicts: the REPL can swap profiles
+    mid-session via ``/profile``, and the user can add/remove session
+    peers via ``/a2a peer add|remove``. Capturing dicts/strategies by
+    value would leave the tools stuck with the old state. The getters
+    are called once per tool invocation and always return the live
+    view.
 
     Args:
-        peers_getter: zero-arg callable returning the current
-            ``dict[str, A2APeerConfig]`` (typically a method bound to
-            the :class:`A2ACapability` instance).
+        peers_getter: zero-arg callable returning the current MERGED
+            peers map (profile + session). Typically
+            ``A2ACapability._current_peers``.
+        strategy_provider: callable mapping a peer config to its
+            :class:`AuthStrategy` (or ``None`` when the peer has no
+            ``auth`` block). Typically ``A2ACapability._strategy_for``.
+            The capability owns the strategy cache so OAuth2 tokens
+            persist across calls in a session. When ``None`` (test /
+            headless callers without a capability), strategies are
+            built fresh per call via :func:`make_strategy` — fine for
+            tests, wasteful in production.
         bus: optional event bus; outbound events post here when set.
 
     Returns:
         ``[a2a_discover, a2a_call]`` — already ``@jac_tool``-decorated.
     """
+    # Default strategy provider: build a fresh strategy per call. This is
+    # the fallback for callers that don't supply one (tests, headless
+    # one-shot usage). The A2ACapability passes its own caching variant
+    # in production so OAuth2 tokens survive across calls.
+    if strategy_provider is None:
+        from jac.capabilities.a2a.auth_strategies import make_strategy
+
+        def _default_provider(peer: A2APeerConfig) -> AuthStrategy | None:
+            return make_strategy(peer.auth) if peer.auth is not None else None
+
+        strategy_provider = _default_provider
 
     async def _emit(event) -> None:
         if bus is not None:
@@ -235,8 +274,20 @@ def build_outbound_tools(
         await _emit(A2AOutboundCall(target=target.display, message_preview=preview))
 
         headers: dict[str, str] = {"Content-Type": "application/json"}
-        if target.token:
-            headers["Authorization"] = f"Bearer {target.token}"
+        # Apply the peer's auth strategy (bearer / api_key / oauth2 / ...).
+        # Raw URLs (target.peer is None) and peers with no `auth` block
+        # both skip this — the caller is on the hook for ensuring the
+        # remote allows unauthenticated requests.
+        if target.peer is not None and target.peer.auth is not None:
+            strategy = strategy_provider(target.peer)
+            if strategy is not None:
+                # Auth resolution can do I/O (OAuth2 token fetch) and
+                # raise JacConfigError on missing env vars or token-
+                # endpoint failures. Let those propagate — they're
+                # config issues the operator needs to fix, not retries
+                # the model should keep attempting.
+                auth_headers = await strategy.headers_for()
+                headers.update(auth_headers)
 
         msg: Message = {
             "role": "user",

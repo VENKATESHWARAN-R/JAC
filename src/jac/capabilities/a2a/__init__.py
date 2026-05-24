@@ -31,6 +31,7 @@ from typing import Any
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models import Model
 
+from jac.capabilities.a2a.auth_strategies import AuthStrategy, make_strategy
 from jac.capabilities.a2a.client import build_outbound_tools
 from jac.capabilities.a2a.guest import build_guest_gru
 from jac.capabilities.a2a.server import A2AServer, ServerInfo
@@ -79,29 +80,105 @@ class A2ACapability(AbstractCapability[Any]):
 
     profile_name: str | None = None
     retention_days: int = 3
-    peers: dict[str, A2APeerConfig] = field(default_factory=dict)
+
+    profile_peers: dict[str, A2APeerConfig] = field(default_factory=dict)
+    """Peers from the active profile's ``a2a.peers`` block. The REPL
+    keeps this in sync with the active profile via the same in-place
+    mutation pattern (``.clear() + .update()``) that ``/profile``
+    rebuilds use, so the outbound tool closures stay valid."""
+
+    session_peers: dict[str, A2APeerConfig] = field(default_factory=dict)
+    """Peers added via ``/a2a peer add`` during this REPL session.
+    In-memory only — never persists to disk. Overrides
+    :attr:`profile_peers` on name collisions (the session entry wins,
+    the profile entry is shadowed until the operator removes the
+    session entry via ``/a2a peer remove``)."""
 
     server: A2AServer | None = field(default=None, init=False, repr=False)
+    _strategy_cache: dict[int, AuthStrategy] = field(default_factory=dict, init=False, repr=False)
+    """OAuth2 / future stateful strategies live here, keyed by
+    ``id(peer.auth)``. Cache hits when the same auth config instance is
+    seen again (typical: many calls to the same peer in a session
+    reuse the same access token). Misses naturally when a peer's auth
+    is rebuilt by ``/profile`` (new instance → new id → new strategy
+    → fresh token fetch)."""
+
+    @property
+    def peers(self) -> dict[str, A2APeerConfig]:
+        """Merged view: profile peers first, session peers override on name collision.
+
+        This is what ``a2a_call`` resolves against and what ``/a2a peers``
+        renders. The merge is one-level — no auth-block-only override;
+        a session peer fully replaces the profile peer of the same name.
+
+        Property (not field) so any code that captures ``cap.peers`` by
+        value sees a fresh snapshot rather than a stale one. Use
+        :meth:`_current_peers` when you need a live getter that the
+        outbound tools can call once per invocation.
+        """
+        merged = dict(self.profile_peers)
+        merged.update(self.session_peers)
+        return merged
 
     def get_toolset(self) -> Any:
         """Expose ``a2a_call`` + ``a2a_discover`` to Gru.
 
-        We build the tools through a closure that captures *this
-        capability instance* — specifically the ``_current_peers``
-        accessor — rather than the peers dict by value. That way when
-        ``/profile`` swaps profiles and updates ``self.peers``, the
-        outbound tools immediately see the new map without rebuilding
-        the toolset.
+        Tools close over ``_current_peers`` (live merged-peer view) and
+        ``_strategy_for`` (cached strategy lookup) rather than concrete
+        values. ``/profile`` swaps and ``/a2a peer add|remove`` both
+        propagate to the running tools without rebuilding the toolset.
         """
         tools = build_outbound_tools(
             peers_getter=self._current_peers,
+            strategy_provider=self._strategy_for,
             bus=self.bus,
         )
         return jac_function_toolset(*tools)
 
     def _current_peers(self) -> dict[str, A2APeerConfig]:
-        """Live accessor for the active peers map (see :meth:`get_toolset`)."""
+        """Live accessor for the active merged-peers map (profile + session)."""
         return self.peers
+
+    def _strategy_for(self, peer: A2APeerConfig) -> AuthStrategy | None:
+        """Return the cached :class:`AuthStrategy` for ``peer``, building one if needed.
+
+        Key is ``id(peer.auth)`` — reference identity. New auth-config
+        instances (after ``/profile`` rebuild or session-peer add)
+        miss the cache and get a fresh strategy, which is exactly the
+        invalidation we want.
+        """
+        if peer.auth is None:
+            return None
+        key = id(peer.auth)
+        cached = self._strategy_cache.get(key)
+        if cached is not None:
+            return cached
+        strategy = make_strategy(peer.auth)
+        self._strategy_cache[key] = strategy
+        return strategy
+
+    # ---------- session-peer management (slash-driven) ----------
+
+    def add_session_peer(self, name: str, peer: A2APeerConfig) -> A2APeerConfig | None:
+        """Register or replace an in-memory peer for the current session.
+
+        Args:
+            name: peer name (lowercase / digits / hyphens — same regex
+                as profile peers).
+            peer: validated :class:`A2APeerConfig` instance.
+
+        Returns:
+            The previous session entry if one was being replaced (so
+            the slash handler can tell the operator "you just replaced
+            an existing entry"), else ``None``.
+        """
+        previous = self.session_peers.get(name)
+        self.session_peers[name] = peer
+        return previous
+
+    def remove_session_peer(self, name: str) -> bool:
+        """Drop a session peer. Returns ``True`` iff the peer existed."""
+        return self.session_peers.pop(name, None) is not None
 
     # ---------- public lifecycle ----------
 
@@ -178,19 +255,36 @@ def make_a2a_capability(
     model: str | Model | None = None,
     profile_name: str | None = None,
     retention_days: int = 3,
-    peers: dict[str, A2APeerConfig] | None = None,
+    profile_peers: dict[str, A2APeerConfig] | None = None,
+    peers: dict[str, A2APeerConfig] | None = None,  # legacy alias
 ) -> A2ACapability:
     """Build a fresh :class:`A2ACapability`. One per agent / session.
 
     Mirrors the ``make_*_capability`` factories used by every other
     JAC capability for consistency.
+
+    Args:
+        bus: event bus the lifecycle + outbound events post to.
+        model: model id for the guest Gru (or a pydantic-ai ``Model``
+            instance for tests).
+        profile_name: name of the active profile (None when running
+            with ``--model``).
+        retention_days: A2A context retention from the profile.
+        profile_peers: peers from the active profile's ``a2a.peers``
+            block. The REPL keeps this updated in place on ``/profile``.
+        peers: legacy alias for ``profile_peers`` to keep PR1/PR2
+            test fixtures (and any external callers) working. Will be
+            removed in a follow-up; prefer ``profile_peers``.
     """
+    # Backward compat: the old `peers=` arg now means profile_peers.
+    if peers is not None and profile_peers is None:
+        profile_peers = peers
     return A2ACapability(
         bus=bus,
         model=model,
         profile_name=profile_name,
         retention_days=retention_days,
-        peers=peers or {},
+        profile_peers=profile_peers or {},
     )
 
 

@@ -318,7 +318,7 @@ async def _repl_loop(
     # defaults when no profile is in play). Both are refreshed on /profile.
     if active_profile is not None:
         a2a_capability.retention_days = active_profile.a2a.context_retention_days
-        a2a_capability.peers = dict(active_profile.a2a.peers)
+        a2a_capability.profile_peers = dict(active_profile.a2a.peers)
     message_history: list = list(session.message_history)
 
     # Token-budget tracker (D25). Baseline is summed from usage.jsonl
@@ -451,12 +451,14 @@ async def _repl_loop(
                             a2a_capability.retention_days = (
                                 active_profile.a2a.context_retention_days
                             )
-                            # Mutate in place so the outbound tool closures
-                            # (which captured the dict by reference at
-                            # toolset construction) see the new peers
-                            # immediately — see A2ACapability._current_peers.
-                            a2a_capability.peers.clear()
-                            a2a_capability.peers.update(active_profile.a2a.peers)
+                            # Mutate profile_peers in place so the outbound
+                            # tool closures (which capture the merged-view
+                            # getter) see the new peers immediately.
+                            # Session peers are NOT touched on /profile —
+                            # they're the operator's per-session overrides
+                            # and survive a profile switch.
+                            a2a_capability.profile_peers.clear()
+                            a2a_capability.profile_peers.update(active_profile.a2a.peers)
                 elif isinstance(result, StartA2AServer):
                     await _handle_start_a2a(a2a_capability, result)
                 elif isinstance(result, StopA2AServer):

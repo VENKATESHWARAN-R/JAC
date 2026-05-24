@@ -23,7 +23,7 @@ Each phase block leads with **Goal** + **why/what/how** before the checklist. Th
 | **Phase 1.7 — Coworker experience** | ✅ Complete (minus deferred) | umbrella for compaction, status bar, slash commands, budgets, feedback channels. **Shipped:** 1.7.a (D20 token-aware compaction), 1.7.b (D22 status bar), 1.7.c (D22 slash commands + tier schema), 1.7.d (D26 approval/clarify feedback), 1.7.f (D25 token budgets), 1.7.g (D27 plan persistence on resume), 1.7.h (Tavily/DDG dual-backend web search). **Deferred to v2:** 1.7.e Plan Mode + `ModeCapability` base — design needs more time (multi-plan handoff, plan-injection budget hazard, mode-base scope). |
 | Phase 2b — Summarizer minion | ⛔ Superseded | rolled into Phase 1.7.a (token-aware compaction). No separate minion. |
 | Phase 3 — Skills (D21) | ⏸ Queued | community-format skill loader + inline mode (replaces old bespoke minion factory plan) |
-| Phase 4 — A2A (D24, D30) | 🚧 In flight | **PR1 + PR2 landed 2026-05-24** (server + guest + auth + card + storage + audit + slash + headless + outbound `a2a_call`/`a2a_discover` + peer config + `/a2a peers`). PR3 (status/budget/retention polish) next. |
+| Phase 4 — A2A (D24, D30, D31) | 🚧 In flight | **PR1 + PR2 + PR3 landed 2026-05-24** (server + guest + auth + card + storage + audit + slash + headless + outbound `a2a_call`/`a2a_discover` + peer config + `/a2a peers` + **pluggable auth strategies** [bearer / api_key / oauth2_client_credentials] + **`/a2a peer add|remove`** for in-memory session peers). PR4 (polish: status / budget / retention timer) next; PR5 (Phase 4.d, OIDC + GCP ID tokens) after. |
 | Phase 5 — Minions | ⏸ Queued | runtime for skills with `mode: minion` — **needs grooming session before implementation** |
 | Phase 6 — MCP | ⏸ Queued | external MCP servers + the `reason:` discipline call (D26 reasoning) |
 | Phase 7 — Quality | ⏸ Queued | broader pytest, ruff, mypy, user docs |
@@ -557,16 +557,45 @@ Decisions D23 / D29 (the YOLO sketch) stay in `architecture.md §11` as the desi
 - [x] **23 new tests** across 2 files (`test_a2a_client.py` 21, `test_a2a_slash.py` 2): `resolve_target` (5 cases — by-name / raw-URL / https / unknown / lists-configured-on-error), `a2a_discover` (5 — returns camelCase / rejects empty / raises on 404 / raises on malformed / emits events), `a2a_call` (9 — sends `message/send` / injects bearer for named peers / omits auth for raw URL / context_id round-trip / surfaces JSON-RPC errors / rejects empty message / unknown peer / events with peer-name target / failed-state events), `peers_getter` runtime mutation, plus `/a2a peers` slash (empty state + populated rendering).
 - [x] All 263 tests pass (240 prior + 23 new); `just check` clean (ruff format ✓, lint ✓, ty ✓).
 
-### Phase 4.c — Polish: status, audit, budget integration (PR3) ⏸
+### Phase 4.c — Pluggable outbound auth strategies + session peers (PR3) ✅
 
-**Why:** the bits that make A2A *operable* rather than just *functional*. Visibility into running servers, integration with the budget system so guest calls aren't a budget loophole, retention enforcement so audit files don't grow forever.
+**Why:** PR1 + PR2 shipped bearer-only outbound auth, which works for JAC↔JAC with a pre-shared static token but blocks every real-world remote case. Azure peers want OAuth2 client_credentials (Entra ID); GCP Cloud Run wants ID tokens; third-party SaaS often uses API keys in custom headers. Worse, the JAC↔JAC token rotates on every server restart and the operator had to hand-paste it into peer config. Both problems are about *credential handling*; the framework-agnostic part of A2A was already fine (the wire protocol is just JSON-RPC). D31 generalizes outbound auth into pluggable strategies AND separates "stable peers in YAML" from "ephemeral peers in memory" — the second surface keeps secrets out of `messages.json` for restart-rotating peers.
+
+**Landed (2026-05-24):**
+
+- [x] `jac.profiles.A2APeerConfig.auth` is now a **discriminated union** — `BearerAuth | ApiKeyAuth | OAuth2ClientCredentialsAuth` via pydantic `Discriminator("type")`. The legacy `token: <str>` shorthand auto-promotes to `BearerAuth` via a `model_validator(mode="before")` — zero migration burden on existing configs. Side-by-side `token:` + `auth:` is rejected (ambiguous).
+- [x] `jac.capabilities.a2a.auth_strategies` (new) — `AuthStrategy` Protocol (`async def headers_for() -> dict[str, str]`) + three implementations: `BearerStrategy` (static), `ApiKeyStrategy` (custom header name + value), `OAuth2ClientCredentialsStrategy` (RFC 6749 §4.4 — POST to token_url with HTTP Basic id:secret, parse `access_token` + `expires_in`, cache per-strategy in memory, lazy refresh with 30s slack). `make_strategy(auth)` dispatches by `isinstance`.
+- [x] `${ENV_VAR}` reference expansion via `_resolve_env(value, field=...)` — works in every credential field (bearer token, api_key value, oauth2 client_id / client_secret / token_url / scope). Missing env vars raise `JacConfigError` listing every missing var so the operator can fix in one pass.
+- [x] `A2ACapability` split: `profile_peers` (from YAML) + `session_peers` (from slash); `peers` is now a `@property` returning the merged view (session overrides profile). Strategy cache keyed by `id(peer.auth)` — instance-identity indexing means `/profile` rebuilds + slash-add operations naturally invalidate (new instance → new id → new strategy → fresh OAuth2 token fetch).
+- [x] `/a2a peer add NAME URL [--bearer | --api-key HEADER | --oauth2 TOKEN_URL CLIENT_ID [--scope X]]` slash — registers a session-scoped peer. **Secrets are NEVER passed on the command line** — prompted via `getpass.getpass()` so the value doesn't echo + doesn't land in shell history or prompt-toolkit history. With no auth flag, peer is added unauthenticated (works against `--unsafe` peers only).
+- [x] `/a2a peer remove NAME` slash — drops a session peer; reverts to the profile peer of the same name if one exists.
+- [x] `/a2a peers` rewritten — shows merged view with `[session]` / `[profile]` provenance tags (Rich brackets escaped with `r"\["` so they aren't stripped). Session entry shadowing a profile entry renders the shadowed row greyed-out underneath.
+- [x] `client.py` `a2a_call` refactored: `_ResolvedTarget` now carries the resolved `A2APeerConfig` (not a bearer token); `build_outbound_tools` accepts a `strategy_provider` callable for the capability's cached lookup; on call, the strategy's `headers_for()` is awaited and merged into the request headers. Bearer-only path is dead — all auth flows through the strategy interface.
+- [x] REPL passes `profile_peers` (instead of legacy `peers`) into `make_a2a_capability` and refreshes via in-place `.clear() + .update()` on `/profile` rebuild. Session peers survive profile switches (intentional — they're the operator's per-session overrides).
+- [x] `gru_system.md` "Auth model" section rewritten: explicit on the two-surface design (stable in profile, ephemeral via `/a2a peer add`), `getpass` prompt for secrets, "you never handle credentials" guarantee. Slash commands section gains the `/a2a peer add|remove` entries.
+- [x] **31 new tests** across 2 files (17 in `test_a2a_auth_strategies.py`, 14 in `test_a2a_slash.py`): strategy dispatch, bearer/api_key with env-var expansion, OAuth2 end-to-end via in-process Starlette token endpoint (correct grant_type, Basic auth header, scope passthrough, caching across calls, expiry-driven refresh, 4xx / non-JSON / no-access-token error paths, env-var expansion in every field), plus all `/a2a peer add` variants (unauth / bearer / api_key / oauth2), invalid URL/name/flag rejection, cancellation via empty input, shadowing with loud warning, `/a2a peer remove` with revert-to-profile, peers listing with shadowed-row rendering.
+- [x] All 294 tests pass (263 prior + 31 new); `just check` clean (ruff format ✓, lint ✓, ty ✓).
+- [x] architecture.md §11 **D31** recorded — pluggable auth strategies + in-memory/config split + privacy guarantee.
+
+### Phase 4.d — Polish: status, audit, budget integration (PR4) ⏸
+
+**Why:** the bits that make A2A *operable* rather than just *functional*. Visibility into running servers, integration with the budget system so guest calls aren't a budget loophole, retention enforcement so audit files don't grow forever. (Was Phase 4.c before D31; renamed when auth strategies pushed in front of it.)
 
 - [ ] `/a2a status` — running? bind host:port? truncated token? peer count? last 5 calls?
-- [ ] `/a2a token` — re-print current bearer (in case operator missed it on start)
 - [ ] Budget integration: per-inbound-call `result.usage()` feeds host's `UsageTracker.add_external(input, output)` — counts under `project_total` only, **not** `session_total`. Surfaces in `/tokens` as a separate "a2a guest" line
 - [ ] Context retention enforcement: `cleanup_old_contexts(retention_days)` runs on server start AND on a 1-hour timer while server runs
-- [ ] `gru_system.md` updated: "Using `a2a_discover` vs `a2a_call`" section + "What guest Gru is and what peer behavior to expect" — host Gru understands the asymmetry between its own context and what peers can see
-- [ ] `architecture.md §6 + §8` diagrams refreshed to show A2A flow (inbound + outbound + storage + audit)
+- [ ] OAuth2 strategy: surface a separate `[a2a token]` event when a fresh access token is minted (operator visibility into IDP roundtrips)
+- [ ] `architecture.md §6 + §8` diagrams refreshed to show A2A flow (inbound + outbound + storage + audit + outbound auth strategies)
+
+### Phase 4.e — OIDC + GCP ID tokens (PR5, after PR4) ⏸
+
+**Why:** Phase 4.c's strategy Protocol opens the door; this phase walks through it. OIDC discovery (pull token endpoint from `.well-known/openid-configuration`) unlocks any IDP that advertises it (Okta, Auth0, Google, Microsoft Entra, Keycloak). GCP ID tokens unlock Cloud Run / App Engine — the second-most-common cloud A2A deployment target after Azure.
+
+- [ ] `OidcAuth` config model: `issuer` (discovery URL base) + `client_id` + `client_secret` + `scope`. Fetches `<issuer>/.well-known/openid-configuration` to learn the token endpoint, then reuses the OAuth2 client_credentials path under the hood.
+- [ ] `GcpIdTokenAuth` config model: `audience` (the Cloud Run URL or service account audience). Uses `google-auth` to mint an ID token via the metadata service (inside GCP) or service account credentials (anywhere else).
+- [ ] Add `google-auth` as an optional dep (`pip install 'jac[gcp]'` — keeps the base wheel small).
+- [ ] Two new strategy classes implementing `AuthStrategy`; `make_strategy` dispatch grows two branches.
+- [ ] Documentation: `gru_system.md` auth section gains a "supported strategies" reference; user guide gets a "configuring Azure / GCP / Okta peers" walkthrough.
 
 ### Phase 4.1 — Auto-publish community Skills (after Phase 3) ⏸
 

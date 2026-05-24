@@ -15,10 +15,10 @@ file paths. See docs/architecture.md §11 D13 (names) and D22 (tiered models).
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Annotated, Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Discriminator, Field, model_validator
 
 from jac.errors import JacConfigError
 from jac.providers.registry import get_provider_registry, provider_prefix
@@ -37,25 +37,136 @@ def validate_profile_name(name: str) -> None:
         )
 
 
-class A2APeerConfig(BaseModel):
-    """One configured A2A peer (D24). Used by ``a2a_call`` for named lookup.
+class BearerAuth(BaseModel):
+    """Static HTTP Bearer token. Sent as ``Authorization: Bearer <token>``.
 
-    A peer is just a (url, optional token, description) triple. The token
-    is the bearer secret to send in ``Authorization: Bearer <token>``;
-    leave it unset when the peer is running with ``--unsafe`` (test setups
-    only — production peers always have tokens).
+    The cheapest scheme that's still secure-by-default. Use for JAC↔JAC,
+    test peers, and any service-to-service link where you've pre-shared
+    a long-lived token.
+    """
+
+    type: Literal["bearer"] = "bearer"
+    token: str
+    """The bearer token, or a ``${ENV_VAR}`` reference resolved at apply
+    time via the configured secrets backend."""
+
+
+class ApiKeyAuth(BaseModel):
+    """API key in a custom HTTP header. Sent as ``<header>: <value>``.
+
+    For peers that use non-Bearer header conventions like
+    ``X-API-Key: <key>``. The ``Authorization`` header is allowed as
+    a value of ``header`` but is unusual — use :class:`BearerAuth` if
+    the scheme is bearer.
+    """
+
+    type: Literal["api_key"] = "api_key"
+    header: str
+    """The HTTP header name (e.g. ``"X-API-Key"``). Case-insensitive on
+    the wire but stored verbatim."""
+    value: str
+    """The header value, or a ``${ENV_VAR}`` reference."""
+
+
+class OAuth2ClientCredentialsAuth(BaseModel):
+    """OAuth2 client_credentials flow (RFC 6749 §4.4).
+
+    Standard server-to-server flow. We POST to ``token_url`` with the
+    client id/secret, receive an access token + ``expires_in``, cache
+    it on the strategy instance for the rest of the session, and send
+    it as ``Authorization: Bearer <access_token>`` on every A2A call.
+
+    Used by Azure AD / Entra ID (the most common path for service-to-
+    service in Microsoft cloud), Auth0, Okta API access, generic OAuth2
+    deployments. For peers that need different flows
+    (authorization_code, password, etc.) we'll add separate strategies
+    in a follow-up — client_credentials is by far the most common for
+    agent-to-agent.
+    """
+
+    type: Literal["oauth2_client_credentials"] = "oauth2_client_credentials"
+    token_url: str
+    """Full token endpoint URL (e.g.
+    ``https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token``).
+    May contain ``${ENV_VAR}`` references for tenant ids, etc."""
+    client_id: str
+    """OAuth2 client id (or ``${ENV_VAR}``)."""
+    client_secret: str
+    """OAuth2 client secret (or ``${ENV_VAR}``)."""
+    scope: str = ""
+    """Space-separated scope string (e.g. ``"api://my-agent/.default"``
+    for Azure). Empty string omits the param."""
+
+
+PeerAuth = Annotated[
+    BearerAuth | ApiKeyAuth | OAuth2ClientCredentialsAuth,
+    Discriminator("type"),
+]
+"""Discriminated union of every supported auth strategy. Add new
+strategies by extending :mod:`jac.capabilities.a2a.auth_strategies`
+and adding the model class here."""
+
+
+class A2APeerConfig(BaseModel):
+    """One configured A2A peer (D24, D31).
+
+    Each peer is a (URL, optional auth, description) triple. Auth is a
+    tagged union — :class:`BearerAuth` / :class:`ApiKeyAuth` /
+    :class:`OAuth2ClientCredentialsAuth`. Omit ``auth`` entirely for
+    unauthenticated peers (peer must be running with ``--unsafe``).
+
+    Backward compatibility: the pre-D31 ``token: <str>`` shorthand is
+    still accepted. The validator promotes it to ``auth: BearerAuth(...)``
+    so existing configs keep working. Side-by-side ``token:`` and
+    ``auth:`` is rejected — pick one.
     """
 
     url: str
     """Base URL of the peer's A2A endpoint (e.g. ``http://127.0.0.1:8001``).
     Trailing slash optional; the client normalizes either form."""
 
-    token: str | None = None
-    """Bearer token; ``None`` means no Authorization header (peer must be
-    running with ``--unsafe`` for the call to succeed)."""
+    auth: PeerAuth | None = None
+    """How to authenticate with this peer. ``None`` means no auth —
+    works only against ``--unsafe`` peers. See :class:`BearerAuth` /
+    :class:`ApiKeyAuth` / :class:`OAuth2ClientCredentialsAuth`."""
 
     description: str = ""
     """Human-readable hint surfaced in ``/a2a peers`` listing."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _promote_token_shorthand(cls, data: Any) -> Any:
+        """Pre-D31 ``token: <str>`` becomes ``auth: BearerAuth(...)``.
+
+        Backward-compat shim so existing configs keep loading. Reject
+        if BOTH ``token:`` and ``auth:`` are set (ambiguous — operator
+        must pick one form).
+        """
+        if not isinstance(data, dict):
+            return data
+        token = data.get("token")
+        auth = data.get("auth")
+        if token is not None and auth is not None:
+            raise ValueError(
+                "A2A peer config has both `token:` (legacy shorthand) and `auth:` blocks. "
+                "Pick one — `auth:` is the documented form."
+            )
+        if token is not None:
+            # Promote and drop the legacy key.
+            data = {**data, "auth": {"type": "bearer", "token": token}}
+            data.pop("token", None)
+        return data
+
+    # ---------- legacy compatibility shim ----------
+
+    @property
+    def token(self) -> str | None:
+        """Pre-D31 compatibility — return the bearer token if auth is a
+        :class:`BearerAuth`, else ``None``. Read-only; new code should
+        introspect ``auth`` directly."""
+        if isinstance(self.auth, BearerAuth):
+            return self.auth.token
+        return None
 
 
 class A2AProfileConfig(BaseModel):
