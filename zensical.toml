@@ -28,6 +28,7 @@ nav = [
     ] },
     { "Developer" = [
         { "Contributing" = "developer/contributing.md" },
+        { "Module strategy" = "developer/module-strategy.md" },
         { "Codebase map" = "developer/codebase-map.md" },
         { "Capabilities & hooks" = "developer/capabilities.md" },
     ] },
@@ -51,6 +52,8 @@ features = [
     "content.footnote.tooltips",
     "content.tabs.link",
     "content.tooltips",
+    "navigation.tabs",
+    "navigation.tabs.sticky",
     "navigation.footer",
     "navigation.indexes",
     "navigation.instant",

@@ -34,7 +34,7 @@ It runs on your machine — your keys, your files, your context.
 uv tool install "git+https://github.com/VENKATESHWARAN-R/JAC.git"
 
 # One-off, no install
-uv run --from "git+https://github.com/VENKATESHWARAN-R/JAC.git" jac --help
+uvx --from "git+https://github.com/VENKATESHWARAN-R/JAC.git" jac --help
 
 # From a local clone
 git clone https://github.com/VENKATESHWARAN-R/JAC.git && cd JAC && uv sync
@@ -55,7 +55,7 @@ Full user guide: **[docs/user-guide/getting-started.md](docs/user-guide/getting-
 | | |
 | --- | --- |
 | **User guide** | [Getting started](docs/user-guide/getting-started.md) · [CLI reference](docs/user-guide/cli-reference.md) · [Configuration](docs/user-guide/configuration.md) · [Sessions & memory](docs/user-guide/sessions-and-memory.md) · [Examples](docs/user-guide/examples.md) · [A2A operator](docs/user-guide/a2a-operator.md) |
-| **Developer** | [Contributing](docs/developer/contributing.md) · [Codebase map](docs/developer/codebase-map.md) · [Capabilities](docs/developer/capabilities.md) |
+| **Developer** | [Contributing](docs/developer/contributing.md) · [Module strategy](docs/developer/module-strategy.md) · [Codebase map](docs/developer/codebase-map.md) · [Capabilities](docs/developer/capabilities.md) |
 | **Design** | [Idea](docs/idea.md) · [Architecture](docs/architecture.md) · [Progress](docs/progress.md) |
 
 Published as a static site: `just docs-serve` → http://127.0.0.1:8000
@@ -72,12 +72,20 @@ See [docs/developer/contributing.md](docs/developer/contributing.md) for the ful
 
 ## Built on
 
-- **[Pydantic AI](https://github.com/pydantic/pydantic-ai)** — the agent framework JAC sits on top of.
-- **[fasta2a](https://github.com/pydantic/fasta2a)** — A2A server integration.
-- **[Pydantic AI Harness](https://github.com/pydantic/pydantic-ai-harness)** — official capability library.
-- **[pydantic-deepagents](https://github.com/vstorm-co/pydantic-deepagents)** — design inspiration.
-- **[memv](https://github.com/vstorm-co/memv)** — predict-calibrate memory pattern (target for v2).
-- **[Monty](https://github.com/pydantic/monty)** — Rust-based Python sandbox (target for v2 YOLO).
+**Core**
+
+- **[Pydantic AI](https://github.com/pydantic/pydantic-ai)** — the agent framework JAC is built on.
+- **[fasta2a](https://github.com/pydantic/fasta2a)** — A2A server integration (Phase 4).
+
+**Design inspiration** (not vendored)
+
+- **[Pydantic AI Harness](https://github.com/pydantic/pydantic-ai-harness)** — capability patterns JAC adopts selectively (`ApprovalRequiredToolset`, `Instrumentation`, …).
+- **[pydantic-deepagents](https://github.com/vstorm-co/pydantic-deepagents)** — overall agent-harness design reference.
+
+**On the roadmap** (considered, not integrated yet)
+
+- **[memv](https://github.com/vstorm-co/memv)** — predict-calibrate memory extraction (v2).
+- **[Monty](https://github.com/pydantic/monty)** — Rust-based Python sandbox for YOLO mode (v2).
 
 ## License
 
