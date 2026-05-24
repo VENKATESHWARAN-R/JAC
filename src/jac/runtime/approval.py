@@ -27,8 +27,7 @@ from pydantic_ai.tools import (
     ToolDenied,
 )
 
-from jac.runtime.bus import EventBus
-from jac.runtime.events import ApprovalRequest, ApprovalResponse
+from jac.runtime.events import ApprovalRequest, ApprovalResponse, EventBus
 
 
 def _coerce_args(raw: Any) -> dict[str, Any]:

@@ -1,11 +1,10 @@
-"""``/budget`` and ``/tokens`` — token-budget visibility + mid-session override (D25).
+"""``/budget`` — token-budget visibility + mid-session override (D25).
 
 ``/budget`` (no arg) shows the configured limits with current usage; with
 ``extend N`` adds tokens to ``session_total`` (default kind), or
-``extend KIND N`` for a specific knob. ``/tokens`` is a detail view:
-input / output / total / project_total counts side-by-side.
+``extend KIND N`` for a specific knob.
 
-These two share their internals with the :class:`UsageTracker` carried on
+Shares its internals with the :class:`UsageTracker` carried on
 :class:`SlashContext` — no model roundtrip, no duplicate counters.
 
 Per D25 there is **no** ``/cost`` slash. Tokens map to whatever pricing
@@ -95,7 +94,6 @@ def _parse_extend_args(args: str) -> tuple[BudgetKind, int] | str:
             amount = int(amount_str.replace(",", "").replace("_", ""))
         except ValueError:
             return f"could not parse {amount_str!r} as a token count."
-        # ``kind_str`` is now known to be one of _VALID_KINDS.
         return cast(BudgetKind, kind_str), amount
     return "usage: /budget extend N  OR  /budget extend KIND N"
 
@@ -140,33 +138,4 @@ def budget_handler(ctx: SlashContext, args: str) -> SlashResult:
         f"[bold]{amount:,}[/bold] tokens — new limit "
         f"[bold]{new_limit:,}[/bold]."
     )
-    return Handled()
-
-
-@register(
-    "tokens",
-    summary="Show detailed token usage counters",
-    usage="/tokens",
-)
-def tokens_handler(ctx: SlashContext, args: str) -> SlashResult:
-    if args.strip():
-        ctx.console.print("[dim]/tokens takes no arguments[/dim]")
-
-    tracker = ctx.usage_tracker
-    if tracker is None:
-        ctx.console.print("[dim]no usage tracker (likely a test context)[/dim]")
-        return Handled()
-
-    ctx.console.print(
-        f"[bold]session:[/bold]  input={tracker.counters.input_tokens:,}  "
-        f"output={tracker.counters.output_tokens:,}  "
-        f"total={tracker.counters.total_tokens:,}"
-    )
-    ctx.console.print(
-        f"[bold]project:[/bold] total={tracker.project_total_tokens:,}  "
-        f"[dim](baseline={tracker.project_baseline:,} "
-        "from prior sessions in this repo)[/dim]"
-    )
-    if tracker.limits.any_configured():
-        ctx.console.print("[dim]see [bold]/budget[/bold] for configured limits.[/dim]")
     return Handled()

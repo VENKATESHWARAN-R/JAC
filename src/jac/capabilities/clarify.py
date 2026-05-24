@@ -6,7 +6,7 @@ parse. That's lossy. ``clarify`` makes the picker explicit: Gru declares
 the question and the discrete options, the renderer shows a numbered
 prompt, the user picks one, and the tool returns the chosen string.
 
-Mechanism mirrors the approval flow (see :mod:`jac.capabilities.approval`):
+Mechanism mirrors the approval flow (see :mod:`jac.runtime.approval`):
 
 1. The tool creates a per-call ``asyncio.Future``.
 2. It emits a :class:`ClarifyRequest` onto the bus, carrying the future.
@@ -32,8 +32,7 @@ from typing import Any
 
 from pydantic_ai.capabilities import AbstractCapability
 
-from jac.runtime.bus import EventBus
-from jac.runtime.events import ClarifyRequest, ClarifyResponse
+from jac.runtime.events import ClarifyRequest, ClarifyResponse, EventBus
 from jac.tools import jac_function_toolset, jac_tool
 
 _MIN_OPTIONS = 2

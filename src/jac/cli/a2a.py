@@ -37,9 +37,10 @@ import typer
 from rich.console import Console
 
 from jac.capabilities.a2a import make_a2a_capability
-from jac.capabilities.observability import setup_observability
+from jac.cli._a2a_banner import print_server_started_banner
 from jac.errors import JacConfigError
-from jac.profiles import get_profile, resolve_active_profile_name
+from jac.profiles_crud import get_profile, resolve_active_profile_name
+from jac.runtime.observability import setup_observability
 from jac.secrets import apply_profile_env
 from jac.workspace.bootstrap import ensure_user_workspace
 
@@ -159,21 +160,12 @@ async def _serve(
         console.print(f"[red]A2A serve failed:[/red] {exc}")
         return
 
-    console.print(
-        f"[green]✓ A2A server started:[/green] [bold]{info.url}[/bold]  "
-        f"[dim](bind {info.bind_host}:{info.port}, profile {profile_name!r})[/dim]"
+    print_server_started_banner(
+        info,
+        console,
+        profile_name=profile_name,
+        token_hint="paste below into peer config; rotates on every restart",
     )
-    if info.unsafe:
-        console.print(
-            "[red]auth: disabled (--unsafe)[/red] "
-            "[dim]— card omits securitySchemes; any caller accepted[/dim]"
-        )
-    else:
-        console.print(
-            "[dim]auth: bearer token (paste below into peer config; rotates on every restart)[/dim]"
-        )
-        console.print(f"  [bold]{info.token}[/bold]")
-    console.print(f"[dim]agent card: {info.url}/.well-known/agent-card.json[/dim]")
     console.print("[dim]Ctrl-C or SIGTERM to stop[/dim]")
 
     # Block until a signal arrives. asyncio.Event ensures we yield to

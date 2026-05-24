@@ -6,8 +6,8 @@ import pytest
 
 from jac.cli.statusbar import (
     StatusState,
-    _BranchCache,
     _ctx_color,
+    _reset_branch_cache,
     format_toolbar,
     short_model,
     tier_for_model,
@@ -19,8 +19,10 @@ from jac.profiles import Profile
 @pytest.fixture(autouse=True)
 def _reset_settings() -> None:
     reset_settings_cache()
+    _reset_branch_cache()
     yield
     reset_settings_cache()
+    _reset_branch_cache()
 
 
 # ---------- pure helpers ----------
@@ -86,11 +88,13 @@ def test_ctx_color_red_at_refuse() -> None:
     assert _ctx_color(99) == "ansired"
 
 
-# ---------- _BranchCache debouncing ----------
+# ---------- branch debouncing ----------
 
 
 def test_branch_cache_debounces_subprocess_calls(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Repeated get() calls within the debounce window must not re-shell."""
+    """Repeated calls within the debounce window must not re-shell."""
+    from jac.cli.statusbar import _branch_status
+
     call_count = {"n": 0}
 
     def fake_check_output(cmd, **_kwargs):
@@ -102,20 +106,21 @@ def test_branch_cache_debounces_subprocess_calls(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr("jac.cli.statusbar.subprocess.check_output", fake_check_output)
     monkeypatch.setattr("jac.cli.statusbar.time.monotonic", lambda: 100.0)
 
-    cache = _BranchCache()
-    assert cache.get() == ("main", False)
+    assert _branch_status() == ("main", False)
     initial_calls = call_count["n"]
     assert initial_calls > 0
 
-    # Same timestamp — second get() must NOT shell.
-    cache.get()
-    cache.get()
+    # Same timestamp — second call must NOT shell.
+    _branch_status()
+    _branch_status()
     assert call_count["n"] == initial_calls
 
 
 def test_branch_cache_refreshes_after_window(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from jac.cli.statusbar import _branch_status
+
     call_count = {"n": 0}
 
     def fake_check_output(cmd, **_kwargs):
@@ -129,29 +134,30 @@ def test_branch_cache_refreshes_after_window(
     now = {"t": 100.0}
     monkeypatch.setattr("jac.cli.statusbar.time.monotonic", lambda: now["t"])
 
-    cache = _BranchCache()
-    cache.get()
+    _branch_status()
     initial = call_count["n"]
 
-    # Advance past the debounce window — next get() should re-shell.
+    # Advance past the debounce window — next call should re-shell.
     now["t"] = 110.0
-    cache.get()
+    _branch_status()
     assert call_count["n"] > initial
 
 
 def test_branch_cache_handles_no_git(monkeypatch: pytest.MonkeyPatch) -> None:
     """When git isn't on PATH (or we're outside a repo), return empty/clean."""
+    from jac.cli.statusbar import _branch_status
 
     def fake_check_output(cmd, **_kwargs):
         raise FileNotFoundError("git: command not found")
 
     monkeypatch.setattr("jac.cli.statusbar.subprocess.check_output", fake_check_output)
 
-    cache = _BranchCache()
-    assert cache.get() == ("", False)
+    assert _branch_status() == ("", False)
 
 
 def test_branch_cache_dirty_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    from jac.cli.statusbar import _branch_status
+
     def fake_check_output(cmd, **_kwargs):
         if "symbolic-ref" in cmd:
             return b"main\n"
@@ -159,8 +165,7 @@ def test_branch_cache_dirty_flag(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr("jac.cli.statusbar.subprocess.check_output", fake_check_output)
 
-    cache = _BranchCache()
-    assert cache.get() == ("main", True)
+    assert _branch_status() == ("main", True)
 
 
 # ---------- format_toolbar ----------
@@ -187,7 +192,7 @@ def test_format_toolbar_shows_profile_tier_and_short_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Pin the branch cache to avoid touching real git.
-    monkeypatch.setattr(_BranchCache, "get", lambda self: ("main", False))
+    monkeypatch.setattr("jac.cli.statusbar._branch_status", lambda: ("main", False))
 
     rendered = str(format_toolbar(_state_with_profile()))
     assert "profile:" in rendered and "claude" in rendered
@@ -202,7 +207,7 @@ def test_format_toolbar_ad_hoc_model_shows_model_label_not_tier(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """When the running model isn't in any tier we surface 'model:' not 'tier:'."""
-    monkeypatch.setattr(_BranchCache, "get", lambda self: ("", False))
+    monkeypatch.setattr("jac.cli.statusbar._branch_status", lambda: ("", False))
 
     p = Profile(tiers={"medium": ["anthropic:claude-sonnet-4-5"]}, active_tier="medium")
     state = StatusState(
@@ -222,7 +227,7 @@ def test_format_toolbar_no_profile_hides_profile_segment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """`--model PROVIDER:ID` startup leaves profile fields blank — don't render them."""
-    monkeypatch.setattr(_BranchCache, "get", lambda self: ("", False))
+    monkeypatch.setattr("jac.cli.statusbar._branch_status", lambda: ("", False))
 
     state = StatusState(
         model_id="anthropic:claude-opus-4-7",
@@ -241,7 +246,7 @@ def test_format_toolbar_no_profile_hides_profile_segment(
 def test_format_toolbar_branch_dirty_marker_present_when_dirty(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(_BranchCache, "get", lambda self: ("feature", True))
+    monkeypatch.setattr("jac.cli.statusbar._branch_status", lambda: ("feature", True))
     rendered = str(format_toolbar(_state_with_profile()))
     assert "feature" in rendered
     assert ">*<" in rendered  # the dirty `*` is wrapped in an HTML style tag
@@ -250,7 +255,7 @@ def test_format_toolbar_branch_dirty_marker_present_when_dirty(
 def test_format_toolbar_omits_branch_when_no_git(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(_BranchCache, "get", lambda self: ("", False))
+    monkeypatch.setattr("jac.cli.statusbar._branch_status", lambda: ("", False))
     rendered = str(format_toolbar(_state_with_profile()))
     assert "branch:" not in rendered
 
@@ -262,7 +267,7 @@ def test_format_toolbar_omits_budget_segment_when_pct_is_none(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """No budget configured → no `bud:` segment in the toolbar."""
-    monkeypatch.setattr(_BranchCache, "get", lambda self: ("", False))
+    monkeypatch.setattr("jac.cli.statusbar._branch_status", lambda: ("", False))
     state = _state_with_profile()
     state.budget_pct = None
     rendered = str(format_toolbar(state))
@@ -272,7 +277,7 @@ def test_format_toolbar_omits_budget_segment_when_pct_is_none(
 def test_format_toolbar_shows_budget_segment_with_pct(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(_BranchCache, "get", lambda self: ("", False))
+    monkeypatch.setattr("jac.cli.statusbar._branch_status", lambda: ("", False))
     state = _state_with_profile()
     state.budget_pct = 42
     rendered = str(format_toolbar(state))
@@ -284,7 +289,7 @@ def test_format_toolbar_budget_segment_appears_at_zero_too(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """``0`` is a configured-but-unused budget — segment still visible."""
-    monkeypatch.setattr(_BranchCache, "get", lambda self: ("", False))
+    monkeypatch.setattr("jac.cli.statusbar._branch_status", lambda: ("", False))
     state = _state_with_profile()
     state.budget_pct = 0
     rendered = str(format_toolbar(state))

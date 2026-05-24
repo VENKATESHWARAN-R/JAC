@@ -10,7 +10,7 @@ See [`docs/progress.md`](docs/progress.md) for what's implemented, in flight, an
 
 For the *why*, read [`docs/idea.md`](docs/idea.md). For the *how*, read [`docs/architecture.md`](docs/architecture.md). When the design is ambiguous, **`docs/architecture.md` is the source of truth for *how* JAC is built**; **`docs/idea.md` is the source of truth for *what it is and is not*.** If you deviate from either, update the doc in the same change.
 
-Long-form docs live under [`docs/`](docs/) and are published as a Zensical site (`just docs-serve`). For module layout see [`docs/developer/codebase-map.md`](docs/developer/codebase-map.md); for contributing workflow see [`docs/developer/contributing.md`](docs/developer/contributing.md).
+Long-form docs live under [`docs/`](docs/) and are published as a Zensical site (`just docs-serve`). **Before placing a new file or moving an existing one, read [`docs/developer/module-strategy.md`](docs/developer/module-strategy.md)** — it's the canonical rulebook for where things live and the slash-vs-capability distinction. For the as-built tree see [`docs/developer/codebase-map.md`](docs/developer/codebase-map.md); for contributing workflow see [`docs/developer/contributing.md`](docs/developer/contributing.md).
 
 ## Stack
 

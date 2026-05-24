@@ -34,13 +34,14 @@ and reuses it across all inbound calls.
 from __future__ import annotations
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.models import Model
 
 from jac.capabilities.filesystem import FilesystemCapability
 from jac.capabilities.search import SearchCapability
 from jac.errors import JacConfigError
 from jac.workspace.context import load_session_context
-from jac.workspace.prompts import load_prompt
+from jac.workspace.paths import load_prompt
 
 
 def build_guest_gru(*, model: str | Model) -> Agent[None, str]:
@@ -88,7 +89,7 @@ def build_guest_gru(*, model: str | Model) -> Agent[None, str]:
 
     instructions = _compose_guest_instructions()
 
-    return Agent(model, instructions=instructions, capabilities=[fs, search])
+    return Agent(model, instructions=instructions, capabilities=[Instrumentation(), fs, search])
 
 
 def _compose_guest_instructions() -> str:

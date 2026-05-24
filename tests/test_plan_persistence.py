@@ -23,8 +23,7 @@ from typing import Any
 import pytest
 
 from jac.capabilities.plan import PlanCapability, make_plan_capability
-from jac.runtime.bus import EventBus
-from jac.runtime.events import PlanReplaced
+from jac.runtime.events import EventBus, PlanReplaced
 from jac.runtime.session import Session
 from jac.workspace import paths
 

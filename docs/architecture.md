@@ -2,6 +2,7 @@
 
 > **Last revised:** 2026-05-24 · Living design doc. Decisions are locked in §5.
 >
+> Module strategy (where things go + slash-vs-capability rulebook): [developer/module-strategy.md](developer/module-strategy.md).
 > As-built module map: [developer/codebase-map.md](developer/codebase-map.md).
 > Memory paths: [user-guide/sessions-and-memory.md](user-guide/sessions-and-memory.md).
 > Phase checklist: [progress.md](progress.md).

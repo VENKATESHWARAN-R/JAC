@@ -23,14 +23,9 @@ from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 
 from jac.errors import JacConfigError
-from jac.profiles import (
-    Profile,
-    add_or_update_profile,
-    detect_old_profiles,
-    list_profiles,
-    migrate_old_profiles,
-    validate_profile_name,
-)
+from jac.profiles import Profile, validate_profile_name
+from jac.profiles_crud import add_or_update_profile, list_profiles
+from jac.profiles_io import detect_old_profiles, migrate_old_profiles
 from jac.providers.registry import get_provider_registry
 from jac.secrets import SecretBackendName, get_backend
 from jac.workspace import paths

@@ -24,11 +24,11 @@ from typing import Annotated
 import typer
 from rich.console import Console
 
-from jac.capabilities.observability import setup_observability
 from jac.cli.a2a import app as a2a_app
 from jac.cli.keys_cmd import app as keys_app
 from jac.cli.profiles_cmd import app as profiles_app
 from jac.errors import JacConfigError
+from jac.runtime.observability import setup_observability
 from jac.secrets import apply_ad_hoc_model_env, apply_profile_env
 from jac.workspace.bootstrap import ensure_user_workspace
 
@@ -154,7 +154,7 @@ def _activate_for_repl(*, model_override: str | None, profile_name: str | None) 
         apply_ad_hoc_model_env(model_override)
         return None
 
-    from jac.profiles import get_profile, resolve_active_profile_name
+    from jac.profiles_crud import get_profile, resolve_active_profile_name
 
     active_name = resolve_active_profile_name(profile_name)
     active = get_profile(active_name)

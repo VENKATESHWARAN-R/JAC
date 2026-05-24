@@ -55,12 +55,12 @@ from jac.capabilities.a2a.auth import (
 from jac.capabilities.a2a.card import build_agent_card
 from jac.capabilities.a2a.storage import JacFileStorage
 from jac.errors import JacConfigError
-from jac.runtime.bus import EventBus
 from jac.runtime.events import (
     A2AInboundCall,
     A2AInboundCompleted,
     A2AServerStarted,
     A2AServerStopped,
+    EventBus,
     JacEventT,
 )
 from jac.workspace import paths

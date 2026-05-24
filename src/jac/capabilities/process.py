@@ -7,10 +7,11 @@ output, list active processes, and kill them when no longer needed.
 
 Design notes:
 
-- **State on the capability instance.** One ``ProcessStore`` per session
-  (just like :class:`jac.capabilities.plan.PlanCapability`). Minions do
-  not get this capability — long-running processes outlive a minion task
-  and the bookkeeping would be confusing.
+- **State on the capability instance.** Records live on the
+  :class:`ProcessCapability` directly (one per session, just like
+  :class:`jac.capabilities.plan.PlanCapability`). Minions do not get this
+  capability — long-running processes outlive a minion task and the
+  bookkeeping would be confusing.
 - **Process output is buffered, not streamed.** Each process gets a
   bounded :class:`collections.deque` (2000 lines). Streaming output onto
   the bus would flood the renderer and the agent's context. Gru pulls
@@ -37,15 +38,13 @@ import contextlib
 import signal as _signal
 import time
 from collections import deque
-from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import ToolDefinition
 
-from jac.runtime.bus import EventBus
-from jac.runtime.events import ProcessExited, ProcessStarted
+from jac.runtime.events import EventBus, ProcessExited, ProcessStarted
 from jac.tools import jac_function_toolset, jac_tool
 from jac.workspace.paths import find_project_root
 
@@ -89,29 +88,6 @@ class _ProcessRecord:
 
 
 @dataclass
-class ProcessStore:
-    """Holds the active process records. Pure state — no I/O."""
-
-    records: dict[str, _ProcessRecord] = field(default_factory=dict)
-    _counter: int = 0
-
-    def next_id(self) -> str:
-        self._counter += 1
-        return f"proc-{self._counter}"
-
-    def get(self, task_id: str) -> _ProcessRecord:
-        record = self.records.get(task_id)
-        if record is None:
-            known = sorted(self.records.keys())
-            hint = f" Known ids: {known}" if known else " (none active)"
-            raise ValueError(f"unknown task_id {task_id!r}.{hint}")
-        return record
-
-    def all(self) -> Iterable[_ProcessRecord]:
-        return self.records.values()
-
-
-@dataclass
 class ProcessCapability(AbstractCapability[Any]):
     """Background-process toolset.
 
@@ -121,7 +97,20 @@ class ProcessCapability(AbstractCapability[Any]):
     """
 
     bus: EventBus | None = None
-    store: ProcessStore = field(default_factory=ProcessStore)
+    records: dict[str, _ProcessRecord] = field(default_factory=dict)
+    _counter: int = 0
+
+    def _next_id(self) -> str:
+        self._counter += 1
+        return f"proc-{self._counter}"
+
+    def _get_record(self, task_id: str) -> _ProcessRecord:
+        record = self.records.get(task_id)
+        if record is None:
+            known = sorted(self.records.keys())
+            hint = f" Known ids: {known}" if known else " (none active)"
+            raise ValueError(f"unknown task_id {task_id!r}.{hint}")
+        return record
 
     def get_toolset(self) -> Any:
         toolset = jac_function_toolset(*self._build_tools())
@@ -134,7 +123,7 @@ class ProcessCapability(AbstractCapability[Any]):
         task to finish, then SIGKILLs anything still alive. Best-effort —
         we never raise from shutdown.
         """
-        pending: list[_ProcessRecord] = [r for r in self.store.all() if r.exit_code is None]
+        pending: list[_ProcessRecord] = [r for r in self.records.values() if r.exit_code is None]
         if not pending:
             return
         for record in pending:
@@ -158,7 +147,7 @@ class ProcessCapability(AbstractCapability[Any]):
 
     def _build_tools(self) -> list[Any]:
         bus = self.bus
-        store = self.store
+        cap = self
 
         async def _emit(event: Any) -> None:
             if bus is not None:
@@ -188,7 +177,7 @@ class ProcessCapability(AbstractCapability[Any]):
                 Confirmation string carrying the ``task_id``. Use that id
                 with ``tail_process`` / ``kill_process``.
             """
-            task_id = store.next_id()
+            task_id = cap._next_id()
             proc = await asyncio.create_subprocess_shell(
                 command,
                 stdout=asyncio.subprocess.PIPE,
@@ -219,7 +208,7 @@ class ProcessCapability(AbstractCapability[Any]):
                 await _emit(ProcessExited(task_id=task_id, exit_code=exit_code))
 
             record.drain_task = asyncio.create_task(_drain())
-            store.records[task_id] = record
+            cap.records[task_id] = record
             await _emit(ProcessStarted(task_id=task_id, command=command, name=name))
             label = f" (name={name})" if name else ""
             return f"started {task_id}: {command}{label}"
@@ -243,7 +232,7 @@ class ProcessCapability(AbstractCapability[Any]):
             """
             if not (1 <= lines <= _TAIL_MAX_LINES):
                 raise ValueError(f"`lines` must be between 1 and {_TAIL_MAX_LINES}; got {lines}.")
-            record = store.get(task_id)
+            record = cap._get_record(task_id)
             snapshot = list(record.output)[-lines:]
             header_parts = [f"{record.task_id} {record.status}"]
             if record.name:
@@ -275,7 +264,7 @@ class ProcessCapability(AbstractCapability[Any]):
             sig_num = _SIGNAL_MAP.get(signal.upper())
             if sig_num is None:
                 raise ValueError(f"signal must be one of {sorted(_SIGNAL_MAP)}; got {signal!r}.")
-            record = store.get(task_id)
+            record = cap._get_record(task_id)
             if record.exit_code is not None:
                 return f"{task_id} already exited (code={record.exit_code}); no signal sent."
             try:
@@ -304,7 +293,7 @@ class ProcessCapability(AbstractCapability[Any]):
                     "exit_code": r.exit_code,
                     "runtime_s": r.runtime_s(),
                 }
-                for r in store.all()
+                for r in cap.records.values()
             ]
 
         return [start_process, tail_process, kill_process, list_processes]

@@ -18,7 +18,9 @@ from collections.abc import Sequence
 from typing import Any
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import Instrumentation
 
+from jac.capabilities.context import make_context_capability
 from jac.capabilities.filesystem import FilesystemCapability
 from jac.capabilities.history import make_history_capability
 from jac.capabilities.memory import MemoryCapability
@@ -27,21 +29,18 @@ from jac.capabilities.shell import ShellCapability
 from jac.capabilities.web import WebCapability
 from jac.config import get_settings
 from jac.errors import JacConfigError
-from jac.runtime.bus import EventBus
-from jac.workspace.context import load_session_context
-from jac.workspace.prompts import load_prompt
-
-
-def _compose_instructions() -> str:
-    base = load_prompt("gru_system").strip()
-    context = load_session_context()
-    return f"{base}\n\n---\n\n# Session context\n\n{context}"
+from jac.runtime.events import EventBus
+from jac.workspace.paths import load_prompt
 
 
 def _default_tool_capabilities(
     *, bus: EventBus | None = None, summarizer_model: str | None = None
 ) -> list[Any]:
     """The standard tool + history capabilities every interactive JAC session gets.
+
+    Includes :class:`ContextCapability` for dynamic AGENTS.md + memory.md
+    re-reading — fresh ``remember()`` writes are visible to the next
+    model request without rebuilding the agent.
 
     Args:
         bus: passed to the history capability so it can emit compaction events.
@@ -50,6 +49,8 @@ def _default_tool_capabilities(
             compaction falls back to drop-only.
     """
     return [
+        Instrumentation(),
+        make_context_capability(load_prompt("gru_system").strip()),
         FilesystemCapability(),
         SearchCapability(),
         ShellCapability(),
@@ -102,4 +103,4 @@ def build_gru(
     capabilities: list[Any] = list(extra_capabilities or [])
     if include_default_tools:
         capabilities.extend(_default_tool_capabilities(bus=bus, summarizer_model=summarizer_model))
-    return Agent(model, instructions=_compose_instructions(), capabilities=capabilities)
+    return Agent(model, capabilities=capabilities)

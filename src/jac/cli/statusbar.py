@@ -12,7 +12,7 @@ the toolbar callable on every keystroke so updates appear without an
 explicit redraw.
 
 Git branch + dirty status is shelled out, but debounced to once every
-5 seconds via :class:`_BranchCache` — shelling out per keystroke would
+5 seconds via :func:`_branch_segment` — shelling out per keystroke would
 be wasteful and would visibly stutter when a key is held down.
 
 Context percentage colors mirror the compaction ladder:
@@ -41,53 +41,50 @@ _BRANCH_DEBOUNCE_S = 5.0
 """Min seconds between git invocations. Keystroke-frequency shells would
 be wasteful and stutter; 5s is plenty for a status indicator."""
 
+_branch_last_checked: float = -1.0
+_branch_value: str = ""
+_branch_dirty: bool = False
 
-class _BranchCache:
-    """Caches the current git branch + dirty state with a debounce.
 
-    On every :meth:`get` the cache is refreshed only if the previous
-    refresh was more than ``_BRANCH_DEBOUNCE_S`` seconds ago. All git
-    calls are wrapped in ``try/except`` — when ``git`` isn't on PATH, or
-    we're outside a repo, we return ``("", False)`` rather than crashing.
+def _branch_status() -> tuple[str, bool]:
+    """Return ``(branch, dirty)``; refresh at most once per ``_BRANCH_DEBOUNCE_S``.
+
+    Outside a git repo, or when ``git`` isn't on PATH, returns ``("", False)``.
     """
-
-    def __init__(self) -> None:
-        self._last_checked: float = -1.0
-        self._branch: str = ""
-        self._dirty: bool = False
-
-    def get(self) -> tuple[str, bool]:
-        now = time.monotonic()
-        if self._last_checked < 0 or (now - self._last_checked) > _BRANCH_DEBOUNCE_S:
-            self._refresh()
-            self._last_checked = now
-        return self._branch, self._dirty
-
-    def _refresh(self) -> None:
-        try:
-            self._branch = (
-                subprocess.check_output(
-                    ["git", "symbolic-ref", "--short", "HEAD"],
-                    stderr=subprocess.DEVNULL,
-                    timeout=1,
-                )
-                .decode()
-                .strip()
+    global _branch_last_checked, _branch_value, _branch_dirty
+    now = time.monotonic()
+    if _branch_last_checked >= 0 and (now - _branch_last_checked) <= _BRANCH_DEBOUNCE_S:
+        return _branch_value, _branch_dirty
+    try:
+        _branch_value = (
+            subprocess.check_output(
+                ["git", "symbolic-ref", "--short", "HEAD"],
+                stderr=subprocess.DEVNULL,
+                timeout=1,
             )
-        except Exception:
-            self._branch = ""
-            self._dirty = False
-            return
-        try:
-            self._dirty = bool(
-                subprocess.check_output(
-                    ["git", "status", "--porcelain"],
-                    stderr=subprocess.DEVNULL,
-                    timeout=1,
-                ).decode()
-            )
-        except Exception:
-            self._dirty = False
+            .decode()
+            .strip()
+        )
+        _branch_dirty = bool(
+            subprocess.check_output(
+                ["git", "status", "--porcelain"],
+                stderr=subprocess.DEVNULL,
+                timeout=1,
+            ).decode()
+        )
+    except Exception:
+        _branch_value = ""
+        _branch_dirty = False
+    _branch_last_checked = now
+    return _branch_value, _branch_dirty
+
+
+def _reset_branch_cache() -> None:
+    """Reset the debounce cache. For tests only."""
+    global _branch_last_checked, _branch_value, _branch_dirty
+    _branch_last_checked = -1.0
+    _branch_value = ""
+    _branch_dirty = False
 
 
 @dataclass
@@ -106,7 +103,6 @@ class StatusState:
     profile_name: str | None = None
     profile: Profile | None = None
     message_history: list[ModelMessage] = field(default_factory=list)
-    branch_cache: _BranchCache = field(default_factory=_BranchCache)
     budget_pct: int | None = None
     """Highest-used percent across configured token budgets (D25). ``None``
     means no budget is configured — the toolbar hides the ``bud:`` segment.
@@ -211,7 +207,7 @@ def format_toolbar(state: StatusState) -> HTML:
     """Render the bottom toolbar as a prompt-toolkit ``HTML`` blob."""
     budget = get_settings().compaction.max_context_tokens
     used = estimate_tokens(state.message_history)
-    branch, dirty = state.branch_cache.get()
+    branch, dirty = _branch_status()
 
     parts = [
         " ",

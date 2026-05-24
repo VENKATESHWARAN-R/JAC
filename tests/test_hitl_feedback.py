@@ -29,14 +29,14 @@ from pydantic_ai.tools import (
     ToolDenied,
 )
 
-from jac.capabilities.approval import _deny_message, make_approval_handler
 from jac.capabilities.clarify import make_clarify_capability
-from jac.runtime.bus import EventBus
+from jac.runtime.approval import _deny_message, make_approval_handler
 from jac.runtime.events import (
     ApprovalRequest,
     ApprovalResponse,
     ClarifyRequest,
     ClarifyResponse,
+    EventBus,
 )
 
 

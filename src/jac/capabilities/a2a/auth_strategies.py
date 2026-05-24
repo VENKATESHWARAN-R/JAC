@@ -55,12 +55,7 @@ from typing import Protocol
 import httpx
 
 from jac.errors import JacConfigError
-from jac.profiles import (
-    ApiKeyAuth,
-    BearerAuth,
-    OAuth2ClientCredentialsAuth,
-    PeerAuth,
-)
+from jac.profiles import ApiKeyAuth, BearerAuth, OAuth2ClientCredentialsAuth, PeerAuth
 
 # Matches ${NAME} where NAME is alnum + underscore. Anchored to allow
 # embedded references like "https://login/${TENANT}/oauth2/v2.0/token".

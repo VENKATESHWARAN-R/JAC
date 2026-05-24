@@ -20,7 +20,8 @@ from rich.console import Console
 
 from jac.capabilities.a2a import make_a2a_capability
 from jac.cli.slash.context import SlashContext
-from jac.cli.slash.handlers.a2a import _parse_serve_args, a2a_handler
+from jac.cli.slash.handlers.a2a import a2a_handler
+from jac.cli.slash.handlers.a2a._args import parse_serve_args as _parse_serve_args
 from jac.cli.slash.result import Handled, StartA2AServer
 from jac.profiles import A2AProfileConfig, Profile
 from jac.runtime.session import Session

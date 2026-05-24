@@ -50,8 +50,7 @@ from jac.capabilities.a2a.audit import make_message_preview
 from jac.capabilities.a2a.auth_strategies import AuthStrategy
 from jac.errors import JacConfigError
 from jac.profiles import A2APeerConfig
-from jac.runtime.bus import EventBus
-from jac.runtime.events import A2AOutboundCall, A2AOutboundCompleted
+from jac.runtime.events import A2AOutboundCall, A2AOutboundCompleted, EventBus
 from jac.tools import jac_tool
 
 # Reasonable defaults for outbound calls. The discover timeout is short

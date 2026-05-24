@@ -8,8 +8,7 @@ from collections.abc import Coroutine
 from pathlib import Path
 from typing import Any
 
-from jac.runtime.bus import EventBus
-from jac.runtime.events import BudgetHardStop, BudgetWarning
+from jac.runtime.events import BudgetHardStop, BudgetWarning, EventBus
 from jac.runtime.usage import (
     BudgetLimits,
     UsageTracker,

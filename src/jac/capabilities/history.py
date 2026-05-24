@@ -21,9 +21,14 @@ Ladder (percent of budget):
   raises; refuse is policy, not transport.
 
 Token counts come from a char-based heuristic (3 chars/token, conservative
-for code-heavy contexts). This avoids a tiktoken-style dependency; once
-the budget-tracker for D25 lands we can swap in :class:`pydantic_ai.RunUsage`
-deltas for precise per-call counts.
+for code-heavy contexts). PAI's :class:`pydantic_ai.RunUsage` reports
+exact whole-turn counts *after* a request, but compaction runs *before*
+the next request and needs per-message attribution to decide where to
+slice — which PAI doesn't expose. The heuristic errs on the side of
+compacting slightly earlier than needed, which is the safe direction
+(triggering at 70% of budget against a conservative-low estimate means
+we never blow past a model's real context window). Don't replace this
+without an exact per-message attribution primitive.
 
 Compaction is best-effort. If the summarizer call fails (no profile, no
 small tier, network error), we **drop-only** the slice — losing detail but
@@ -48,10 +53,9 @@ from pydantic_ai.messages import (
 )
 
 from jac.config import get_settings
-from jac.runtime.bus import EventBus
-from jac.runtime.events import CompactionTriggered, CompactionWarning
-from jac.runtime.session_ctx import get_current_session_id
+from jac.runtime.events import CompactionTriggered, CompactionWarning, EventBus
 from jac.workspace.paths import project_sessions_dir
+from jac.workspace.session_ctx import get_current_session_id
 
 _CHARS_PER_TOKEN = 3
 """Conservative chars-per-token heuristic. English averages ~4; code packs

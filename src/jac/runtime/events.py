@@ -1,15 +1,14 @@
-"""JAC runtime event types.
+"""JAC runtime event types and the event bus that transports them.
 
 Events flow:
 
-    Pydantic AI hooks (jac.capabilities.hooks)
-        → EventBus (jac.runtime.bus)
+    Pydantic AI hooks (jac.runtime.hooks)
+        → EventBus (this module)
             → CLI renderer / other surfaces (jac.cli.renderer)
 
 This is the architectural inversion: the CLI does not poll the agent. It
 consumes events the runtime emits. Adding a new surface (TUI, web) means
-adding a new consumer of :class:`jac.runtime.bus.EventBus` — nothing in the
-runtime changes.
+adding a new consumer of :class:`EventBus` — nothing in the runtime changes.
 
 Per-turn boundaries: every turn ends with a terminal event,
 :class:`RunCompleted` or :class:`RunFailed`. Consumers should treat the
@@ -17,12 +16,13 @@ arrival of either as "stop reading until the next turn starts."
 
 :class:`ApprovalRequest` is special: it carries a Future the consumer is
 expected to resolve. The runtime awaits that Future before continuing the
-agent loop — see :mod:`jac.capabilities.approval`.
+agent loop — see :mod:`jac.runtime.approval`.
 """
 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -419,3 +419,28 @@ type JacEventT = (
 def is_terminal(event: JacEvent) -> bool:
     """True if ``event`` ends the current turn (``RunCompleted`` / ``RunFailed``)."""
     return isinstance(event, (RunCompleted, RunFailed))
+
+
+class EventBus:
+    """Single-producer / single-consumer event channel.
+
+    Thin wrapper around :class:`asyncio.Queue`. The bus is **session-long**:
+    one bus per REPL session, reused across every turn. A terminal event
+    (:class:`RunCompleted` / :class:`RunFailed`) signals end-of-turn;
+    consumers stop iterating then and wait for the next turn to push fresh
+    events. Phase 1 assumption: only one renderer at a time. Multi-renderer
+    fan-out is straightforward to add later without changing the public API.
+    """
+
+    def __init__(self) -> None:
+        self._queue: asyncio.Queue[JacEventT] = asyncio.Queue()
+
+    async def emit(self, event: JacEventT) -> None:
+        """Put ``event`` onto the queue. Never blocks meaningfully."""
+        await self._queue.put(event)
+
+    async def stream(self) -> AsyncIterator[JacEventT]:
+        """Yield events as they arrive. Consumer decides when to stop."""
+        while True:
+            event = await self._queue.get()
+            yield event

@@ -8,7 +8,7 @@ from rich.prompt import Prompt
 
 from jac.config import get_settings
 from jac.errors import JacConfigError
-from jac.profiles import list_profiles
+from jac.profiles_crud import list_profiles
 from jac.secrets import get_backend, resolve
 
 app = typer.Typer(

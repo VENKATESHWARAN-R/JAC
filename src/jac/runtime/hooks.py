@@ -14,8 +14,8 @@ from typing import Any
 
 from pydantic_ai.capabilities import Hooks
 
-from jac.runtime.bus import EventBus
 from jac.runtime.events import (
+    EventBus,
     ModelRequestCompleted,
     ModelRequestStarted,
     ToolCallCompleted,

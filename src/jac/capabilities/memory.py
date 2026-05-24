@@ -51,9 +51,9 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import ToolDefinition
 
 from jac.errors import JacConfigError
-from jac.runtime.session_ctx import get_current_session_id
 from jac.tools import jac_function_toolset, jac_tool
 from jac.workspace import paths
+from jac.workspace.session_ctx import get_current_session_id
 
 MemoryCategory = Literal["convention", "fact", "preference", "gotcha", "decision"]
 MemoryScope = Literal["user", "project"]

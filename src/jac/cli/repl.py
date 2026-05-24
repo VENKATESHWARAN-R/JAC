@@ -31,12 +31,11 @@ from rich.console import Console
 
 from jac import __version__
 from jac.capabilities.a2a import make_a2a_capability
-from jac.capabilities.approval import make_approval_handler
 from jac.capabilities.clarify import make_clarify_capability
 from jac.capabilities.history import estimate_text_tokens, estimate_tokens
-from jac.capabilities.hooks import make_hooks
 from jac.capabilities.plan import make_plan_capability
 from jac.capabilities.process import make_process_capability
+from jac.cli._a2a_banner import print_server_started_banner
 from jac.cli.renderer import CliRenderer
 from jac.cli.slash import (
     Exit,
@@ -52,19 +51,21 @@ from jac.cli.slash import (
 from jac.cli.statusbar import StatusState, format_toolbar
 from jac.config import get_settings
 from jac.errors import JacConfigError
-from jac.profiles import Profile, get_profile
+from jac.profiles import Profile
+from jac.profiles_crud import get_profile
 from jac.providers.registry import get_provider_registry, provider_prefix
-from jac.runtime.bus import EventBus
+from jac.runtime.approval import make_approval_handler
 from jac.runtime.events import (
     BudgetHardStop,
     CompactionRefused,
+    EventBus,
     PlanReplaced,
     RunCompleted,
     RunFailed,
 )
 from jac.runtime.gru import build_gru
+from jac.runtime.hooks import make_hooks
 from jac.runtime.session import Session
-from jac.runtime.session_ctx import set_current_session_id
 from jac.runtime.usage import BudgetLimits, UsageTracker, make_usage_tracker
 from jac.secrets import (
     apply_ad_hoc_model_env,
@@ -74,6 +75,7 @@ from jac.secrets import (
     snapshot_env,
 )
 from jac.workspace import paths
+from jac.workspace.session_ctx import set_current_session_id
 
 _EXIT_WORDS = {"exit", "quit", ":q", ":quit"}
 
@@ -511,19 +513,7 @@ async def _handle_start_a2a(cap, request: StartA2AServer) -> None:
         console.print(f"[red]A2A serve failed:[/red] {exc}")
         return
 
-    console.print(
-        f"[green]✓ A2A server started:[/green] [bold]{info.url}[/bold]  "
-        f"[dim](bind {info.bind_host}:{info.port})[/dim]"
-    )
-    if info.unsafe:
-        console.print(
-            "[red]auth: disabled (--unsafe)[/red] "
-            "[dim]— card omits securitySchemes; any caller accepted[/dim]"
-        )
-    else:
-        console.print("[dim]auth: bearer token (save it; /a2a token re-prints):[/dim]")
-        console.print(f"  [bold]{info.token}[/bold]")
-    console.print(f"[dim]agent card: {info.url}/.well-known/agent-card.json[/dim]")
+    print_server_started_banner(info, console)
 
 
 async def _handle_stop_a2a(cap) -> None:

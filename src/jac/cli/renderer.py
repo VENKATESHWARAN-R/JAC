@@ -22,14 +22,11 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.prompt import IntPrompt, Prompt
 
-from jac.runtime.bus import EventBus
 from jac.runtime.events import (
     A2AInboundCall,
     A2AInboundCompleted,
     A2AOutboundCall,
     A2AOutboundCompleted,
-    A2AServerStarted,
-    A2AServerStopped,
     ApprovalRequest,
     ApprovalResponse,
     BudgetHardStop,
@@ -39,8 +36,8 @@ from jac.runtime.events import (
     CompactionRefused,
     CompactionTriggered,
     CompactionWarning,
+    EventBus,
     JacEvent,
-    ModelRequestCompleted,
     ModelRequestStarted,
     PlanReplaced,
     PlanStepStatus,
@@ -59,29 +56,9 @@ from jac.runtime.events import (
 # Status-line easter eggs — minion-adjacent gibberish, not always "thinking…"
 _THINKING_LABELS: tuple[str, ...] = (
     "thinking…",
-    "banana…",
     "bello…",
-    "papoi…",
-    "poopaye…",
-    "gelato…",
     "bee do bee do…",
-    "tank yu…",
-    "la boda…",
-    "underpants…",
-    "poulet tikka masala…",
-    "fluffay stuffay…",
-    "kanpai…",
-    "chasy…",
-    "stuarting…",
-    "kevin mode…",
-    "bob mode…",
-    "illumination…",
-    "gru says wait…",
-    "minionize…",
-    "honk honk…",
-    "bi-do…",
-    "me want banana…",
-    "para tú…",
+    "gelato…",
 )
 
 _ARG_VALUE_TRUNCATE_AT = 300
@@ -173,9 +150,6 @@ class CliRenderer:
     def _handle(self, event: JacEvent, status: Any) -> None:
         if isinstance(event, ModelRequestStarted):
             status.update(_thinking_label())
-        elif isinstance(event, ModelRequestCompleted):
-            # No status change — wait for the next ModelRequestStarted or a tool call.
-            pass
         elif isinstance(event, ToolCallStarted):
             label = event.tool_name
             if event.reason:
@@ -254,15 +228,6 @@ class CliRenderer:
             # The REPL prints the actionable message on the refusal path; this
             # event lets other surfaces (status bar) react. We don't print
             # again here to avoid double notices.
-            pass
-        elif isinstance(event, A2AServerStarted):
-            # The slash + headless start paths print their own banner with
-            # the full token; this just lets future surfaces (status bar,
-            # TUI) react to the same signal. No double notification.
-            pass
-        elif isinstance(event, A2AServerStopped):
-            # Same: the slash / shutdown paths print their own "stopped"
-            # confirmation. The event exists for cross-surface consumers.
             pass
         elif isinstance(event, A2AInboundCall):
             unsafe_tag = " [red](unsafe)[/red]" if event.peer_id == "unsafe" else ""

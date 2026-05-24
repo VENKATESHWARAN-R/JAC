@@ -36,8 +36,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from jac.runtime.bus import EventBus
-from jac.runtime.events import BudgetHardStop, BudgetKind, BudgetWarning
+from jac.runtime.events import BudgetHardStop, BudgetKind, BudgetWarning, EventBus
 
 
 @dataclass

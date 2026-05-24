@@ -33,11 +33,7 @@ from jac.capabilities.a2a.auth_strategies import (
     make_strategy,
 )
 from jac.errors import JacConfigError
-from jac.profiles import (
-    ApiKeyAuth,
-    BearerAuth,
-    OAuth2ClientCredentialsAuth,
-)
+from jac.profiles import ApiKeyAuth, BearerAuth, OAuth2ClientCredentialsAuth
 
 
 def _run[T](coro: Coroutine[Any, Any, T]) -> T:

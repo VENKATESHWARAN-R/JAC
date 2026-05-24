@@ -16,10 +16,9 @@ from jac.capabilities.history import (
     make_history_capability,
 )
 from jac.config import reset_settings_cache
-from jac.runtime.bus import EventBus
-from jac.runtime.events import CompactionTriggered, CompactionWarning
-from jac.runtime.session_ctx import set_current_session_id
+from jac.runtime.events import CompactionTriggered, CompactionWarning, EventBus
 from jac.workspace import paths
+from jac.workspace.session_ctx import set_current_session_id
 
 # anyio's pytest plugin runs async test functions; mark the whole module.
 pytestmark = pytest.mark.anyio

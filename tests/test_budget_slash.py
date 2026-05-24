@@ -10,7 +10,7 @@ from rich.console import Console
 
 from jac.cli.slash import SlashContext, dispatch
 from jac.profiles import Profile
-from jac.runtime.bus import EventBus
+from jac.runtime.events import EventBus
 from jac.runtime.session import Session
 from jac.runtime.usage import BudgetLimits, UsageTracker
 

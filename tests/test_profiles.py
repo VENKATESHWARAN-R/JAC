@@ -9,13 +9,9 @@ import yaml
 from pydantic import ValidationError
 
 from jac.errors import JacConfigError
-from jac.profiles import (
-    Profile,
-    add_or_update_profile,
-    detect_old_profiles,
-    list_profiles,
-    migrate_old_profiles,
-)
+from jac.profiles import Profile
+from jac.profiles_crud import add_or_update_profile, list_profiles
+from jac.profiles_io import detect_old_profiles, migrate_old_profiles
 from jac.providers.registry import reset_provider_registry_cache
 from jac.workspace import paths
 
@@ -244,7 +240,7 @@ def test_add_or_update_profile_persists_tiered_shape() -> None:
 
 
 def test_profile_to_yaml_round_trips_through_load() -> None:
-    from jac.profiles import load_profile_from_yaml, profile_to_yaml
+    from jac.profiles_io import load_profile_from_yaml, profile_to_yaml
 
     original = Profile(
         tiers={
@@ -261,7 +257,7 @@ def test_profile_to_yaml_round_trips_through_load() -> None:
 
 
 def test_profile_to_yaml_omits_empty_optionals() -> None:
-    from jac.profiles import profile_to_yaml
+    from jac.profiles_io import profile_to_yaml
 
     p = Profile(
         tiers={"medium": ["anthropic:claude-sonnet-4-5"]},
@@ -273,28 +269,28 @@ def test_profile_to_yaml_omits_empty_optionals() -> None:
 
 
 def test_load_profile_from_yaml_rejects_garbage() -> None:
-    from jac.profiles import load_profile_from_yaml
+    from jac.profiles_io import load_profile_from_yaml
 
     with pytest.raises(JacConfigError, match="invalid YAML"):
         load_profile_from_yaml("tiers: [unclosed\n")
 
 
 def test_load_profile_from_yaml_rejects_empty() -> None:
-    from jac.profiles import load_profile_from_yaml
+    from jac.profiles_io import load_profile_from_yaml
 
     with pytest.raises(JacConfigError, match="empty"):
         load_profile_from_yaml("")
 
 
 def test_load_profile_from_yaml_rejects_non_mapping() -> None:
-    from jac.profiles import load_profile_from_yaml
+    from jac.profiles_io import load_profile_from_yaml
 
     with pytest.raises(JacConfigError, match="mapping"):
         load_profile_from_yaml("- just\n- a list\n")
 
 
 def test_load_profile_from_yaml_surfaces_schema_error() -> None:
-    from jac.profiles import load_profile_from_yaml
+    from jac.profiles_io import load_profile_from_yaml
 
     with pytest.raises(JacConfigError, match="malformed"):
         load_profile_from_yaml("tiers:\n  small: [a:1]\nactive_tier: medium\n")

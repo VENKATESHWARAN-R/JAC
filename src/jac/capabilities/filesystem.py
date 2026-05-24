@@ -2,7 +2,7 @@
 
 Read and list are direct-call. **Write and edit are approval-required** —
 they mutate the workspace and must surface through the HITL approval flow
-(see :mod:`jac.capabilities.approval`).
+(see :mod:`jac.runtime.approval`).
 
 Paths may be absolute or project-relative; relative paths anchor to the
 project root via :func:`jac.workspace.paths.resolve_under_project`.

@@ -183,3 +183,27 @@ def package_prompts_dir() -> Path:
 
 def package_minions_dir() -> Path:
     return package_root() / "minions" / "templates"
+
+
+# --- Layered prompt loader ----------------------------------------
+
+
+def load_prompt(name: str) -> str:
+    """Return the prompt body for ``name`` (no extension), first hit wins.
+
+    Resolution order: project ``.agents/prompts/`` → user ``~/.jac/prompts/``
+    → shipped package defaults. Raises ``FileNotFoundError`` if the package
+    default is missing (a packaging bug — every name should ship a default).
+    """
+    candidates = [
+        project_prompts_dir() / f"{name}.md",
+        USER_PROMPTS_DIR / f"{name}.md",
+        package_prompts_dir() / f"{name}.md",
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate.read_text(encoding="utf-8")
+    raise FileNotFoundError(
+        f"Prompt '{name}.md' not found in project, user, or package locations. "
+        "This is a packaging bug — the shipped default appears to be missing."
+    )

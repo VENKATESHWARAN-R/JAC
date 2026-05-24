@@ -27,6 +27,7 @@ Each phase block leads with **Goal** + **why/what/how** before the checklist. Th
 | Phase 5 — Minions | ⏸ Queued | runtime for skills with `mode: minion` — **needs grooming session before implementation** |
 | Phase 6 — MCP | ⏸ Queued | external MCP servers + the `reason:` discipline call (D26 reasoning) |
 | Phase 7 — Quality | ⏸ Queued | broader pytest, ruff, mypy, user docs |
+| **v0.2 source restructuring (2026-05-24)** | ✅ Complete | **Released as v0.2.0.** Moved misplaced files (`hooks.py`, `approval.py`, `observability.py` → `runtime/`; `session_ctx.py` → `workspace/`). Trimmed dead weight (renderer no-op branches, 24-line label list → 4). Folded `workspace/prompts.py` into `paths.py`. Merged `EventBus` into `runtime/events.py`. Collapsed `ProcessStore` + `_BranchCache` indirections. Extracted shared `_a2a_banner.py`. Split `cli/slash/handlers/` into one-file-per-command (with `a2a/` subpackage for subcommands). Decomposed `profiles.py` → `profiles.py` (schema) + `profiles_io.py` (YAML) + `profiles_crud.py` (CRUD). Added `ContextCapability` so mid-session `remember()` writes are visible without rebuild (uses PAI's `get_instructions()` callable). Adopted PAI's `Instrumentation` capability pattern. New developer doc: [`developer/module-strategy.md`](developer/module-strategy.md) — the where-things-go rulebook. |
 | v2 | ⏸ Future | YOLO + Monty + CodeMode + stuck-loop + Night Shift + user-tier predict-calibrate memory |
 
 ---

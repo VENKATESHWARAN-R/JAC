@@ -7,16 +7,15 @@ from rich.console import Console
 from rich.prompt import Confirm
 
 from jac.errors import JacConfigError
-from jac.profiles import (
+from jac.profiles_crud import (
     add_or_update_profile,
     get_default_profile_name,
     get_profile,
     list_profiles,
-    load_profile_from_yaml,
-    profile_to_yaml,
     remove_profile,
     set_default_profile,
 )
+from jac.profiles_io import load_profile_from_yaml, profile_to_yaml
 
 app = typer.Typer(
     name="profiles",

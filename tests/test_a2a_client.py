@@ -37,10 +37,10 @@ from starlette.routing import Route
 from jac.capabilities.a2a.client import build_outbound_tools, resolve_target
 from jac.errors import JacConfigError
 from jac.profiles import A2APeerConfig
-from jac.runtime.bus import EventBus
 from jac.runtime.events import (
     A2AOutboundCall,
     A2AOutboundCompleted,
+    EventBus,
     JacEventT,
 )
 

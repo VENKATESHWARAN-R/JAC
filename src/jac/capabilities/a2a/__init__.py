@@ -36,8 +36,7 @@ from jac.capabilities.a2a.client import build_outbound_tools
 from jac.capabilities.a2a.guest import build_guest_gru
 from jac.capabilities.a2a.server import A2AServer, ServerInfo
 from jac.profiles import A2APeerConfig
-from jac.runtime.bus import EventBus
-from jac.runtime.events import A2AServerStopped
+from jac.runtime.events import A2AServerStopped, EventBus
 from jac.tools import jac_function_toolset
 
 __all__ = [

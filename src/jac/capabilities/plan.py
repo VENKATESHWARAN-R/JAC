@@ -35,8 +35,8 @@ from typing import Any, cast
 
 from pydantic_ai.capabilities import AbstractCapability
 
-from jac.runtime.bus import EventBus
 from jac.runtime.events import (
+    EventBus,
     PlanReplaced,
     PlanStepStatus,
     PlanStepUpdated,

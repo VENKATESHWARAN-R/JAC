@@ -16,7 +16,7 @@ from jac.cli.slash.context import SlashContext
 from jac.cli.slash.registry import register
 from jac.cli.slash.result import Handled, RebuildGru, SlashResult
 from jac.errors import JacConfigError
-from jac.profiles import get_default_profile_name, get_profile, list_profiles
+from jac.profiles_crud import get_default_profile_name, get_profile, list_profiles
 
 
 @register(
