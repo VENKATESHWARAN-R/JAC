@@ -10,6 +10,9 @@ Subcommands:
   unsafe flag) or "(not running)".
 - ``/a2a token`` — re-print the full bearer in case it scrolled past
   the startup banner. No-op (with a hint) when no server is running.
+- ``/a2a peers`` — list peers configured under the active profile's
+  ``a2a.peers`` block. Shows name, URL, auth (has-token / none), and
+  description (truncated). Read-only.
 
 Sync ``status`` + ``token`` return :class:`Handled` directly (no I/O).
 Async ``serve`` + ``stop`` return :class:`StartA2AServer` /
@@ -38,8 +41,8 @@ from jac.cli.slash.result import (
 
 @register(
     "a2a",
-    summary="Manage the A2A guest server (serve / stop / status / token)",
-    usage="/a2a {serve [--port N] [--host ADDR] [--unsafe] | stop | status | token}",
+    summary="Manage the A2A guest server + peers (serve / stop / status / token / peers)",
+    usage="/a2a {serve [--port N] [--host ADDR] [--unsafe] | stop | status | token | peers}",
 )
 def a2a_handler(ctx: SlashContext, args: str) -> SlashResult:
     if ctx.a2a is None:
@@ -55,7 +58,7 @@ def a2a_handler(ctx: SlashContext, args: str) -> SlashResult:
 
     if not sub:
         ctx.console.print(
-            "[dim]usage:[/dim] /a2a serve | stop | status | token\n"
+            "[dim]usage:[/dim] /a2a serve | stop | status | token | peers\n"
             "[dim]      /a2a serve [--port N] [--host ADDR] [--unsafe][/dim]"
         )
         return Handled()
@@ -68,10 +71,12 @@ def a2a_handler(ctx: SlashContext, args: str) -> SlashResult:
         return _status(ctx)
     if sub == "token":
         return _token(ctx)
+    if sub == "peers":
+        return _peers(ctx)
 
     ctx.console.print(
         f"[red]unknown /a2a subcommand:[/red] {sub!r}  "
-        "[dim](try /a2a serve | stop | status | token)[/dim]"
+        "[dim](try /a2a serve | stop | status | token | peers)[/dim]"
     )
     return Handled()
 
@@ -151,6 +156,44 @@ def _token(ctx: SlashContext) -> SlashResult:
         ctx.console.print("[dim]server is running with --unsafe; there is no token.[/dim]")
         return Handled()
     ctx.console.print(f"[bold]{info.token}[/bold]")
+    return Handled()
+
+
+_DESCRIPTION_TRUNCATE_AT = 60
+
+
+def _peers(ctx: SlashContext) -> SlashResult:
+    """Render the active profile's ``a2a.peers`` block.
+
+    Pulls from the capability's live ``peers`` dict (which the REPL
+    keeps in sync with the active profile via ``/profile`` rebuilds)
+    rather than re-reading the profile object — that way what we show
+    is what ``a2a_call`` will actually resolve against.
+    """
+    cap = ctx.a2a
+    assert cap is not None
+    peers = cap.peers
+    if not peers:
+        ctx.console.print("[dim]A2A peers: (none configured)[/dim]")
+        ctx.console.print(
+            "[dim]add some under [bold]a2a.peers.<name>[/bold] in your profile YAML "
+            "([bold]jac profiles edit NAME[/bold]).[/dim]"
+        )
+        return Handled()
+
+    ctx.console.print(f"[bold]A2A peers[/bold] [dim](profile: {ctx.profile_name})[/dim]")
+    name_col = max(len(n) for n in peers)
+    url_col = max(len(p.url) for p in peers.values())
+    for name in sorted(peers):
+        peer = peers[name]
+        auth = "[green]bearer[/green]" if peer.token else "[yellow]none[/yellow]"
+        desc = peer.description or ""
+        if len(desc) > _DESCRIPTION_TRUNCATE_AT:
+            desc = desc[: _DESCRIPTION_TRUNCATE_AT - 1] + "…"
+        desc_tail = f"  [dim]— {desc}[/dim]" if desc else ""
+        ctx.console.print(
+            f"  [bold]{name:<{name_col}}[/bold]  {peer.url:<{url_col}}  auth: {auth}{desc_tail}"
+        )
     return Handled()
 
 

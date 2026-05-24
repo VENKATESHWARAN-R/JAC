@@ -179,6 +179,42 @@ def test_no_subcommand_prints_usage(ctx: _Captured):
     assert "usage" in out.lower()
 
 
+# ---------- /a2a peers (PR2) ----------
+
+
+def test_peers_empty_shows_hint(ctx: _Captured):
+    """No peers configured → render a friendly hint pointing at profiles edit."""
+    # Capability starts with empty peers (fixture default)
+    result = a2a_handler(ctx.ctx, "peers")
+    assert isinstance(result, Handled)
+    out = ctx.buf.getvalue()
+    assert "none configured" in out
+    assert "profiles edit" in out.lower()
+
+
+def test_peers_lists_configured_entries(ctx: _Captured):
+    """Configured peers render with name, URL, auth status, description."""
+    from jac.profiles import A2APeerConfig
+
+    ctx.ctx.a2a.peers = {
+        "backend-jac": A2APeerConfig(
+            url="http://localhost:9000", token="t1", description="backend repo"
+        ),
+        "no-auth-peer": A2APeerConfig(url="http://127.0.0.1:9001", token=None, description=""),
+    }
+    result = a2a_handler(ctx.ctx, "peers")
+    assert isinstance(result, Handled)
+    out = ctx.buf.getvalue()
+    # Both peer names listed
+    assert "backend-jac" in out
+    assert "no-auth-peer" in out
+    # Auth state surfaced — bearer for one, none for the other
+    assert "bearer" in out
+    assert "none" in out
+    # Description shown for the one that has it
+    assert "backend repo" in out
+
+
 # ---------- profile defaults ----------
 
 

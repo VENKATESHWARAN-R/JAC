@@ -314,9 +314,11 @@ async def _repl_loop(
     # invoked with model_id == "unknown" (no profile / no env / no flag).
     if model_id != "unknown":
         a2a_capability.model = model_id
-    # Pull retention from the active profile (falls back to schema default).
+    # Pull retention + peers from the active profile (falls back to schema
+    # defaults when no profile is in play). Both are refreshed on /profile.
     if active_profile is not None:
         a2a_capability.retention_days = active_profile.a2a.context_retention_days
+        a2a_capability.peers = dict(active_profile.a2a.peers)
     message_history: list = list(session.message_history)
 
     # Token-budget tracker (D25). Baseline is summed from usage.jsonl
@@ -449,6 +451,12 @@ async def _repl_loop(
                             a2a_capability.retention_days = (
                                 active_profile.a2a.context_retention_days
                             )
+                            # Mutate in place so the outbound tool closures
+                            # (which captured the dict by reference at
+                            # toolset construction) see the new peers
+                            # immediately — see A2ACapability._current_peers.
+                            a2a_capability.peers.clear()
+                            a2a_capability.peers.update(active_profile.a2a.peers)
                 elif isinstance(result, StartA2AServer):
                     await _handle_start_a2a(a2a_capability, result)
                 elif isinstance(result, StopA2AServer):

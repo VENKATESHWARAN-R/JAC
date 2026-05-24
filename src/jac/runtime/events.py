@@ -344,6 +344,36 @@ class A2AInboundCompleted(JacEvent):
 
 
 @dataclass(frozen=True, slots=True)
+class A2AOutboundCall(JacEvent):
+    """Gru is about to send an A2A call to a peer (D24, Phase 4.b).
+
+    Emitted by ``a2a_call`` / ``a2a_discover`` before the httpx request
+    fires. ``target`` is the peer name (when called by name) or the raw
+    URL (when called ad-hoc) — whichever the user/agent supplied — so
+    the renderer surfaces the same identifier the call site used.
+    """
+
+    target: str
+    message_preview: str
+
+
+@dataclass(frozen=True, slots=True)
+class A2AOutboundCompleted(JacEvent):
+    """An outbound A2A call finished (D24, Phase 4.b).
+
+    ``state`` is binary for outbound: ``"completed"`` (got a response,
+    even if that response was a JSON-RPC error) or ``"failed"``
+    (network / auth / protocol error before we got a body). ``duration_ms``
+    is wall time. Distinct from inbound's A2A-task-lifecycle ``state``
+    because outbound completion is from the *client* perspective.
+    """
+
+    target: str
+    state: str
+    duration_ms: int
+
+
+@dataclass(frozen=True, slots=True)
 class RunCompleted(JacEvent):
     """Terminal: ``agent.run()`` completed normally. Carries the final output."""
 
@@ -378,6 +408,8 @@ type JacEventT = (
     | A2AServerStopped
     | A2AInboundCall
     | A2AInboundCompleted
+    | A2AOutboundCall
+    | A2AOutboundCompleted
     | RunCompleted
     | RunFailed
 )

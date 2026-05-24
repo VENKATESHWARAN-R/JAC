@@ -26,6 +26,8 @@ from jac.runtime.bus import EventBus
 from jac.runtime.events import (
     A2AInboundCall,
     A2AInboundCompleted,
+    A2AOutboundCall,
+    A2AOutboundCompleted,
     A2AServerStarted,
     A2AServerStopped,
     ApprovalRequest,
@@ -265,16 +267,30 @@ class CliRenderer:
         elif isinstance(event, A2AInboundCall):
             unsafe_tag = " [red](unsafe)[/red]" if event.peer_id == "unsafe" else ""
             self.console.print(
-                f"[cyan][a2a] ←[/cyan] [bold]{event.peer_id}[/bold]{unsafe_tag} "
+                f"[cyan][a2a in ←][/cyan] [bold]{event.peer_id}[/bold]{unsafe_tag} "
                 f"[dim](task {event.task_id[:8]})[/dim]: {event.message_preview}",
                 highlight=False,
             )
         elif isinstance(event, A2AInboundCompleted):
             state_color = "green" if event.state == "completed" else "red"
             self.console.print(
-                f"[cyan][a2a] →[/cyan] [{state_color}]{event.state}[/{state_color}] "
-                f"[dim](task {event.task_id[:8]}, "
+                f"[cyan][a2a in ✓][/cyan] [{state_color}]{event.state}[/{state_color}] "
+                f"[dim]{event.peer_id} (task {event.task_id[:8]}, "
                 f"{event.duration_ms}ms, {event.tokens_used} tok)[/dim]",
+                highlight=False,
+            )
+        elif isinstance(event, A2AOutboundCall):
+            # We initiated → arrow points away. `target` is the peer name
+            # when called by name, else the raw URL — whichever Gru passed.
+            self.console.print(
+                f"[cyan][a2a out →][/cyan] [bold]{event.target}[/bold]: {event.message_preview}",
+                highlight=False,
+            )
+        elif isinstance(event, A2AOutboundCompleted):
+            state_color = "green" if event.state == "completed" else "red"
+            self.console.print(
+                f"[cyan][a2a out ✓][/cyan] [{state_color}]{event.state}[/{state_color}] "
+                f"[dim]{event.target} ({event.duration_ms}ms)[/dim]",
                 highlight=False,
             )
         elif isinstance(event, RunCompleted):

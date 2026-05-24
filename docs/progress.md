@@ -23,7 +23,7 @@ Each phase block leads with **Goal** + **why/what/how** before the checklist. Th
 | **Phase 1.7 — Coworker experience** | ✅ Complete (minus deferred) | umbrella for compaction, status bar, slash commands, budgets, feedback channels. **Shipped:** 1.7.a (D20 token-aware compaction), 1.7.b (D22 status bar), 1.7.c (D22 slash commands + tier schema), 1.7.d (D26 approval/clarify feedback), 1.7.f (D25 token budgets), 1.7.g (D27 plan persistence on resume), 1.7.h (Tavily/DDG dual-backend web search). **Deferred to v2:** 1.7.e Plan Mode + `ModeCapability` base — design needs more time (multi-plan handoff, plan-injection budget hazard, mode-base scope). |
 | Phase 2b — Summarizer minion | ⛔ Superseded | rolled into Phase 1.7.a (token-aware compaction). No separate minion. |
 | Phase 3 — Skills (D21) | ⏸ Queued | community-format skill loader + inline mode (replaces old bespoke minion factory plan) |
-| Phase 4 — A2A (D24, D30) | 🚧 In flight | **PR1 landed 2026-05-24** (server + guest + auth + card + storage + audit + slash + headless). PR2 (outbound) next. |
+| Phase 4 — A2A (D24, D30) | 🚧 In flight | **PR1 + PR2 landed 2026-05-24** (server + guest + auth + card + storage + audit + slash + headless + outbound `a2a_call`/`a2a_discover` + peer config + `/a2a peers`). PR3 (status/budget/retention polish) next. |
 | Phase 5 — Minions | ⏸ Queued | runtime for skills with `mode: minion` — **needs grooming session before implementation** |
 | Phase 6 — MCP | ⏸ Queued | external MCP servers + the `reason:` discipline call (D26 reasoning) |
 | Phase 7 — Quality | ⏸ Queued | broader pytest, ruff, mypy, user docs |
@@ -536,18 +536,26 @@ Decisions D23 / D29 (the YOLO sketch) stay in `architecture.md §11` as the desi
 - `cancel_task` is a no-op (inherited from fasta2a's `AgentWorker`); `tasks/cancel` returns the standard `TaskNotCancelable` error. Revisit when fasta2a implements cancel.
 - The agent card declares `streaming: false` because fasta2a 0.6.1 raises `NotImplementedError` on `message/stream`. Revisit when fasta2a ships streaming.
 
-### Phase 4.b — Outbound tools + peer config (PR2) ⏸
+### Phase 4.b — Outbound tools + peer config (PR2) ✅
 
 **Why:** once the server works, give Gru the other half — the ability to *call* peers. Two tools because the A2A spec's `A2ACardResolver` pattern shows clients normally discover first, then send. Single-tool would force Gru to discover blind through trial-and-error.
 
-- [ ] `jac.capabilities.a2a.client.a2a_discover(reason, url) -> dict` — httpx `GET {url}/.well-known/agent-card.json`, validates via `agent_card_ta`, returns the parsed dict so Gru can read skills/auth/capabilities
-- [ ] `jac.capabilities.a2a.client.a2a_call(reason, peer_or_url, message, context_id=None) -> dict` — wraps `fasta2a.client.A2AClient` with our auth-injected `httpx.AsyncClient(headers={"Authorization": f"Bearer {token}"})`
-- [ ] Profile schema extended: `a2a.peers.<name>: {url, token, description}` (optional block); validation rejects empty url/token
-- [ ] Peer resolution: known name → lookup URL+token from profile; else treat as raw URL with no auth header
-- [ ] `/a2a peers` slash command (list configured peers + URLs + truncated descriptions)
-- [ ] Outbound tools registered via `A2ACapability` (carried into every session by default)
-- [ ] Events: `A2AOutboundCall(target, message_preview)`, `A2AOutboundCompleted(target, state, duration_ms)`
-- [ ] Tests: discover (mock httpx returning a real AgentCard payload), call (spin up a local fasta2a server in a fixture, send/receive), peer name resolution, raw-URL fallthrough, auth header injection
+**Landed (2026-05-24):**
+
+- [x] `jac.capabilities.a2a.client.a2a_discover(reason, url) -> dict` — httpx `GET {url}/.well-known/agent-card.json` with a 10s timeout, validates via `agent_card_ta`, returns the parsed dict with spec **camelCase** keys (re-serialize with `by_alias=True` then parse so Gru sees the same field names the spec documents). 4xx/5xx surfaces as `ValueError`. Empty URL rejected.
+- [x] `jac.capabilities.a2a.client.a2a_call(reason, peer_or_url, message, context_id=None) -> dict` — builds a `message/send` JSON-RPC request, dumps with `by_alias=True` (wire = camelCase), posts via raw httpx with our auth-injected headers. Returns the peer's `result` (Task/Message envelope) as a plain dict. JSON-RPC errors surface as `ValueError` carrying the code + message. 60s timeout (generous for peers running real models).
+- [x] Profile schema `a2a.peers.<name>: {url, token, description}` was locked in PR1; PR2 wired it into the runtime. Peer-name regex matches the profile-name regex (`[a-z0-9-]+`).
+- [x] `resolve_target(peer_or_url, peers)` — pure function in `client.py`. URL with `http(s)://` prefix → raw target (no token). Otherwise look up by name; unknown name raises `JacConfigError` listing the configured peers so the agent can recover. Returns `_ResolvedTarget(url, token, display)` — `display` is what we surface in events (peer name when called by name, URL when raw).
+- [x] **No `token=` kwarg on `a2a_call`** — deliberate. Putting bearer secrets in tool args means they end up in the model's context window and on disk in `messages.json`. Peers with tokens live in the profile only.
+- [x] `/a2a peers` slash command — lists name / URL / auth (bearer or none) / truncated description. Reads from the capability's live `peers` dict so `/profile` swaps surface immediately.
+- [x] Outbound tools registered via `A2ACapability.get_toolset()` — `jac_function_toolset(a2a_discover, a2a_call)`. Carried into every session by default; the capability is in `_default_tool_capabilities()` via the REPL's `persisted_capabilities` list.
+- [x] **Peer-getter closure pattern** — tools close over `peers_getter` (a zero-arg callable), not the dict directly. When `/profile` mutates `A2ACapability.peers` in place, the tools' next call sees the new map without rebuilding the toolset. (Capturing the dict by value would leave them stuck with the original.)
+- [x] Events: `A2AOutboundCall(target, message_preview)`, `A2AOutboundCompleted(target, state, duration_ms)` added to `JacEventT`. State is binary: `"completed"` (got a response, even a JSON-RPC error one — that's still a successful round-trip) or `"failed"` (network/auth/protocol error before we got a body).
+- [x] CLI renderer paints `[a2a out →]` for outbound call and `[a2a out ✓]` for completion. Inbound notifications renamed to match (`[a2a in ←]` / `[a2a in ✓]`) so direction is unambiguous in scrollback.
+- [x] REPL refreshes `a2a_capability.peers` on `/profile` rebuild (in-place mutation via `.clear()` + `.update()` so the existing closure stays valid).
+- [x] `gru_system.md` extended: new "When to call `a2a_discover` / `a2a_call`" section with do/don't lists, two-step discover-then-call rhythm, auth model explanation. Tool listing at top updated with both new tools.
+- [x] **23 new tests** across 2 files (`test_a2a_client.py` 21, `test_a2a_slash.py` 2): `resolve_target` (5 cases — by-name / raw-URL / https / unknown / lists-configured-on-error), `a2a_discover` (5 — returns camelCase / rejects empty / raises on 404 / raises on malformed / emits events), `a2a_call` (9 — sends `message/send` / injects bearer for named peers / omits auth for raw URL / context_id round-trip / surfaces JSON-RPC errors / rejects empty message / unknown peer / events with peer-name target / failed-state events), `peers_getter` runtime mutation, plus `/a2a peers` slash (empty state + populated rendering).
+- [x] All 263 tests pass (240 prior + 23 new); `just check` clean (ruff format ✓, lint ✓, ty ✓).
 
 ### Phase 4.c — Polish: status, audit, budget integration (PR3) ⏸
 
