@@ -8,8 +8,9 @@ It runs on your machine — your keys, your files, your context.
 
 > **Status:** **v0.2.0 alpha** (pre-release). Phase 1.7 is complete — compaction,
 > tiered profiles, slash commands, token budgets, plan persistence on resume.
-> Phase 4 A2A is in flight (PR1–PR3 shipped: server, guest-Gru, outbound tools, peer auth). See
-> [implementation progress](https://venkateshwaran-r.github.io/JAC/progress/) for the current state.
+> Phase 4 A2A is in flight — feature-complete for the originally-scoped surface
+> (server, guest-Gru, outbound tools with auto-polling, pluggable peer auth, bidirectional file transfer, inbound usage accounting, retention timer); a [standalone data-analyst demo peer](examples/data-analyst-a2a/) is included. OIDC / GCP ID-token strategies (4.e) are next.
+> See [implementation progress](https://venkateshwaran-r.github.io/JAC/progress/) for the live state.
 
 ## What it does
 
@@ -18,7 +19,7 @@ It runs on your machine — your keys, your files, your context.
 - Two-scope memory (`remember` / `forget`) writing to `~/.jac/memory.md` and `<repo>/.agents/memory.md`.
 - Session persistence with `jac --resume`. Multi-provider profiles via `jac profiles`.
 - Token-aware history compaction; token budgets; `/` slash commands in-REPL.
-- A2A interop — expose this Gru to peer agents or call other A2A-compatible agents.
+- A2A interop — expose this Gru to peer agents or call other A2A-compatible agents, with bidirectional file transfer and pluggable peer auth (bearer / API key / OAuth2). See [`examples/data-analyst-a2a/`](examples/data-analyst-a2a/) for a working reference peer.
 - Logfire tracing out of the box.
 
 ## Requirements

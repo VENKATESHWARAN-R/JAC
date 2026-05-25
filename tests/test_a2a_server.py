@@ -311,3 +311,86 @@ def test_capability_accepts_and_threads_usage_tracker(tmp_path, monkeypatch, fre
             await cap.shutdown()
 
     _run(_scenario())
+
+
+# ---------- Phase 4.d.4: guest materializes inbound FileParts ----------
+
+
+def test_inbound_file_part_lands_under_guest_uploads(tmp_path, monkeypatch, free_port: int):
+    """Smoke test: POST a message/send carrying a FilePart with bytes to a
+    live guest server, then verify the file landed under
+    .agents/a2a/guest-uploads/<context_id>/. We don't run the agent
+    (TestModel has no tools to do anything useful), but the materialize
+    step runs BEFORE agent.run, so the file lands either way."""
+    import asyncio as _asyncio
+    import base64 as _b64
+
+    from jac.workspace import paths
+
+    monkeypatch.setattr(paths, "find_project_root", lambda start=None: tmp_path)
+    if hasattr(paths.find_project_root, "cache_clear"):
+        paths.find_project_root.cache_clear()
+
+    # call_tools=[] keeps TestModel from synthesizing tool calls — the
+    # guest has read_file/grep/etc. in its toolset and would call them
+    # with garbage args, which would fail noisily. We only care that
+    # materialize runs before the agent does, so an inert reply works.
+    cap = make_a2a_capability(model=TestModel(call_tools=[]), profile_name="test")
+    csv_bytes = b"a,b\n1,2\n3,4\n"
+
+    async def _scenario():
+        info = await cap.start_server(host="127.0.0.1", port=free_port, unsafe=True)
+        try:
+            req = {
+                "jsonrpc": "2.0",
+                "id": "r1",
+                "method": "message/send",
+                "params": {
+                    "message": {
+                        "role": "user",
+                        "kind": "message",
+                        "messageId": "m1",
+                        "contextId": "ctx-upload-test",
+                        "parts": [
+                            {"kind": "text", "text": "summarize this csv"},
+                            {
+                                "kind": "file",
+                                "file": {
+                                    "name": "data.csv",
+                                    "mimeType": "text/csv",
+                                    "bytes": _b64.b64encode(csv_bytes).decode("ascii"),
+                                },
+                                # Belt-and-braces: filename in metadata too —
+                                # fasta2a 0.6.1's FileWithBytes TypedDict
+                                # omits `name`, so its request validator
+                                # strips it. Real a2a_call sends both fields;
+                                # mirror that here so the server-side
+                                # materialize finds the original filename.
+                                "metadata": {"filename": "data.csv"},
+                            },
+                        ],
+                    }
+                },
+            }
+            async with httpx.AsyncClient(base_url=info.url, timeout=5.0) as client:
+                resp = await client.post("/", json=req)
+                assert resp.status_code != 401
+
+            # Materialize happens before agent.run; even with TestModel
+            # producing a noisy result, the file should be on disk.
+            # Give the broker a beat to dispatch the worker.
+            target = tmp_path / ".agents" / "a2a" / "guest-uploads" / "ctx-upload-test"
+            for _ in range(20):  # ~2s budget
+                if target.exists() and any(target.iterdir()):
+                    break
+                await _asyncio.sleep(0.1)
+
+            assert target.is_dir(), "guest-uploads/<ctx>/ should exist"
+            saved = list(target.iterdir())
+            assert len(saved) == 1
+            assert saved[0].name == "data.csv"
+            assert saved[0].read_bytes() == csv_bytes
+        finally:
+            await cap.shutdown()
+
+    _run(_scenario())

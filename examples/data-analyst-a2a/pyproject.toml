@@ -1,0 +1,21 @@
+[project]
+name = "data-analyst-a2a"
+version = "0.1.0"
+description = "Demo A2A peer for JAC — a pandas+matplotlib data analyst exposed over A2A"
+requires-python = ">=3.13"
+dependencies = [
+    "fasta2a>=0.6.1",
+    "pydantic-ai-slim[anthropic]>=1.6",
+    "uvicorn>=0.32",
+    "pandas>=2.2",
+    "matplotlib>=3.9",
+]
+
+[project.optional-dependencies]
+openai = ["pydantic-ai-slim[openai]>=1.6"]
+google = ["pydantic-ai-slim[google]>=1.6"]
+openrouter = ["pydantic-ai-slim[openrouter]>=1.6"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"

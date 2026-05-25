@@ -95,6 +95,62 @@
 - [x] All 296 tests pass at last count (263 prior + 31 new at PR3; +2 since); `just check` clean (ruff format ✓, lint ✓, ty ✓).
 - [x] architecture.md §11 **D31** recorded — pluggable auth strategies + in-memory/config split + privacy guarantee.
 
+### Phase 4.d.5 — Standalone `data-analyst-a2a` demo peer (Unit B step 2) ✅
+
+**Why:** the demo-ready piece that closes the file-transfer story end-to-end. Built outside JAC's tree (`examples/data-analyst-a2a/`) so it's a standalone reference: any A2A-savvy reader can drop into the file, see the full receive-side wire from card to FilePart-out, and copy the scaffolding for their own peer (data, docs, devops, anything).
+
+**Landed (2026-05-26):**
+
+- [x] [`examples/data-analyst-a2a/server.py`](../examples/data-analyst-a2a/server.py) — ~220 LOC, single file. Pydantic-ai `Agent` with one `@agent.tool_plain` (`analyze_csv`). Custom `AnalystWorker(AgentWorker)` re-implements `run_task` end-to-end (mirrors JAC's pattern): materializes inbound `FileWithBytes` parts to a per-task `tempfile.TemporaryDirectory`, annotates history with the saved paths, runs the agent, harvests any matplotlib chart the tool produced from a context-var, returns each as a separate `Artifact` with an inline `FileWithBytes`. Bearer middleware (compatible with JAC's `--bearer` flow). uvicorn lifecycle. argparse for `--model`, `--port`, `--unsafe`.
+- [x] [`pyproject.toml`](../examples/data-analyst-a2a/pyproject.toml) — standalone deps (`fasta2a`, `pydantic-ai-slim[anthropic]`, `uvicorn`, `pandas`, `matplotlib`). Optional extras for `openai` / `google` / `openrouter`.
+- [x] [`sample-data.csv`](../examples/data-analyst-a2a/sample-data.csv) — 12 rows of fake monthly metrics for the demo prompt.
+- [x] [`README.md`](https://github.com/VENKATESHWARAN-R/JAC/blob/main/examples/data-analyst-a2a/README.md) — step-by-step: env vars, `uv run server.py`, JAC-side `/a2a peer add` + the demo prompt. Includes a "what this does NOT do" section (no streaming, no FileWithUri, no persistence) so the demo's scope is honest.
+- [x] [`pyproject.toml`](../pyproject.toml) — root `[tool.ruff].extend-exclude` now includes `examples` so the demo's heavyweight deps (pandas, matplotlib) don't pollute JAC's lint run. `ty` already rooted at `./src` so no change there.
+- [x] Smoke-tested: imports cleanly, builds the FastA2A app, serves the agent card (`name: "data-analyst"`, `skills: ["CSV Analyst"]`), accepts a POST with a FilePart and returns HTTP 200. Full LLM round-trip not exercised in CI — that needs real provider credentials and is the operator's job to validate.
+
+**Demo flow now works end-to-end** with file transfer in both directions:
+
+1. JAC sends a CSV via `a2a_call(..., files=["sales.csv"])` → encodes as `FileWithBytes`.
+2. Demo peer's worker decodes to a temp file, annotates the agent's history, runs the pandas tool.
+3. Tool emits a matplotlib chart, saves PNG to the task tempdir.
+4. Demo peer's `run_task` wraps the chart as an `Artifact` with a `FileWithBytes` part.
+5. JAC's `a2a_call` polls `tasks/get` until terminal, then auto-saves the chart to `.agents/a2a/inbound-files/<task_id>/chart-xxxx.png`.
+6. JAC's Gru reads the path from `_jac_saved_files`, surfaces it to the user.
+
+**Total JAC code in flight for Phase 4.d (everything since the PR3 close):** 4.d (status / budget / retention / token-mint), 4.d.1 (polling), 4.d.2 (URL auto-promote), 4.d.3 (outbound files), 4.d.4 (guest materialization), 4.d.5 (demo peer). 350 tests pass; `just check` clean. Ready to commit.
+
+---
+
+### Phase 4.d.4 — Guest server materializes inbound FileParts (Unit B step 1) ✅
+
+**Why:** Phase 4.d.3 made JAC's *outbound* tool file-aware. This phase closes the loop on the *inbound* side so the guest Gru can act on attachments. fasta2a already decodes `FileWithBytes` into pydantic-ai `BinaryContent` (multimodal models see the bytes natively) — but our guest's toolset is path-based (`read_file`, `grep`, `glob`), so the model can't pass bytes to a tool. We fix that by saving uploaded files to disk and telling the agent where they landed.
+
+**Landed (2026-05-26):**
+
+- [x] `paths.project_a2a_guest_uploads_dir()` ([paths.py](../src/jac/workspace/paths.py)) — `<repo>/.agents/a2a/guest-uploads/`. Per-context subdirectory so multi-turn conversations share file state.
+- [x] New module [`capabilities/a2a/guest_files.py`](../src/jac/capabilities/a2a/guest_files.py): `materialize_inbound_files(task, context_id)` scans the latest user message's parts, decodes any `FileWithBytes`, sanitizes the filename (defeats `..` traversal and unsafe chars), and writes under `guest-uploads/<context_id>/<name>`. Collisions across turns get a numeric suffix (`data-2.csv`) by checking the filesystem — works across REPL restarts. Skips URI-only parts (no SSRF guard yet) and malformed base64. Filename resolution: `file.name` (spec) → `part.metadata.filename` (belt-and-braces, since fasta2a's TypedDict strips `file.name`) → `file-<uuid>.bin` fallback. Companion helper `build_attachment_prompt(paths)` formats a synthetic user message with the saved paths.
+- [x] [`AuditingAgentWorker.run_task`](../src/jac/capabilities/a2a/server.py): after `build_message_history`, call `materialize_inbound_files` and append a `ModelRequest([UserPromptPart(content="[a2a attachment] ...")])` so the agent always sees the paths. **Crucially, the original `FilePart` stays in the conversation** — multimodal models still get the raw bytes via fasta2a's existing `BinaryContent` mapping. Additive enhancement, not a replacement.
+- [x] **14 new tests**: [`test_a2a_guest_files.py`](../tests/test_a2a_guest_files.py) covers materialize unit-level — happy path, empty cases, path-traversal sanitization, uuid fallback, metadata.filename fallback, malformed-b64 skip, URI-skip, dedupe across turns, latest-message-only scan, agent-message ignore, prompt text formatting. [`test_a2a_server.py`](../tests/test_a2a_server.py) gains an integration test that POSTs a real `message/send` with a FilePart through uvicorn and asserts the file lands at `guest-uploads/<context_id>/`. 350 tests pass; `just check` clean.
+
+**Demo-readiness:** with 4.d.3 (send) + 4.d.4 (receive), JAC-as-client can attach files and JAC-as-server can accept them. The next piece (the standalone `examples/data-analyst-a2a/` peer) will be a different framework's agent on the receiving side — the wire format is now exercised both ways.
+
+---
+
+### Phase 4.d.3 — `a2a_call` file transfer (FileWithBytes, both directions) ✅
+
+**Why:** prerequisite for the data-analyst peer demo. A2A spec already allows file parts in messages and artifacts; we just hadn't exercised the path. v1 is inline base64 (`FileWithBytes`) only — `FileWithUri` is intentionally deferred until we have an SSRF story for fetching arbitrary URIs.
+
+**Landed (2026-05-26):**
+
+- [x] **Outbound `files` param.** [`a2a_call`](../src/jac/capabilities/a2a/client.py) now accepts `files: list[str] | None`. Each path is validated (exists, regular file, ≤ 5 MB), base64-encoded, attached as a `FilePart` alongside the text part. Mime type guessed via `mimetypes.guess_type` (default `application/octet-stream`). Filename lands in both `file.name` (spec) and `metadata.filename` (belt-and-braces for strict TypedDict validators). The 5 MB cap is a soft DOS guard configurable via the module constant.
+- [x] **Inbound auto-save.** `_save_inbound_files` scans the terminal task's `artifacts[].parts` and `history[].parts` for parts with `kind == "file"` and inline `file.bytes`. Decodes and writes to `<repo>/.agents/a2a/inbound-files/<task_id>/<sanitized-name>`. Filename sanitization defeats `..` traversal, absolute paths, and unsafe chars; collisions inside the same task get a numeric suffix. Saved paths surface in the returned dict as `_jac_saved_files`. Bytes never enter Gru's context — paths only.
+- [x] **`paths.project_a2a_inbound_files_dir()`** ([paths.py](../src/jac/workspace/paths.py)) — new path constant, lazy-created on first save.
+- [x] **Pydantic strict-validation workaround.** fasta2a's `FileWithBytes` TypedDict omits the spec's `name` field, so `send_message_response_ta.validate_json` stripped it on inbound parsing. We now validate-then-reparse with `json.loads` so the raw dict (with all spec fields) flows through to our save pass. Same TypedDict miss on the outbound side produces a `PydanticSerializationUnexpectedValue` warning — suppressed narrowly at the dump_json call site.
+- [x] **Prompt update** ([gru_system.md](https://github.com/VENKATESHWARAN-R/JAC/blob/main/src/jac/prompts/gru_system.md)): a2a_call section now teaches Gru about the `files` param (send) and the `_jac_saved_files` result key (receive), with explicit "don't paste binary into message" guidance.
+- [x] **12 new tests** in [`test_a2a_client.py`](../tests/test_a2a_client.py): outbound — file part shape + base64 round-trip, missing path / directory / oversize rejection, unknown extension → octet-stream, no-files backward compat. Inbound — png saved with correct path + bytes, no save when text-only, path-traversal sanitization, filename collision dedupe (out.png + out-2.png), malformed base64 skipped without crash, `FileWithUri`-only parts skipped (v1 scope). 336 tests pass; `just check` clean.
+
+---
+
 ### Phase 4.d.2 — `resolve_target` auto-promotes URL → configured peer (hotfix) ✅
 
 **Why:** real-world follow-up on 2026-05-26. The user added an authenticated session peer (`/a2a peer add project-a http://127.0.0.1:8001 --bearer`), then asked Gru in plain English to "use a2a_call on peer project-a". Gru remembered the URL from a prior `a2a_discover` step and called `a2a_call(peer_or_url="http://127.0.0.1:8001", ...)` instead of using the peer name. Our `resolve_target` only matched by name — raw URLs went unauthenticated by design — so the request landed at the server with no `Authorization` header and got a 401. The model interpretation was reasonable but our resolver was too literal.
@@ -102,7 +158,7 @@
 **Landed (2026-05-26):**
 
 - [x] `resolve_target` ([client.py](../src/jac/capabilities/a2a/client.py)): when `peer_or_url` is a raw http(s):// URL, check if exactly one configured peer's URL matches (after trailing-slash normalization). If so, promote — apply that peer's auth strategy + use its name in `display`. Zero or multi-match cases fall through to a raw call (we don't guess on ambiguous configs). The model's "use the URL I just discovered" instinct now works correctly without surprising anyone who deliberately wants an unauthenticated raw call (those just don't have a matching configured peer).
-- [x] [`gru_system.md`](../src/jac/prompts/gru_system.md): added explicit guidance that the peer NAME is preferred over the URL. Surfaces the auto-promote as a safety net, not the intended path.
+- [x] [`gru_system.md`](https://github.com/VENKATESHWARAN-R/JAC/blob/main/src/jac/prompts/gru_system.md): added explicit guidance that the peer NAME is preferred over the URL. Surfaces the auto-promote as a safety net, not the intended path.
 - [x] **5 new tests** in [`test_a2a_client.py`](../tests/test_a2a_client.py): exact URL match promotes + carries token, trailing-slash normalization (both directions), no-match stays raw, multi-match falls through to raw, end-to-end auth header injection when calling with a URL that matches a configured peer. 324 tests pass; `just check` clean.
 
 ---
@@ -116,7 +172,7 @@
 - [x] `result.usage()` → `result.usage` in [`AuditingAgentWorker.run_task`](../src/jac/capabilities/a2a/server.py) — pydantic-ai exposed it as a property; method form raised a `PydanticAIDeprecationWarning`.
 - [x] [`client.py`](../src/jac/capabilities/a2a/client.py) — `a2a_call` now keeps the httpx `AsyncClient` open across the initial `message/send` AND any follow-up `tasks/get` polls. New `_wait_for_terminal()` helper drives the loop: exponential backoff from 250ms → 2s (1.5x), bounded by a shared `_CALL_TIMEOUT_S` deadline (bumped 60s → 120s). Returns early if state is already terminal or `input-required` / `auth-required`. On timeout, returns the last task envelope with `_jac_timeout: true` so the calling Gru can distinguish stale state from fresh terminal.
 - [x] Auth headers are reused on every `tasks/get` so authenticated peers (bearer / api_key / OAuth2 strategies) work transparently through the poll loop.
-- [x] [`gru_system.md`](../src/jac/prompts/gru_system.md) "When to call `a2a_call`" section rewritten: the tool now blocks until terminal; the model is told to read `artifacts[].parts[].text` and `history[]` agent messages for the actual answer, and to react if it sees `_jac_timeout: true`.
+- [x] [`gru_system.md`](https://github.com/VENKATESHWARAN-R/JAC/blob/main/src/jac/prompts/gru_system.md) "When to call `a2a_call`" section rewritten: the tool now blocks until terminal; the model is told to read `artifacts[].parts[].text` and `history[]` agent messages for the actual answer, and to react if it sees `_jac_timeout: true`.
 - [x] **7 new tests** in [`test_a2a_client.py`](../tests/test_a2a_client.py): polling transitions (submitted → working → working → completed), inline-terminal skip (no tasks/get when peer responds synchronously), `input-required` early return, auth header propagation to tasks/get, timeout returns partial with marker, task id pass-through, bare `Message` response (no status block) handled without polling. All 319 tests pass; `just check` clean.
 
 ---

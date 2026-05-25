@@ -232,6 +232,21 @@ third-party agent that follows the spec. Use it when the answer lives in
    didn't finish within the call timeout — the state is stale; tell
    the user before retrying.
 
+   **Sending files to a peer:** pass `files=[path1, path2]` to
+   `a2a_call`. Each path is read, base64-encoded, attached as a
+   `FilePart` alongside your text message. 5 MB per file. Mime type
+   guessed from extension. Use this for CSVs, images, small docs —
+   anything the peer's docs say it can consume. Don't paste binary
+   content into `message`; use `files`.
+
+   **Receiving files from a peer:** if the peer sends back inline
+   file artifacts (e.g. a chart), JAC auto-saves them under
+   `<repo>/.agents/a2a/inbound-files/<task_id>/` and lists the
+   saved paths in `result["_jac_saved_files"]`. The bytes never
+   enter your context — read the file with `read_file` only if you
+   need to inspect text, or tell the user about the path so they
+   can open the image themselves.
+
 **Do call `a2a_*` when:**
 
 - The user explicitly asks ("ask backend-jac how the API handles X").

@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Coroutine
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
@@ -644,3 +645,275 @@ def test_call_handles_message_response_without_polling():
         result = _run(a2a_call(reason="x", peer_or_url="http://peer", message="hi"))
     assert result["kind"] == "message"
     assert result["parts"][0]["text"] == "hello back"
+
+
+# ---------- File transfer: outbound (files= param) ----------
+
+
+def test_call_attaches_file_part_with_bytes(tmp_path):
+    """files=[csv_path] adds a FilePart with base64 bytes alongside the text."""
+    import base64 as _b64
+
+    csv = tmp_path / "data.csv"
+    csv.write_text("a,b\n1,2\n", encoding="utf-8")
+
+    app, log = _make_rpc_app()
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {})
+    with _drive_via_asgi(app):
+        _run(
+            a2a_call(
+                reason="x",
+                peer_or_url="http://peer",
+                message="analyze this",
+                files=[str(csv)],
+            )
+        )
+
+    parts = log[0]["body"]["params"]["message"]["parts"]
+    # First part text, second the file
+    assert parts[0] == {"kind": "text", "text": "analyze this"}
+    file_part = parts[1]
+    assert file_part["kind"] == "file"
+    assert file_part["file"]["name"] == "data.csv"
+    assert file_part["file"]["mimeType"] == "text/csv"
+    assert _b64.b64decode(file_part["file"]["bytes"]).decode() == "a,b\n1,2\n"
+    # Metadata carries filename too (belt-and-braces for strict peers)
+    assert file_part["metadata"]["filename"] == "data.csv"
+
+
+def test_call_rejects_missing_file_path(tmp_path):
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {})
+    missing = tmp_path / "nope.csv"
+    with pytest.raises(JacConfigError, match="file not found"):
+        _run(
+            a2a_call(
+                reason="x",
+                peer_or_url="http://peer",
+                message="m",
+                files=[str(missing)],
+            )
+        )
+
+
+def test_call_rejects_directory_as_file(tmp_path):
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {})
+    with pytest.raises(JacConfigError, match="not a regular file"):
+        _run(a2a_call(reason="x", peer_or_url="http://peer", message="m", files=[str(tmp_path)]))
+
+
+def test_call_rejects_oversize_file(tmp_path, monkeypatch):
+    """Cap defends against accidental DOS via giant payloads."""
+    monkeypatch.setattr("jac.capabilities.a2a.client._MAX_OUTBOUND_FILE_BYTES", 16)
+    big = tmp_path / "big.bin"
+    big.write_bytes(b"x" * 32)
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {})
+    with pytest.raises(JacConfigError, match="cap is"):
+        _run(
+            a2a_call(
+                reason="x",
+                peer_or_url="http://peer",
+                message="m",
+                files=[str(big)],
+            )
+        )
+
+
+def test_call_uses_octet_stream_for_unknown_extension(tmp_path):
+    f = tmp_path / "weird.zzz"
+    f.write_bytes(b"\x00\x01\x02")
+    app, log = _make_rpc_app()
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {})
+    with _drive_via_asgi(app):
+        _run(a2a_call(reason="x", peer_or_url="http://peer", message="m", files=[str(f)]))
+    file_part = log[0]["body"]["params"]["message"]["parts"][1]
+    assert file_part["file"]["mimeType"] == "application/octet-stream"
+
+
+def test_call_no_files_param_omits_file_parts():
+    """Backward compat: existing callers without files= see no FilePart."""
+    app, log = _make_rpc_app()
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {})
+    with _drive_via_asgi(app):
+        _run(a2a_call(reason="x", peer_or_url="http://peer", message="hi"))
+    parts = log[0]["body"]["params"]["message"]["parts"]
+    assert len(parts) == 1
+    assert parts[0]["kind"] == "text"
+
+
+# ---------- File transfer: inbound (auto-save) ----------
+
+
+def _make_artifact_app(*, artifact_parts: list[dict]):
+    """Peer that returns a single artifact with the given parts on
+    message/send (inline-terminal, no polling needed)."""
+
+    async def rpc_endpoint(request: Request) -> Response:
+        payload = json.loads(await request.body())
+        return JSONResponse(
+            {
+                "jsonrpc": "2.0",
+                "id": payload["id"],
+                "result": {
+                    "id": "task-with-files",
+                    "contextId": "ctx-1",
+                    "kind": "task",
+                    "status": {"state": "completed"},
+                    "artifacts": [
+                        {"artifactId": "a1", "parts": artifact_parts},
+                    ],
+                },
+            }
+        )
+
+    app = Starlette(routes=[Route("/", rpc_endpoint, methods=["POST"])])
+    return app
+
+
+def _file_part(name: str, content: bytes, mime: str = "image/png"):
+    import base64 as _b64
+
+    return {
+        "kind": "file",
+        "file": {
+            "name": name,
+            "mimeType": mime,
+            "bytes": _b64.b64encode(content).decode("ascii"),
+        },
+    }
+
+
+def test_inbound_file_part_saved_and_path_returned(tmp_path, monkeypatch):
+    """Returned FilePart with bytes lands under inbound-files/<task_id>/ and
+    its path is surfaced in _jac_saved_files."""
+    from jac.workspace import paths
+
+    monkeypatch.setattr(paths, "find_project_root", lambda start=None: tmp_path)
+    if hasattr(paths.find_project_root, "cache_clear"):
+        paths.find_project_root.cache_clear()
+
+    app = _make_artifact_app(artifact_parts=[_file_part("chart.png", b"\x89PNG-bytes")])
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {})
+    with _drive_via_asgi(app):
+        result = _run(a2a_call(reason="x", peer_or_url="http://peer", message="m"))
+
+    assert "_jac_saved_files" in result
+    assert len(result["_jac_saved_files"]) == 1
+    saved = Path(result["_jac_saved_files"][0])
+    assert saved.exists()
+    assert saved.read_bytes() == b"\x89PNG-bytes"
+    # Lands under the right subtree
+    assert "inbound-files/task-with-files/chart.png" in saved.as_posix()
+
+
+def test_inbound_no_files_means_no_save_no_key(tmp_path, monkeypatch):
+    """Text-only artifact: no _jac_saved_files key, no inbound-files dir."""
+    from jac.workspace import paths
+
+    monkeypatch.setattr(paths, "find_project_root", lambda start=None: tmp_path)
+    if hasattr(paths.find_project_root, "cache_clear"):
+        paths.find_project_root.cache_clear()
+
+    app = _make_artifact_app(artifact_parts=[{"kind": "text", "text": "summary text"}])
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {})
+    with _drive_via_asgi(app):
+        result = _run(a2a_call(reason="x", peer_or_url="http://peer", message="m"))
+
+    assert "_jac_saved_files" not in result
+    assert not (tmp_path / ".agents" / "a2a" / "inbound-files").exists()
+
+
+def test_inbound_sanitizes_filename_path_traversal(tmp_path, monkeypatch):
+    """A malicious peer can't write outside our inbound-files/<task_id>/ box."""
+    from jac.workspace import paths
+
+    monkeypatch.setattr(paths, "find_project_root", lambda start=None: tmp_path)
+    if hasattr(paths.find_project_root, "cache_clear"):
+        paths.find_project_root.cache_clear()
+
+    # Filename tries to climb out
+    app = _make_artifact_app(
+        artifact_parts=[_file_part("../../etc/passwd", b"haha", mime="text/plain")]
+    )
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {})
+    with _drive_via_asgi(app):
+        result = _run(a2a_call(reason="x", peer_or_url="http://peer", message="m"))
+
+    saved = Path(result["_jac_saved_files"][0])
+    # Stays under inbound-files/<task_id>/, not in /etc
+    assert "inbound-files/task-with-files/" in saved.as_posix()
+    assert ".." not in saved.parts
+    assert saved.exists()
+
+
+def test_inbound_dedupes_colliding_filenames(tmp_path, monkeypatch):
+    """Two file parts with the same name get a numeric suffix to avoid
+    silently overwriting."""
+    from jac.workspace import paths
+
+    monkeypatch.setattr(paths, "find_project_root", lambda start=None: tmp_path)
+    if hasattr(paths.find_project_root, "cache_clear"):
+        paths.find_project_root.cache_clear()
+
+    app = _make_artifact_app(
+        artifact_parts=[
+            _file_part("out.png", b"first", mime="image/png"),
+            _file_part("out.png", b"second", mime="image/png"),
+        ]
+    )
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {})
+    with _drive_via_asgi(app):
+        result = _run(a2a_call(reason="x", peer_or_url="http://peer", message="m"))
+
+    saved = sorted(result["_jac_saved_files"])
+    assert len(saved) == 2
+    names = [Path(p).name for p in saved]
+    assert names == ["out-2.png", "out.png"]
+
+
+def test_inbound_skips_malformed_base64(tmp_path, monkeypatch):
+    """Bad base64 from peer doesn't crash the call; we just skip that part."""
+    from jac.workspace import paths
+
+    monkeypatch.setattr(paths, "find_project_root", lambda start=None: tmp_path)
+    if hasattr(paths.find_project_root, "cache_clear"):
+        paths.find_project_root.cache_clear()
+
+    app = _make_artifact_app(
+        artifact_parts=[
+            {
+                "kind": "file",
+                "file": {"name": "broken.bin", "bytes": "@@@not-base64@@@"},
+            },
+            _file_part("ok.png", b"good", mime="image/png"),
+        ]
+    )
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {})
+    with _drive_via_asgi(app):
+        result = _run(a2a_call(reason="x", peer_or_url="http://peer", message="m"))
+
+    saved = result["_jac_saved_files"]
+    assert len(saved) == 1
+    assert Path(saved[0]).name == "ok.png"
+
+
+def test_inbound_uri_only_file_part_is_skipped(tmp_path, monkeypatch):
+    """v1 explicitly skips FileWithUri (no SSRF guard yet); only bytes save."""
+    from jac.workspace import paths
+
+    monkeypatch.setattr(paths, "find_project_root", lambda start=None: tmp_path)
+    if hasattr(paths.find_project_root, "cache_clear"):
+        paths.find_project_root.cache_clear()
+
+    app = _make_artifact_app(
+        artifact_parts=[
+            {
+                "kind": "file",
+                "file": {"name": "remote.bin", "uri": "https://example.com/data"},
+            }
+        ]
+    )
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {})
+    with _drive_via_asgi(app):
+        result = _run(a2a_call(reason="x", peer_or_url="http://peer", message="m"))
+
+    assert "_jac_saved_files" not in result

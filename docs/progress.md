@@ -14,8 +14,9 @@ For deeper context:
 
 ## Agent Start Here
 
-- **Current active work:** Phase 4.e — OIDC + GCP ID token auth strategies (next in flight after Phase 4.d wrapped 2026-05-26).
-- **Nearest follow-up:** Phase 3 — community-format Skills loader.
+- **Current active work:** Phase 4.d wrapped 2026-05-26 (status / budget / retention / token-mint / polling / URL auto-promote / file transfer both ways / standalone `examples/data-analyst-a2a/` demo peer). Phase 4.e is next: OIDC + GCP ID token strategies.
+- **Nearest follow-up after 4.e:** Phase 3 — community-format Skills loader.
+- **A2A is feature-complete for the originally-scoped surface.** Outbound polling, inbound auth, bidirectional file transfer, pluggable peer auth, retention enforcement, usage accounting, demo peer — all shipped.
 - **Do not build yet without a grooming session:** Phase 5 minions, v2 YOLO/sandboxing, Plan Mode + `ModeCapability`.
 - **Important constraint:** A2A and Skills are no longer v2 work. A2A is Phase 4; Skills are Phase 3; Minions are Phase 5.
 - **When design is ambiguous:** `architecture.md` is the source of truth for how; `idea.md` is the source of truth for what JAC is and is not.
@@ -34,7 +35,7 @@ For deeper context:
 | Phase 1.7 — Coworker experience | ✅ Complete (minus deferred) | compaction, status bar, slash commands, budgets, feedback, plan persistence, Tavily/DDG search. Plan Mode deferred to v2. |
 | Phase 2b — Summarizer minion | ⛔ Superseded | rolled into Phase 1.7.a token-aware compaction |
 | Phase 3 — Skills (D21) | ⏸ Queued | community-format skill loader + inline mode |
-| Phase 4 — A2A (D24, D30, D31) | 🚧 In flight | PR1-PR4 landed; Phase 4.e auth extensions (OIDC / GCP) are next |
+| Phase 4 — A2A (D24, D30, D31, D32, D33) | 🚧 In flight | PR1-PR4 + 4.d hotfixes + file transfer + demo peer landed; Phase 4.e auth extensions (OIDC / GCP) are next |
 | Phase 5 — Minions | ⏸ Queued | runtime for skills with `mode: minion`; needs grooming before implementation |
 | Phase 6 — MCP | ⏸ Queued | external MCP servers + D28 `reason:` compromise |
 | Phase 7 — Quality | 🚧 In flight | ruff + ty + Zensical docs shipped; remaining gaps in broader test coverage |

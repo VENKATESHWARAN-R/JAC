@@ -126,6 +126,42 @@ def project_a2a_inbound_log() -> Path:
     return project_a2a_dir() / "inbound.jsonl"
 
 
+def project_a2a_inbound_files_dir() -> Path:
+    """``<project_root>/.agents/a2a/inbound-files/`` — files received from A2A peers (Phase 4.d.3).
+
+    When ``a2a_call`` receives a task whose ``artifacts`` or ``history``
+    contain ``FilePart`` entries with inline bytes, JAC decodes the
+    bytes and writes them here under ``<task_id>/<filename>``. The
+    returned task dict carries the saved paths in ``_jac_saved_files``
+    so the calling Gru can read / display them without ever pulling
+    the binary into its context window.
+
+    Lazy-created on first save. Not pruned by the retention loop today
+    (that one targets the contexts dir only); operator owns cleanup
+    until a use case demands automation.
+    """
+    return project_a2a_dir() / "inbound-files"
+
+
+def project_a2a_guest_uploads_dir() -> Path:
+    """``<project_root>/.agents/a2a/guest-uploads/`` — files received by the guest server (Phase 4.d.4).
+
+    When a peer POSTs a ``message/send`` carrying ``FilePart`` entries
+    with inline bytes, the auditing worker decodes and saves them under
+    ``<context_id>/<filename>`` so the guest Gru's path-based tools
+    (``read_file``, ``grep``, ``glob``) can operate on them.
+
+    Per-context (not per-task) so a multi-turn conversation re-uses
+    the same file state. Sibling of :func:`project_a2a_contexts_dir`
+    rather than nested inside it so JSON storage and file uploads
+    stay structurally separate.
+
+    Cleanup follows the same retention window as contexts. Lazy-
+    created on first save.
+    """
+    return project_a2a_dir() / "guest-uploads"
+
+
 def project_prompts_dir() -> Path:
     return project_workspace() / "prompts"
 

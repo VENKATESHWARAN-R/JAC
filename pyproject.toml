@@ -43,7 +43,7 @@ dev = [
 [tool.ruff]
 target-version = "py313"
 line-length = 100
-extend-exclude = [".agents", "site"]
+extend-exclude = [".agents", "site", "examples"]
 
 [tool.ruff.lint]
 select = [

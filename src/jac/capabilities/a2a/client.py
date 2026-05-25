@@ -31,11 +31,17 @@ never crosses the agent boundary.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json as _json
+import mimetypes
+import re as _re
 import time
 import uuid
+import warnings
+from binascii import Error as _BinasciiError
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -54,6 +60,7 @@ from jac.errors import JacConfigError
 from jac.profiles import A2APeerConfig
 from jac.runtime.events import A2AOutboundCall, A2AOutboundCompleted, EventBus
 from jac.tools import jac_tool
+from jac.workspace import paths
 
 # Reasonable defaults for outbound calls. The discover timeout is short
 # because the well-known endpoint is just a JSON file. The call timeout
@@ -83,6 +90,17 @@ _TERMINAL_STATES = frozenset({"completed", "failed", "canceled", "rejected"})
 # return so the calling Gru can decide what to do (e.g. ask the user,
 # supply more input). The renderer/agent will see the embedded message.
 _CLIENT_ACTION_STATES = frozenset({"input-required", "auth-required"})
+
+# ---- File transfer (Phase 4.d.3) ----
+#
+# v1 is inline-bytes only — FileWithBytes (base64) for both directions.
+# URI variant (FileWithUri) is read-only on the receive side later; we
+# don't generate URI parts ourselves because we have nowhere to host
+# files from a CLI process.
+_MAX_OUTBOUND_FILE_BYTES = 5 * 1024 * 1024  # 5 MB per file; soft DOS guard
+# Sanitize candidate filenames into something safe under inbound-files/.
+# We allow letters, digits, hyphen, underscore, period (no leading dot).
+_SAFE_FILENAME_RE = _re.compile(r"[^A-Za-z0-9._-]+")
 
 
 @dataclass(frozen=True)
@@ -276,6 +294,7 @@ def build_outbound_tools(
         peer_or_url: str,
         message: str,
         context_id: str | None = None,
+        files: list[str] | None = None,
     ) -> dict[str, Any]:
         """Send a message to an A2A peer and return the task result.
 
@@ -294,14 +313,27 @@ def build_outbound_tools(
                 conversation thread. Omit to start fresh; the peer
                 generates a new uuid you can pass back next call to
                 continue it.
+            files: Optional list of file paths to attach. Each file is
+                read, base64-encoded, and sent as an A2A ``FilePart``
+                alongside the text part. 5 MB cap per file. Mime type
+                is guessed from extension (default
+                ``application/octet-stream``). Use this for sending
+                CSVs, images, small docs to peers that know how to
+                consume them.
 
         Returns:
             Parsed JSON-RPC ``result`` from the peer's ``message/send``
             response — typically a ``Task`` envelope with ``id``,
-            ``status``, optional ``artifacts``, etc.
+            ``status``, optional ``artifacts``, etc. If the peer
+            returned any inline file parts (in artifacts or history),
+            JAC saved them to
+            ``<repo>/.agents/a2a/inbound-files/<task_id>/`` and the
+            saved paths are listed in ``result["_jac_saved_files"]``.
 
         Raises:
-            JacConfigError: unknown peer name (no http:// prefix).
+            JacConfigError: unknown peer name (no http:// prefix), or
+                an attached file path is missing / oversize / not a
+                regular file.
             ValueError: HTTP error, network failure, or JSON-RPC error
                 from the peer.
         """
@@ -310,6 +342,10 @@ def build_outbound_tools(
 
         peers = peers_getter()
         target = resolve_target(peer_or_url, peers=peers)
+
+        # Build file parts up-front so a bad path fails before we hit the
+        # network — friendlier than reporting a half-sent request.
+        file_parts = _build_file_parts(files or [])
 
         preview = make_message_preview(message)
         await _emit(A2AOutboundCall(target=target.display, message_preview=preview))
@@ -334,9 +370,11 @@ def build_outbound_tools(
                 auth_headers = await strategy.headers_for()
                 headers.update(auth_headers)
 
+        parts: list[Any] = [{"kind": "text", "text": message}]
+        parts.extend(file_parts)
         msg: Message = {
             "role": "user",
-            "parts": [{"kind": "text", "text": message}],
+            "parts": parts,
             "kind": "message",
             "message_id": str(uuid.uuid4()),
         }
@@ -349,7 +387,18 @@ def build_outbound_tools(
             "method": "message/send",
             "params": {"message": msg},
         }
-        payload = send_message_request_ta.dump_json(request, by_alias=True)
+        # fasta2a's FileWithBytes TypedDict doesn't formally include the
+        # spec-defined `name` field, so pydantic's serializer emits a
+        # warning when we attach files. The wire format is correct
+        # (extras are preserved) — suppress the warning narrowly so it
+        # doesn't spam every file-bearing call. Drop this when fasta2a
+        # updates its TypedDict to match the spec.
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message=r"Pydantic serializer warnings",
+            )
+            payload = send_message_request_ta.dump_json(request, by_alias=True)
 
         started = time.monotonic()
         state = "completed"
@@ -367,10 +416,17 @@ def build_outbound_tools(
                         f"— {resp.text[:200]}"
                     )
                 try:
-                    parsed = send_message_response_ta.validate_json(resp.content)
+                    # Validate for early shape-failure on garbage, then
+                    # re-parse raw — pydantic's TypedDict validation
+                    # strips fields not in the schema (e.g. ``name`` on
+                    # ``FileWithBytes``, which the A2A spec defines but
+                    # fasta2a's TypedDict omits). The raw parse keeps
+                    # those extras intact for our file-save pass.
+                    send_message_response_ta.validate_json(resp.content)
                 except Exception as exc:
                     state = "failed"
                     raise ValueError(f"A2A call: peer returned malformed response: {exc}") from exc
+                parsed = _json.loads(resp.content)
 
                 error = parsed.get("error")
                 if error is not None:
@@ -401,6 +457,14 @@ def build_outbound_tools(
                     headers=headers,
                     deadline=started + _CALL_TIMEOUT_S,
                 )
+                # Save any inline file parts (FileWithBytes) the peer
+                # returned to disk so the calling Gru can read/show
+                # them without binary content polluting the context
+                # window. Best-effort: a write failure attaches an
+                # empty list rather than failing the call.
+                saved = _save_inbound_files(final)
+                if saved:
+                    final["_jac_saved_files"] = saved
                 return final
         finally:
             await _emit(
@@ -535,6 +599,202 @@ def _task_state(envelope: dict[str, Any]) -> str | None:
         return None
     state = status.get("state")
     return state if isinstance(state, str) else None
+
+
+# ---------- File transfer helpers (Phase 4.d.3) ----------
+
+
+def _build_file_parts(file_paths: list[str]) -> list[dict[str, Any]]:
+    """Read ``file_paths`` and turn each into an A2A ``FilePart`` dict.
+
+    Spec shape (camelCase on the wire — fasta2a's TypeAdapter handles
+    the snake→camel alias mapping when we dump, but we author in spec
+    form here for clarity):
+
+    .. code-block:: json
+
+        {
+          "kind": "file",
+          "file": {
+            "name": "data.csv",
+            "mimeType": "text/csv",
+            "bytes": "BASE64..."
+          },
+          "metadata": {"filename": "data.csv"}
+        }
+
+    The duplicate filename in ``metadata`` is belt-and-braces: fasta2a's
+    TypedDict for ``FileWithBytes`` doesn't formally include ``name``,
+    so a strict peer could in theory strip it. ``metadata`` is in the
+    base part schema and always survives.
+
+    Args:
+        file_paths: list of filesystem paths (absolute or relative).
+
+    Returns:
+        A list of ready-to-serialize FilePart dicts.
+
+    Raises:
+        JacConfigError: missing path, not a regular file, or size cap
+            (5 MB) exceeded — caught before the network roundtrip so
+            the operator gets a clean error.
+    """
+    parts: list[dict[str, Any]] = []
+    for raw in file_paths:
+        path = Path(raw).expanduser()
+        if not path.exists():
+            raise JacConfigError(f"a2a_call: file not found: {raw}")
+        if not path.is_file():
+            raise JacConfigError(f"a2a_call: not a regular file: {raw}")
+        size = path.stat().st_size
+        if size > _MAX_OUTBOUND_FILE_BYTES:
+            raise JacConfigError(
+                f"a2a_call: file {raw} is {size} bytes; cap is "
+                f"{_MAX_OUTBOUND_FILE_BYTES} ({_MAX_OUTBOUND_FILE_BYTES // (1024 * 1024)} MB)."
+            )
+        data = path.read_bytes()
+        encoded = base64.b64encode(data).decode("ascii")
+        mime, _ = mimetypes.guess_type(path.name)
+        if mime is None:
+            mime = "application/octet-stream"
+        file_obj: dict[str, Any] = {
+            "name": path.name,
+            "mimeType": mime,
+            "bytes": encoded,
+        }
+        parts.append(
+            {
+                "kind": "file",
+                "file": file_obj,
+                "metadata": {"filename": path.name},
+            }
+        )
+    return parts
+
+
+def _save_inbound_files(envelope: dict[str, Any]) -> list[str]:
+    """Save any ``FileWithBytes`` parts in ``envelope`` to disk; return paths.
+
+    Walks ``envelope["artifacts"][*].parts`` and
+    ``envelope["history"][*].parts``, decodes any part with
+    ``kind == "file"`` and ``file.bytes`` set, and writes the bytes
+    under ``<repo>/.agents/a2a/inbound-files/<task_id>/<filename>``.
+
+    Args:
+        envelope: the terminal task dict from ``_wait_for_terminal``.
+
+    Returns:
+        List of saved file paths (as POSIX strings) suitable for
+        embedding in ``_jac_saved_files``. Empty list when no inline
+        file parts were present.
+
+    Notes:
+        - URI-only file parts (``FileWithUri``) are intentionally
+          skipped in v1 — fetching arbitrary URIs is a future feature
+          with its own SSRF guard considerations.
+        - Filename sanitization defends against ``..`` / absolute
+          paths / NUL bytes. A part with no usable name falls back to
+          a uuid so we still save something.
+        - Filename collisions inside the same task get a numeric
+          suffix so we never silently overwrite.
+        - Decoding failures (malformed base64) skip the part with no
+          exception — better to return partial than fail the whole
+          call.
+    """
+    task_id = envelope.get("id") or envelope.get("taskId")
+    if not isinstance(task_id, str) or not task_id:
+        return []
+
+    candidate_parts: list[dict[str, Any]] = []
+    for artifact in _safe_list(envelope.get("artifacts")):
+        candidate_parts.extend(_safe_list(artifact.get("parts")))
+    for msg in _safe_list(envelope.get("history")):
+        candidate_parts.extend(_safe_list(msg.get("parts")))
+
+    if not candidate_parts:
+        return []
+
+    target_dir: Path | None = None
+    saved_names: dict[str, int] = {}
+    saved_paths: list[str] = []
+
+    for part in candidate_parts:
+        if not isinstance(part, dict) or part.get("kind") != "file":
+            continue
+        file_obj = part.get("file")
+        if not isinstance(file_obj, dict):
+            continue
+        b64 = file_obj.get("bytes")
+        if not isinstance(b64, str) or not b64:
+            continue  # URI variant or empty bytes — skip
+
+        try:
+            data = base64.b64decode(b64, validate=True)
+        except (ValueError, _BinasciiError):
+            continue  # malformed; skip the part rather than crash
+
+        name = _pick_filename(file_obj, part)
+        unique = _dedupe_name(name, saved_names)
+
+        if target_dir is None:
+            # Lazy-create only if there's at least one file to save.
+            target_dir = paths.project_a2a_inbound_files_dir() / task_id
+            try:
+                target_dir.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                return saved_paths  # disk full / perms — return what we have
+
+        out_path = target_dir / unique
+        try:
+            out_path.write_bytes(data)
+        except OSError:
+            continue
+        saved_paths.append(out_path.as_posix())
+
+    return saved_paths
+
+
+def _safe_list(value: Any) -> list[Any]:
+    """Return ``value`` if it's a list, else ``[]`` — defensive iteration."""
+    return value if isinstance(value, list) else []
+
+
+def _pick_filename(file_obj: dict[str, Any], part: dict[str, Any]) -> str:
+    """Pick the best-available filename for a saved file.
+
+    Order: file.name → part.metadata.filename → uuid-based fallback.
+    Always returns a sanitized string safe to join under inbound-files/.
+    """
+    raw = file_obj.get("name")
+    if not isinstance(raw, str) or not raw.strip():
+        meta = part.get("metadata")
+        if isinstance(meta, dict):
+            raw_meta = meta.get("filename")
+            if isinstance(raw_meta, str) and raw_meta.strip():
+                raw = raw_meta
+    if not isinstance(raw, str) or not raw.strip():
+        return f"file-{uuid.uuid4().hex}.bin"
+    return _sanitize_filename(raw)
+
+
+def _sanitize_filename(name: str) -> str:
+    """Strip path components, leading dots, NUL bytes, and unsafe chars."""
+    # Take basename only — defeats absolute paths and ``..`` traversal.
+    bare = Path(name).name
+    # Replace any run of unsafe chars with a single underscore.
+    cleaned = _SAFE_FILENAME_RE.sub("_", bare).lstrip(".")
+    return cleaned or f"file-{uuid.uuid4().hex}.bin"
+
+
+def _dedupe_name(name: str, seen: dict[str, int]) -> str:
+    """Append ``-N`` to ``name`` if we've already saved one in this task."""
+    if name not in seen:
+        seen[name] = 1
+        return name
+    seen[name] += 1
+    stem = Path(name).stem
+    suffix = Path(name).suffix
+    return f"{stem}-{seen[name]}{suffix}"
 
 
 def _card_to_dict(card: AgentCard) -> dict[str, Any]:

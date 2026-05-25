@@ -39,7 +39,7 @@ from fasta2a.broker import Broker, InMemoryBroker
 from fasta2a.pydantic_ai import AgentWorker, agent_to_a2a
 from fasta2a.schema import AgentCard, Message, TaskSendParams
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelRequest
+from pydantic_ai.messages import ModelRequest, UserPromptPart
 
 from jac.capabilities.a2a.audit import (
     InboundLog,
@@ -55,6 +55,10 @@ from jac.capabilities.a2a.auth import (
     redact_token,
 )
 from jac.capabilities.a2a.card import build_agent_card
+from jac.capabilities.a2a.guest_files import (
+    build_attachment_prompt,
+    materialize_inbound_files,
+)
 from jac.capabilities.a2a.storage import JacFileStorage
 from jac.errors import JacConfigError
 from jac.runtime.events import (
@@ -174,6 +178,21 @@ class AuditingAgentWorker(AgentWorker):
 
             history = await self.storage.load_context(context_id) or []
             history.extend(self.build_message_history(task.get("history", [])))
+
+            # Save any FilePart-with-bytes attachments to disk so the
+            # guest's path-based tools (read_file / grep / glob) can
+            # use them. Original FileParts are left in the message so
+            # multimodal models still get the raw bytes via fasta2a's
+            # existing BinaryContent path. The annotation we append is
+            # additive — it teaches the model where the file landed
+            # without removing the multimodal channel.
+            saved_paths = materialize_inbound_files(task, context_id)
+            if saved_paths:
+                history.append(
+                    ModelRequest(
+                        parts=[UserPromptPart(content=build_attachment_prompt(saved_paths))]
+                    )
+                )
 
             try:
                 result = await self.agent.run(message_history=history)  # type: ignore[arg-type]

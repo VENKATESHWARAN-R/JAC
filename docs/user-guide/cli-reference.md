@@ -63,8 +63,8 @@ Slash lines are handled locally — they are **not** sent to the model.
 | `/model` | `/model [PROVIDER:ID]` | Numbered picker or explicit model |
 | `/budget` | `/budget` | Show token budgets vs usage |
 | `/budget extend` | `/budget extend [KIND] N` | Raise limit for this session (`KIND`: `session_input`, `session_total`, `project_total`; default `session_total`) |
-| `/tokens` | `/tokens` | Detailed token counters |
-| `/a2a` | see [A2A operator](a2a-operator.md) | Server + peers |
+| `/tokens` | `/tokens` | Detailed token counters; shows a separate `a2a guest` line when inbound calls have consumed model tokens (counts toward `project_total` only) |
+| `/a2a` | see [A2A operator](a2a-operator.md) | Server + peers; `/a2a status` shows server state, peer count, and last 5 inbound calls from `inbound.jsonl` |
 
 Tab completion: type `/` and start a command name (first word only).
 
@@ -144,9 +144,9 @@ Categories: `convention`, `fact`, `preference`, `gotcha`, `decision`. See [Sessi
 | Tool | Description |
 | --- | --- |
 | `a2a_discover(reason, url)` | Fetch peer agent card |
-| `a2a_call(reason, peer_or_url, message, context_id?)` | Send message; `peer_or_url` is profile peer name or `https://…` URL |
+| `a2a_call(reason, peer_or_url, message, context_id?, files?)` | Send message and **block until the peer's task reaches a terminal state** (polls `tasks/get` under the hood). `peer_or_url` is a profile peer name, session peer name, or `https://…` URL — a raw URL matching a configured peer's URL is auto-promoted so auth is applied. `files=[paths]` attaches each (5 MB cap, base64-encoded `FilePart`). Returned task's `_jac_saved_files` lists paths under `.agents/a2a/inbound-files/<task_id>/` for any inline file artifacts the peer sent back. |
 
-Inbound guest server: [A2A operator](a2a-operator.md).
+Inbound guest server, file transfer behavior, demo peer: [A2A operator](a2a-operator.md).
 
 ## Status bar
 
