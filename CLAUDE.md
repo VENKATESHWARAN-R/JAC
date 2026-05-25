@@ -25,8 +25,11 @@ Long-form docs live under [`docs/`](docs/) and are published as a Zensical site 
 
 Day-to-day commands are wrapped in a [`justfile`](justfile) — `just check`, `just fix`, `just docs-serve`, `just run -- <args>`. Full recipe list: [`docs/developer/contributing.md`](docs/developer/contributing.md).
 
+Use `uv` for all Python execution in this repo. Prefer `just` recipes for checks and docs. Do **not** run bare `python`, `pip`, `pytest`, `ruff`, or `ty` unless there is a specific reason; use `uv run ...` or the matching `just` recipe so the project environment from `uv.lock` is active.
+
 ```bash
 uv sync                          # install / refresh dependencies
+uv run python -m pytest           # run pytest inside the uv-managed environment
 uv run jac                       # interactive REPL with the default profile
 uv run jac --profile NAME        # one-shot profile selection
 uv run jac --model PROVIDER:ID   # raw model override (bypasses profiles)

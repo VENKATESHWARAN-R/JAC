@@ -95,15 +95,44 @@
 - [x] All 296 tests pass at last count (263 prior + 31 new at PR3; +2 since); `just check` clean (ruff format ✓, lint ✓, ty ✓).
 - [x] architecture.md §11 **D31** recorded — pluggable auth strategies + in-memory/config split + privacy guarantee.
 
-### Phase 4.d — Polish: status, audit, budget integration (PR4) ⏸
+### Phase 4.d.2 — `resolve_target` auto-promotes URL → configured peer (hotfix) ✅
+
+**Why:** real-world follow-up on 2026-05-26. The user added an authenticated session peer (`/a2a peer add project-a http://127.0.0.1:8001 --bearer`), then asked Gru in plain English to "use a2a_call on peer project-a". Gru remembered the URL from a prior `a2a_discover` step and called `a2a_call(peer_or_url="http://127.0.0.1:8001", ...)` instead of using the peer name. Our `resolve_target` only matched by name — raw URLs went unauthenticated by design — so the request landed at the server with no `Authorization` header and got a 401. The model interpretation was reasonable but our resolver was too literal.
+
+**Landed (2026-05-26):**
+
+- [x] `resolve_target` ([client.py](../src/jac/capabilities/a2a/client.py)): when `peer_or_url` is a raw http(s):// URL, check if exactly one configured peer's URL matches (after trailing-slash normalization). If so, promote — apply that peer's auth strategy + use its name in `display`. Zero or multi-match cases fall through to a raw call (we don't guess on ambiguous configs). The model's "use the URL I just discovered" instinct now works correctly without surprising anyone who deliberately wants an unauthenticated raw call (those just don't have a matching configured peer).
+- [x] [`gru_system.md`](../src/jac/prompts/gru_system.md): added explicit guidance that the peer NAME is preferred over the URL. Surfaces the auto-promote as a safety net, not the intended path.
+- [x] **5 new tests** in [`test_a2a_client.py`](../tests/test_a2a_client.py): exact URL match promotes + carries token, trailing-slash normalization (both directions), no-match stays raw, multi-match falls through to raw, end-to-end auth header injection when calling with a URL that matches a configured peer. 324 tests pass; `just check` clean.
+
+---
+
+### Phase 4.d.1 — Outbound `a2a_call` polls until terminal (hotfix) ✅
+
+**Why:** real-world test on 2026-05-26 surfaced the issue: project-A served `jac a2a serve --unsafe`, project-B's interactive Gru called `a2a_call` and got back the immediate `{state: "submitted"}` envelope. The guest *did* run the work (audit log shows 4848ms / 14748 tokens) — but the calling Gru never saw the answer, because our client returned as soon as fasta2a acknowledged the submission. Every follow-up "can you check the status?" was a fresh `message/send` against the same context, producing more tasks instead of retrieving the original answer.
+
+**Landed (2026-05-26):**
+
+- [x] `result.usage()` → `result.usage` in [`AuditingAgentWorker.run_task`](../src/jac/capabilities/a2a/server.py) — pydantic-ai exposed it as a property; method form raised a `PydanticAIDeprecationWarning`.
+- [x] [`client.py`](../src/jac/capabilities/a2a/client.py) — `a2a_call` now keeps the httpx `AsyncClient` open across the initial `message/send` AND any follow-up `tasks/get` polls. New `_wait_for_terminal()` helper drives the loop: exponential backoff from 250ms → 2s (1.5x), bounded by a shared `_CALL_TIMEOUT_S` deadline (bumped 60s → 120s). Returns early if state is already terminal or `input-required` / `auth-required`. On timeout, returns the last task envelope with `_jac_timeout: true` so the calling Gru can distinguish stale state from fresh terminal.
+- [x] Auth headers are reused on every `tasks/get` so authenticated peers (bearer / api_key / OAuth2 strategies) work transparently through the poll loop.
+- [x] [`gru_system.md`](../src/jac/prompts/gru_system.md) "When to call `a2a_call`" section rewritten: the tool now blocks until terminal; the model is told to read `artifacts[].parts[].text` and `history[]` agent messages for the actual answer, and to react if it sees `_jac_timeout: true`.
+- [x] **7 new tests** in [`test_a2a_client.py`](../tests/test_a2a_client.py): polling transitions (submitted → working → working → completed), inline-terminal skip (no tasks/get when peer responds synchronously), `input-required` early return, auth header propagation to tasks/get, timeout returns partial with marker, task id pass-through, bare `Message` response (no status block) handled without polling. All 319 tests pass; `just check` clean.
+
+---
+
+### Phase 4.d — Polish: status, audit, budget integration (PR4) ✅
 
 **Why:** the bits that make A2A *operable* rather than just *functional*. Visibility into running servers, integration with the budget system so guest calls aren't a budget loophole, retention enforcement so audit files don't grow forever. (Was Phase 4.c before D31; renamed when auth strategies pushed in front of it.)
 
-- [ ] `/a2a status` — running? bind host:port? truncated token? peer count? last 5 calls?
-- [ ] Budget integration: per-inbound-call `result.usage()` feeds host's `UsageTracker.add_external(input, output)` — counts under `project_total` only, **not** `session_total`. Surfaces in `/tokens` as a separate "a2a guest" line
-- [ ] Context retention enforcement: `cleanup_old_contexts(retention_days)` runs on server start AND on a 1-hour timer while server runs
-- [ ] OAuth2 strategy: surface a separate `[a2a token]` event when a fresh access token is minted (operator visibility into IDP roundtrips)
-- [ ] `architecture.md §6 + §8` diagrams refreshed to show A2A flow (inbound + outbound + storage + audit + outbound auth strategies)
+**Landed (2026-05-26):**
+
+- [x] `/a2a status` ([slash/handlers/a2a/status.py](../src/jac/cli/slash/handlers/a2a/status.py)) — three rendering blocks: server (URL, bind, auth, card), peers (merged-count with profile/session split), inbound (last 5 calls tailed from `inbound.jsonl` with timestamp / peer / state / duration / preview). Missing log file or malformed rows degrade gracefully.
+- [x] **Budget integration.** [`UsageTracker.add_external(in, out)`](../src/jac/runtime/usage.py) tracks A2A guest usage on a new `_ExternalCounters` field. `project_total_tokens` now = `baseline + counters.total + external.total`; `session_input` / `session_total` are deliberately untouched so a peer can't bloat the host session's view of its own work. JSONL rows tag with `kind` (`session` / `a2a_guest`). `AuditingAgentWorker.run_task` was rewritten as a full override (not `super().run_task()`) so we can capture `result.usage()` between the agent run and the storage update — the same hook also fills the real `tokens_used` in `A2AInboundCompleted` events and `InboundRecord` rows, fixing the PR1 hardcoded `0`. The capability is plumbed via `A2ACapability.usage_tracker` (attached by the REPL right after `make_usage_tracker`); session swap (`/clear`, `/resume`) re-attaches the fresh tracker. `/tokens` gains a dedicated "a2a guest" line when external usage > 0.
+- [x] **Retention timer.** `A2AServer._retention_loop` is a 1-hour periodic `asyncio.create_task` spawned in `start()` when `retention_days > 0`. Errors inside the prune call are logged and the loop keeps running; `stop()` cancels and awaits before tearing the uvicorn task down. Skipped entirely when `retention_days == 0` (keep-forever mode).
+- [x] **OAuth2 fresh-token visibility.** New `A2AOutboundTokenMinted(token_url, peer_name, expires_in_s)` event in `runtime/events.py`. `OAuth2ClientCredentialsStrategy` gained `bus` + `peer_name` fields and emits the event from `_refresh()` after the IDP returns an access token. `make_strategy()` accepts `bus=` + `peer_name=` and threads them to OAuth2 only — bearer / api_key ignore them. Capability's `_strategy_for()` forwards its bus and the peer's resolved name; `client.py` strategy_provider signature is now `(peer, peer_name) -> AuthStrategy | None`. Renderer paints a muted `[a2a token]` line.
+- [x] **Architecture diagrams.** `docs/architecture.md` §6 (inbound flow) and §8 (outbound flow + auth strategy table) added, with the privacy guarantees (credentials never reach LLM context; session peers stay in memory; per-peer token cache).
+- [x] **Tests.** 16 new across 4 files — `test_usage.py` (+5: external bumps project not session, jsonl `kind` marker, session/external dedup, project_total triggering, no session-budget triggering), `test_a2a_slash.py` (+4: peer count, last-5 rendering, empty log, malformed-row tolerance), `test_a2a_server.py` (+3: retention task lifecycle, retention disabled when days=0, usage tracker plumbing), `test_a2a_auth_strategies.py` (+4: token-minted event on refresh, no event on cached hit, `make_strategy` threads bus/peer into OAuth2 only, bearer ignores bus). All 312 tests pass; `just check` clean.
 
 ### Phase 4.e — OIDC + GCP ID tokens (PR5, after PR4) ⏸
 

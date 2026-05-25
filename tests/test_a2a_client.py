@@ -94,6 +94,65 @@ def test_resolve_target_unknown_name_lists_configured_peers():
         resolve_target("gamma", peers=peers)
 
 
+# ---------- resolve_target: URL → peer auto-promote (Phase 4.d.2) ----------
+
+
+def test_resolve_target_raw_url_promotes_to_matching_peer():
+    """When the model passes a URL that exactly matches a configured peer,
+    we promote to that peer so auth is applied (fixes the 401 the user saw
+    when Gru reused the URL from a prior a2a_discover instead of the name)."""
+    peers = {
+        "project-a": A2APeerConfig(url="http://127.0.0.1:8001", token="secret"),
+    }
+    t = resolve_target("http://127.0.0.1:8001", peers=peers)
+    assert t.url == "http://127.0.0.1:8001"
+    assert t.peer is not None
+    assert t.peer.token == "secret"
+    # Display flips to the peer name so events / audit show the friendly id.
+    assert t.display == "project-a"
+
+
+def test_resolve_target_raw_url_promote_normalizes_trailing_slash():
+    """URL match after trailing-slash normalization on both sides."""
+    peers = {"p": A2APeerConfig(url="http://h:8001/", token="t")}
+    t = resolve_target("http://h:8001", peers=peers)
+    assert t.peer is not None
+    assert t.display == "p"
+
+
+def test_resolve_target_raw_url_no_promote_when_no_match():
+    """Raw URL with no matching peer stays raw — no auth, no surprise."""
+    peers = {"other": A2APeerConfig(url="http://different:9000", token="t")}
+    t = resolve_target("http://127.0.0.1:8001", peers=peers)
+    assert t.peer is None
+    assert t.display == "http://127.0.0.1:8001"
+
+
+def test_resolve_target_raw_url_no_promote_on_multi_match():
+    """Two peers pointing at the same URL is a config smell — don't guess
+    which auth strategy to apply; fall through to raw call (no auth)."""
+    peers = {
+        "p1": A2APeerConfig(url="http://shared:8001", token="t1"),
+        "p2": A2APeerConfig(url="http://shared:8001", token="t2"),
+    }
+    t = resolve_target("http://shared:8001", peers=peers)
+    assert t.peer is None
+    assert t.display == "http://shared:8001"
+
+
+def test_call_applies_auth_when_url_matches_configured_peer():
+    """End-to-end: a2a_call invoked with a raw URL that matches a configured
+    peer must send the bearer header (otherwise the peer returns 401)."""
+    app, log = _make_rpc_app(expected_token="t-promoted")
+    peers = {"project-a": A2APeerConfig(url="http://peer", token="t-promoted")}
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: peers)
+    with _drive_via_asgi(app):
+        result = _run(a2a_call(reason="x", peer_or_url="http://peer", message="hi"))
+    # No 401 → call succeeded, bearer was applied.
+    assert result["id"] == "task-1"
+    assert log[0]["auth"] == "Bearer t-promoted"
+
+
 # ---------- a2a_discover ----------
 
 
@@ -394,3 +453,194 @@ def test_peers_getter_picks_up_runtime_changes():
     with _drive_via_asgi(app):
         result = _run(a2a_call(reason="x", peer_or_url="live", message="hi"))
     assert result["id"] == "task-1"
+
+
+# ---------- Polling tasks/get until terminal (Phase 4.d follow-up) ----------
+
+
+def _make_broker_app(
+    *,
+    states: list[str],
+    final_artifacts: list | None = None,
+    final_history: list | None = None,
+    expected_token: str | None = None,
+):
+    """Peer that mimics fasta2a: message/send returns 'submitted' immediately,
+    then tasks/get walks through ``states`` one entry per call until it lands
+    on the final terminal state. Lets us assert the polling loop transitions
+    correctly without a real broker."""
+    state_iter = iter(states)
+    log: list[dict[str, Any]] = []
+    task_id = "task-poll-1"
+    context_id = "ctx-poll-1"
+
+    async def rpc_endpoint(request: Request) -> Response:
+        payload = json.loads(await request.body())
+        auth = request.headers.get("authorization", "")
+        log.append({"method": payload["method"], "body": payload, "auth": auth})
+
+        if expected_token is not None and auth != f"Bearer {expected_token}":
+            return JSONResponse(
+                {
+                    "jsonrpc": "2.0",
+                    "id": payload.get("id"),
+                    "error": {"code": -32000, "message": "bad bearer"},
+                }
+            )
+
+        method = payload["method"]
+        if method == "message/send":
+            return JSONResponse(
+                {
+                    "jsonrpc": "2.0",
+                    "id": payload["id"],
+                    "result": {
+                        "id": task_id,
+                        "contextId": context_id,
+                        "kind": "task",
+                        "status": {"state": "submitted"},
+                    },
+                }
+            )
+        if method == "tasks/get":
+            try:
+                next_state = next(state_iter)
+            except StopIteration:
+                next_state = "completed"
+            task = {
+                "id": task_id,
+                "contextId": context_id,
+                "kind": "task",
+                "status": {"state": next_state},
+            }
+            if next_state == "completed":
+                if final_artifacts is not None:
+                    task["artifacts"] = final_artifacts
+                if final_history is not None:
+                    task["history"] = final_history
+            return JSONResponse({"jsonrpc": "2.0", "id": payload["id"], "result": task})
+
+        return JSONResponse(
+            {
+                "jsonrpc": "2.0",
+                "id": payload.get("id"),
+                "error": {"code": -32601, "message": f"unknown method {method}"},
+            }
+        )
+
+    app = Starlette(routes=[Route("/", rpc_endpoint, methods=["POST"])])
+    return app, log
+
+
+def test_call_polls_until_completed():
+    """submitted (from message/send) → working → working → completed should
+    surface the completed task to the caller, with artifacts intact."""
+    app, log = _make_broker_app(
+        states=["working", "working", "completed"],
+        final_artifacts=[
+            {
+                "artifactId": "a1",
+                "parts": [{"kind": "text", "text": "here is your answer"}],
+            }
+        ],
+    )
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {})
+    with _drive_via_asgi(app):
+        result = _run(a2a_call(reason="x", peer_or_url="http://peer", message="hi"))
+
+    assert result["status"]["state"] == "completed"
+    assert result["artifacts"][0]["parts"][0]["text"] == "here is your answer"
+    # message/send + 3 tasks/get round-trips
+    methods = [entry["method"] for entry in log]
+    assert methods == ["message/send", "tasks/get", "tasks/get", "tasks/get"]
+
+
+def test_call_returns_inline_terminal_without_polling():
+    """If message/send already returns a terminal task (no broker / fast peer),
+    we must NOT issue any tasks/get calls."""
+    app, log = _make_rpc_app()
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {})
+    with _drive_via_asgi(app):
+        _run(a2a_call(reason="x", peer_or_url="http://peer", message="hi"))
+    assert [entry["body"]["method"] for entry in log] == ["message/send"]
+
+
+def test_call_stops_polling_on_input_required():
+    """input-required is non-terminal but waiting on us — return the task
+    as-is so the calling Gru can read the embedded prompt."""
+    app, log = _make_broker_app(states=["working", "input-required"])
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {})
+    with _drive_via_asgi(app):
+        result = _run(a2a_call(reason="x", peer_or_url="http://peer", message="hi"))
+    assert result["status"]["state"] == "input-required"
+    # No extra polling after the peer asked us for input.
+    methods = [e["method"] for e in log]
+    assert methods.count("tasks/get") == 2
+
+
+def test_call_propagates_auth_to_tasks_get():
+    """The same bearer used on message/send must flow into tasks/get polls."""
+    app, log = _make_broker_app(states=["completed"], expected_token="secret-9")
+    peers = {"backend": A2APeerConfig(url="http://peer", token="secret-9")}
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: peers)
+    with _drive_via_asgi(app):
+        _run(a2a_call(reason="x", peer_or_url="backend", message="hi"))
+    # Both calls carried the bearer.
+    auths = [entry["auth"] for entry in log]
+    assert auths == ["Bearer secret-9", "Bearer secret-9"]
+
+
+def test_call_timeout_returns_partial_with_marker(monkeypatch):
+    """When the peer never reaches terminal within the deadline, return the
+    latest state we saw with a `_jac_timeout` marker so the calling Gru can
+    tell stale data from a fresh terminal."""
+    # Squash the timeout to a sub-second value AND speed up the poll loop
+    # so the test isn't slow.
+    monkeypatch.setattr("jac.capabilities.a2a.client._CALL_TIMEOUT_S", 0.6)
+    monkeypatch.setattr("jac.capabilities.a2a.client._POLL_INITIAL_INTERVAL_S", 0.05)
+    monkeypatch.setattr("jac.capabilities.a2a.client._POLL_MAX_INTERVAL_S", 0.1)
+
+    # Always "working" — never reaches a terminal state.
+    app, _log = _make_broker_app(states=["working"] * 50)
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {})
+    with _drive_via_asgi(app):
+        result = _run(a2a_call(reason="x", peer_or_url="http://peer", message="hi"))
+    assert result["status"]["state"] == "working"
+    assert result.get("_jac_timeout") is True
+
+
+def test_call_passes_task_id_through_to_tasks_get():
+    """tasks/get params.id must be the id returned by message/send."""
+    app, log = _make_broker_app(states=["completed"])
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {})
+    with _drive_via_asgi(app):
+        _run(a2a_call(reason="x", peer_or_url="http://peer", message="hi"))
+    get_call = next(e for e in log if e["method"] == "tasks/get")
+    assert get_call["body"]["params"]["id"] == "task-poll-1"
+
+
+def test_call_handles_message_response_without_polling():
+    """Some peers reply with a Message (no status block) for simple sync
+    queries — we must return it as-is, never poll."""
+
+    async def rpc_endpoint(request: Request) -> Response:
+        payload = json.loads(await request.body())
+        return JSONResponse(
+            {
+                "jsonrpc": "2.0",
+                "id": payload["id"],
+                "result": {
+                    "kind": "message",
+                    "role": "agent",
+                    "messageId": "m-9",
+                    "parts": [{"kind": "text", "text": "hello back"}],
+                },
+            }
+        )
+
+    app = Starlette(routes=[Route("/", rpc_endpoint, methods=["POST"])])
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {})
+    with _drive_via_asgi(app):
+        result = _run(a2a_call(reason="x", peer_or_url="http://peer", message="hi"))
+    assert result["kind"] == "message"
+    assert result["parts"][0]["text"] == "hello back"

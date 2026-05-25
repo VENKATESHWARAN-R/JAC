@@ -37,6 +37,7 @@ from jac.capabilities.a2a.guest import build_guest_gru
 from jac.capabilities.a2a.server import A2AServer, ServerInfo
 from jac.profiles import A2APeerConfig
 from jac.runtime.events import A2AServerStopped, EventBus
+from jac.runtime.usage import UsageTracker
 from jac.tools import jac_function_toolset
 
 __all__ = [
@@ -93,6 +94,14 @@ class A2ACapability(AbstractCapability[Any]):
     the profile entry is shadowed until the operator removes the
     session entry via ``/a2a peer remove``)."""
 
+    usage_tracker: UsageTracker | None = None
+    """Host's usage tracker (Phase 4.d). When set, the guest server
+    feeds each inbound call's ``result.usage()`` into
+    :meth:`UsageTracker.add_external`, which counts toward
+    ``project_total`` but NOT ``session_total`` (D24). ``None`` in
+    headless mode and in tests — inbound usage still lands in
+    ``inbound.jsonl``'s ``tokens_used`` field either way."""
+
     server: A2AServer | None = field(default=None, init=False, repr=False)
     _strategy_cache: dict[int, AuthStrategy] = field(default_factory=dict, init=False, repr=False)
     """OAuth2 / future stateful strategies live here, keyed by
@@ -138,13 +147,22 @@ class A2ACapability(AbstractCapability[Any]):
         """Live accessor for the active merged-peers map (profile + session)."""
         return self.peers
 
-    def _strategy_for(self, peer: A2APeerConfig) -> AuthStrategy | None:
+    def _strategy_for(
+        self, peer: A2APeerConfig, peer_name: str | None = None
+    ) -> AuthStrategy | None:
         """Return the cached :class:`AuthStrategy` for ``peer``, building one if needed.
 
         Key is ``id(peer.auth)`` — reference identity. New auth-config
         instances (after ``/profile`` rebuild or session-peer add)
         miss the cache and get a fresh strategy, which is exactly the
         invalidation we want.
+
+        Args:
+            peer: the resolved peer config (auth block is what we
+                actually key on).
+            peer_name: optional configured peer name — forwarded to
+                OAuth2 strategies so their token-minted events tag the
+                right peer. ``None`` for raw-URL calls.
         """
         if peer.auth is None:
             return None
@@ -152,7 +170,7 @@ class A2ACapability(AbstractCapability[Any]):
         cached = self._strategy_cache.get(key)
         if cached is not None:
             return cached
-        strategy = make_strategy(peer.auth)
+        strategy = make_strategy(peer.auth, bus=self.bus, peer_name=peer_name)
         self._strategy_cache[key] = strategy
         return strategy
 
@@ -224,6 +242,7 @@ class A2ACapability(AbstractCapability[Any]):
             bus=self.bus,
             profile_name=self.profile_name,
             retention_days=self.retention_days,
+            usage_tracker=self.usage_tracker,
         )
         info = await server.start(host=host, port=port, unsafe=unsafe)
         self.server = server
@@ -255,6 +274,7 @@ def make_a2a_capability(
     profile_name: str | None = None,
     retention_days: int = 3,
     profile_peers: dict[str, A2APeerConfig] | None = None,
+    usage_tracker: UsageTracker | None = None,
     peers: dict[str, A2APeerConfig] | None = None,  # legacy alias
 ) -> A2ACapability:
     """Build a fresh :class:`A2ACapability`. One per agent / session.
@@ -284,6 +304,7 @@ def make_a2a_capability(
         profile_name=profile_name,
         retention_days=retention_days,
         profile_peers=profile_peers or {},
+        usage_tracker=usage_tracker,
     )
 
 

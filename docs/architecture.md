@@ -167,3 +167,93 @@ Locked decisions — do not deviate without updating this table and `docs/progre
 - Default model selection per minion template (Phase 5 grooming will lock this).
 - Which tools default to `risk: high` beyond the obvious (shell, delete).
 - Approval prompt response format — `y/n/feedback` or fewer options?
+
+## 6. A2A inbound flow
+
+Peers reach our guest Gru via the JSON-RPC server scaffolded by `fasta2a`. Authentication, audit, and budget accounting are JAC's responsibilities; the wire protocol is fasta2a's. Locked in D24 and D30; budget integration added in Phase 4.d.
+
+```mermaid
+sequenceDiagram
+    participant Peer as A2A Peer
+    participant Auth as BearerAuthMiddleware
+    participant Cap as A2ACapability
+    participant Worker as AuditingAgentWorker
+    participant Guest as Guest Gru
+    participant Storage as JacFileStorage<br/>contexts/
+    participant Audit as inbound.jsonl
+    participant Usage as UsageTracker
+
+    Peer->>Auth: POST / (JSON-RPC message/send) + Bearer
+    alt token invalid
+        Auth-->>Peer: 401
+    else token valid
+        Auth->>Cap: token captured (per-request)
+        Cap->>Worker: dispatch run_task
+        Worker->>Worker: emit A2AInboundCall
+        Worker->>Storage: load_context(context_id)
+        Storage-->>Worker: prior message_history
+        Worker->>Guest: agent.run(history)
+        Guest-->>Worker: result + usage()
+        Worker->>Usage: add_external(in, out)<br/>(project_total only)
+        Worker->>Storage: update_context(all_messages)
+        Worker->>Audit: append InboundRecord
+        Worker-->>Peer: JSON-RPC result
+        Worker->>Worker: emit A2AInboundCompleted
+    end
+```
+
+Side notes:
+
+- The guest's toolset is narrowed to `[read_file, list_dir, grep, glob]` (D24) — no writes, no shell, no memory, no clarify. `FilesystemCapability` bundles writes but the guest never installs an approval handler, so the write tools are unreachable.
+- Storage lives under `<project>/.agents/a2a/contexts/<context_id>.json`; the audit log at `<project>/.agents/a2a/inbound.jsonl` is append-only.
+- A retention loop runs every hour while the server is up, pruning context files older than `a2a.context_retention_days` (default 3). The audit log is not rotated by us — the operator owns long-term ledger retention.
+- `A2AInboundCall` / `A2AInboundCompleted` events post to the host's event bus → the host renderer paints `[a2a in ←]` / `[a2a in ✓]` notifications.
+- Guest token usage feeds `UsageTracker.add_external(in, out)`, which counts toward `project_total` but **not** `session_total` (D24 + D25). `/tokens` shows a dedicated "a2a guest" line.
+
+## 8. A2A outbound flow
+
+Gru calls peers via two tools — `a2a_discover` (peek at the AgentCard) and `a2a_call` (actually send a message). Peer credentials never enter the model's context: the LLM passes a peer name, the capability resolves it to a config, the auth strategy mints headers. Locked in D24 and D31.
+
+```mermaid
+sequenceDiagram
+    participant Gru
+    participant Tool as a2a_call (jac_tool)
+    participant Cap as A2ACapability
+    participant Strat as AuthStrategy<br/>(bearer / api_key / oauth2)
+    participant IDP as OAuth2 IDP<br/>(client_credentials only)
+    participant Peer as A2A Peer
+
+    Gru->>Tool: a2a_call(reason, peer_name, message)
+    Tool->>Cap: resolve peer_name → (url, peer_config)
+    alt no auth block
+        Tool->>Peer: POST / (JSON-RPC) no Authorization
+    else auth configured
+        Tool->>Strat: headers_for()
+        alt OAuth2 + cache miss / expired
+            Strat->>IDP: POST token_url (client_credentials)
+            IDP-->>Strat: access_token + expires_in
+            Strat->>Cap: emit A2AOutboundTokenMinted
+        end
+        Strat-->>Tool: {"Authorization": "Bearer ..."}
+        Tool->>Peer: POST / (JSON-RPC) + Bearer
+    end
+    Peer-->>Tool: JSON-RPC result or error
+    Tool->>Cap: emit A2AOutboundCompleted
+    Tool-->>Gru: parsed result dict
+```
+
+Auth strategy choices (D31):
+
+| `auth.type` | Static? | I/O | When to use |
+| --- | --- | --- | --- |
+| `bearer` | yes | none | JAC↔JAC pre-shared static tokens, simple PSK setups |
+| `api_key` | yes | none | API key in a custom header (`X-API-Key`, etc.) |
+| `oauth2_client_credentials` | no — refreshes lazily | POST to token endpoint | Azure Entra, OIDC providers supporting client_credentials |
+| `oidc` (Phase 4.e) | no | discovery + token endpoint | Any IDP advertising `.well-known/openid-configuration` |
+| `gcp_id_token` (Phase 4.e) | no | metadata service / service account | Cloud Run, App Engine, GKE workloads |
+
+Privacy guarantees baked into the design:
+
+- **Credentials never enter the LLM context.** `a2a_call` accepts `peer_or_url` and `message`, not a token. The model only sees peer names.
+- **Session peers stay in memory.** `/a2a peer add` registers a peer for the running session only — never written to disk. The profile YAML is for stable peers; one-off testing uses the slash command + `getpass`.
+- **Token cache is per-peer.** Two peers behind the same IDP get independent strategy instances so an audit can correlate token mints to specific peer configs.

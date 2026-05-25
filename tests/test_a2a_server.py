@@ -213,3 +213,101 @@ def test_stop_when_not_running_is_noop():
 # Suppress an unused-import lint — contextlib is not used today but kept so
 # follow-up tests can `contextlib.suppress(...)` around teardown noise.
 _ = contextlib
+
+
+# ---------- Phase 4.d: retention timer ----------
+
+
+def test_retention_loop_starts_with_server_and_stops_with_it(tmp_path, monkeypatch, free_port: int):
+    """The 1-hour retention loop spins up on start, runs on the server's
+    event loop, and is cancelled cleanly on stop. We don't wait for it
+    to fire (would burn an hour) — we assert task lifecycle."""
+    from jac.workspace import paths
+
+    monkeypatch.setattr(paths, "find_project_root", lambda start=None: tmp_path)
+    if hasattr(paths.find_project_root, "cache_clear"):
+        paths.find_project_root.cache_clear()
+
+    cap = make_a2a_capability(model=TestModel(), profile_name="test")
+
+    async def _scenario():
+        await cap.start_server(host="127.0.0.1", port=free_port, unsafe=True)
+        try:
+            assert cap.server is not None
+            retention = cap.server._retention_task
+            assert retention is not None
+            assert not retention.done()
+        finally:
+            await cap.stop_server()
+        # Stop must cancel + clear the retention task.
+        assert cap.server is None
+
+    _run(_scenario())
+
+
+def test_retention_disabled_when_retention_days_zero(tmp_path, monkeypatch, free_port: int):
+    """If retention_days=0 (keep forever), the timer must NOT start —
+    otherwise we'd spin a background task that does no useful work."""
+    from jac.workspace import paths
+
+    monkeypatch.setattr(paths, "find_project_root", lambda start=None: tmp_path)
+    if hasattr(paths.find_project_root, "cache_clear"):
+        paths.find_project_root.cache_clear()
+
+    cap = make_a2a_capability(model=TestModel(), profile_name="test", retention_days=0)
+
+    async def _scenario():
+        await cap.start_server(host="127.0.0.1", port=free_port, unsafe=True)
+        try:
+            assert cap.server is not None
+            assert cap.server._retention_task is None
+        finally:
+            await cap.shutdown()
+
+    _run(_scenario())
+
+
+# ---------- Phase 4.d: usage tracker plumbing ----------
+
+
+def test_capability_accepts_and_threads_usage_tracker(tmp_path, monkeypatch, free_port: int):
+    """The usage tracker passed to A2ACapability must make it all the way
+    to the AuditingAgentWorker so inbound calls can feed add_external."""
+    from jac.runtime.events import EventBus
+    from jac.runtime.usage import BudgetLimits, UsageTracker
+    from jac.workspace import paths
+
+    monkeypatch.setattr(paths, "find_project_root", lambda start=None: tmp_path)
+    if hasattr(paths.find_project_root, "cache_clear"):
+        paths.find_project_root.cache_clear()
+
+    tracker = UsageTracker(
+        session_id="s1",
+        bus=None,
+        usage_file=None,
+        limits=BudgetLimits(
+            session_input_tokens=None,
+            session_total_tokens=None,
+            project_total_tokens=None,
+            warn_pct=80,
+            hardstop_pct=100,
+        ),
+    )
+    cap = make_a2a_capability(
+        bus=EventBus(),
+        model=TestModel(),
+        profile_name="test",
+        usage_tracker=tracker,
+    )
+
+    async def _scenario():
+        await cap.start_server(host="127.0.0.1", port=free_port, unsafe=True)
+        try:
+            assert cap.server is not None
+            # We can't introspect the worker without poking fasta2a internals,
+            # but server has the tracker reference — that's the seam we own.
+            assert cap.server._usage_tracker is tracker
+        finally:
+            await cap.shutdown()
+
+    _run(_scenario())

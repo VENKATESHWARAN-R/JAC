@@ -27,6 +27,7 @@ from jac.runtime.events import (
     A2AInboundCompleted,
     A2AOutboundCall,
     A2AOutboundCompleted,
+    A2AOutboundTokenMinted,
     ApprovalRequest,
     ApprovalResponse,
     BudgetHardStop,
@@ -256,6 +257,16 @@ class CliRenderer:
             self.console.print(
                 f"[cyan][a2a out ✓][/cyan] [{state_color}]{event.state}[/{state_color}] "
                 f"[dim]{event.target} ({event.duration_ms}ms)[/dim]",
+                highlight=False,
+            )
+        elif isinstance(event, A2AOutboundTokenMinted):
+            # OAuth2 round-tripped to the IDP and got a fresh access token.
+            # Surface as a muted single line so the operator sees IDP
+            # traffic without it dominating scrollback.
+            target = event.peer_name or event.token_url
+            self.console.print(
+                f"[cyan][a2a token][/cyan] [dim]minted access token for "
+                f"[bold]{target}[/bold] (expires in {event.expires_in_s}s)[/dim]",
                 highlight=False,
             )
         elif isinstance(event, RunCompleted):

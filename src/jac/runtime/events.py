@@ -358,6 +358,23 @@ class A2AOutboundCall(JacEvent):
 
 
 @dataclass(frozen=True, slots=True)
+class A2AOutboundTokenMinted(JacEvent):
+    """OAuth2 client_credentials just minted a fresh access token (Phase 4.d).
+
+    Emitted by :class:`OAuth2ClientCredentialsStrategy` right after a
+    successful refresh — gives the operator visibility into IDP
+    roundtrips. ``token_url`` is the IDP endpoint we hit; ``peer_name``
+    is the configured peer that triggered the mint (may be ``None``
+    when the strategy is invoked via raw URL); ``expires_in_s`` is
+    the published lifetime (or 0 when the IDP returned none).
+    """
+
+    token_url: str
+    peer_name: str | None
+    expires_in_s: int
+
+
+@dataclass(frozen=True, slots=True)
 class A2AOutboundCompleted(JacEvent):
     """An outbound A2A call finished (D24, Phase 4.b).
 
@@ -410,6 +427,7 @@ type JacEventT = (
     | A2AInboundCompleted
     | A2AOutboundCall
     | A2AOutboundCompleted
+    | A2AOutboundTokenMinted
     | RunCompleted
     | RunFailed
 )

@@ -1,6 +1,6 @@
 # JAC — Implementation Progress
 
-> **Just Another Companion/CLI** · **Updated:** 2026-05-25 · keep this in sync as work lands.
+> **Just Another Companion/CLI** · **Updated:** 2026-05-26 · keep this in sync as work lands.
 
 This file is the **live progress dashboard**: what is shipped, what is active, and what should happen next. It should be short enough for an agent to read at the start of every task without drowning in old implementation detail.
 
@@ -14,8 +14,8 @@ For deeper context:
 
 ## Agent Start Here
 
-- **Current active work:** Phase 4.d — A2A polish: `/a2a status`, inbound usage accounting, retention timer, fresh-token visibility, and architecture diagrams.
-- **Nearest follow-up:** Phase 4.e — OIDC + GCP ID token auth strategies after Phase 4.d lands.
+- **Current active work:** Phase 4.e — OIDC + GCP ID token auth strategies (next in flight after Phase 4.d wrapped 2026-05-26).
+- **Nearest follow-up:** Phase 3 — community-format Skills loader.
 - **Do not build yet without a grooming session:** Phase 5 minions, v2 YOLO/sandboxing, Plan Mode + `ModeCapability`.
 - **Important constraint:** A2A and Skills are no longer v2 work. A2A is Phase 4; Skills are Phase 3; Minions are Phase 5.
 - **When design is ambiguous:** `architecture.md` is the source of truth for how; `idea.md` is the source of truth for what JAC is and is not.
@@ -34,7 +34,7 @@ For deeper context:
 | Phase 1.7 — Coworker experience | ✅ Complete (minus deferred) | compaction, status bar, slash commands, budgets, feedback, plan persistence, Tavily/DDG search. Plan Mode deferred to v2. |
 | Phase 2b — Summarizer minion | ⛔ Superseded | rolled into Phase 1.7.a token-aware compaction |
 | Phase 3 — Skills (D21) | ⏸ Queued | community-format skill loader + inline mode |
-| Phase 4 — A2A (D24, D30, D31) | 🚧 In flight | PR1-PR3 landed; Phase 4.d polish is active; Phase 4.e auth extensions next |
+| Phase 4 — A2A (D24, D30, D31) | 🚧 In flight | PR1-PR4 landed; Phase 4.e auth extensions (OIDC / GCP) are next |
 | Phase 5 — Minions | ⏸ Queued | runtime for skills with `mode: minion`; needs grooming before implementation |
 | Phase 6 — MCP | ⏸ Queued | external MCP servers + D28 `reason:` compromise |
 | Phase 7 — Quality | 🚧 In flight | ruff + ty + Zensical docs shipped; remaining gaps in broader test coverage |
@@ -43,21 +43,7 @@ For deeper context:
 
 ---
 
-## Current Focus — Phase 4.d A2A Polish ⏸
-
-**Goal:** make A2A operable, not just functional.
-
-- [ ] `/a2a status` — running? bind host:port? truncated token? peer count? last 5 calls?
-- [ ] Budget integration: per-inbound-call `result.usage()` feeds host's `UsageTracker.add_external(input, output)` — counts under `project_total` only, **not** `session_total`. Surfaces in `/tokens` as a separate "a2a guest" line.
-- [ ] Context retention enforcement: `cleanup_old_contexts(retention_days)` runs on server start AND on a 1-hour timer while server runs.
-- [ ] OAuth2 strategy: surface a separate `[a2a token]` event when a fresh access token is minted.
-- [ ] `architecture.md §6 + §8` diagrams refreshed to show A2A flow: inbound, outbound, storage, audit, and outbound auth strategies.
-
-See [`progress-a2a.md`](progress-a2a.md) for the completed PR1-PR3 log and queued Phase 4.e / 4.1 context.
-
----
-
-## Next Queued — Phase 4.e OIDC + GCP ID Tokens ⏸
+## Current Focus — Phase 4.e OIDC + GCP ID Tokens ⏸
 
 **Goal:** add the cloud auth strategies enabled by D31's outbound auth protocol.
 
@@ -66,6 +52,21 @@ See [`progress-a2a.md`](progress-a2a.md) for the completed PR1-PR3 log and queue
 - [ ] Add `google-auth` as an optional dependency (`jac[gcp]`) so the base wheel stays small.
 - [ ] Add strategy classes and `make_strategy` dispatch branches.
 - [ ] Update `gru_system.md` and user docs with Azure / GCP / Okta peer examples.
+
+See [`progress-a2a.md`](progress-a2a.md) for the completed PR1-PR4 log and queued Phase 4.1 context.
+
+---
+
+## Previously Active — Phase 4.d A2A Polish ✅ (landed 2026-05-26)
+
+**Goal:** make A2A operable, not just functional.
+
+- [x] `/a2a status` — now renders server state, peer count (with profile/session split), and the last 5 inbound calls tailed from `inbound.jsonl`.
+- [x] Budget integration: `UsageTracker.add_external(input, output)` records A2A guest call usage onto a new `external` counter; `project_total` includes it, `session_total` does not. JSONL rows carry a `kind` marker (`session` / `a2a_guest`). `AuditingAgentWorker.run_task` now captures `result.usage()` from the guest agent. `/tokens` shows a dedicated "a2a guest" line when external usage > 0.
+- [x] Retention enforcement: in addition to the existing run-on-start pass, the server now spawns a 1-hour periodic `cleanup_old_contexts` task; cancelled cleanly on stop. Skipped when `retention_days == 0`.
+- [x] OAuth2 fresh-token visibility: new `A2AOutboundTokenMinted` event posted by `OAuth2ClientCredentialsStrategy` after every successful refresh; renderer paints a muted `[a2a token]` line with peer name + expiry. Bearer / api_key strategies don't emit (no IDP roundtrip to surface).
+- [x] `architecture.md §6 + §8` added — inbound + outbound sequence diagrams with storage, audit, usage, and auth strategy table.
+- [x] Tests landed: external-usage accounting (5 new in `test_usage.py`), status renderings (4 new in `test_a2a_slash.py`), retention lifecycle + usage tracker plumbing (3 new in `test_a2a_server.py`), token-minted event + bus threading (4 new in `test_a2a_auth_strategies.py`). 312 tests pass.
 
 ---
 

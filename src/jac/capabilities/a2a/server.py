@@ -30,6 +30,7 @@ import asyncio
 import contextlib
 import logging
 import time
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -38,6 +39,7 @@ from fasta2a.broker import Broker, InMemoryBroker
 from fasta2a.pydantic_ai import AgentWorker, agent_to_a2a
 from fasta2a.schema import AgentCard, Message, TaskSendParams
 from pydantic_ai import Agent
+from pydantic_ai.messages import ModelRequest
 
 from jac.capabilities.a2a.audit import (
     InboundLog,
@@ -63,6 +65,7 @@ from jac.runtime.events import (
     EventBus,
     JacEventT,
 )
+from jac.runtime.usage import UsageTracker
 from jac.workspace import paths
 
 # uvicorn defaults to INFO which prints every connection — way too noisy
@@ -75,6 +78,12 @@ _UVICORN_LOG_LEVEL = "warning"
 # the port's already taken.
 _BIND_WAIT_TIMEOUT_S = 3.0
 _BIND_POLL_INTERVAL_S = 0.05
+
+# Period for the in-server retention cleanup pass. 1 hour matches the
+# Phase 4.d spec: long enough not to fight a foreground REPL doing real
+# work, short enough that a server running for days keeps the contexts
+# folder under control.
+_RETENTION_INTERVAL_S = 60 * 60
 
 
 @dataclass(frozen=True)
@@ -116,13 +125,24 @@ class AuditingAgentWorker(AgentWorker):
         bus: EventBus | None,
         inbound_log: InboundLog,
         get_peer_id: Callable[[], str],
+        usage_tracker: UsageTracker | None = None,
     ) -> None:
         super().__init__(agent=agent, broker=broker, storage=storage)
         self._bus = bus
         self._inbound_log = inbound_log
         self._get_peer_id = get_peer_id
+        self._usage_tracker = usage_tracker
 
     async def run_task(self, params: TaskSendParams) -> None:
+        """Run one inbound A2A task with audit + bus + usage tracking.
+
+        Mirrors fasta2a's ``AgentWorker.run_task`` storage/state choreography
+        — we re-implement it (rather than ``super().run_task()``) so we can
+        capture the agent's ``result.usage()`` between the run and the
+        storage-update calls. The duplication is intentional and small;
+        if fasta2a's worker grows new responsibilities (streaming, partial
+        results), we'll feel it via the test suite and update here.
+        """
         message_text = _extract_text(params.get("message", {}))
         preview = make_message_preview(message_text)
         peer_id = self._get_peer_id()
@@ -140,15 +160,67 @@ class AuditingAgentWorker(AgentWorker):
 
         started_at = time.monotonic()
         state = "completed"
+        tokens_in = 0
+        tokens_out = 0
         try:
-            await super().run_task(params)
+            task = await self.storage.load_task(task_id)
+            if task is None:
+                raise ValueError(f"Task {task_id} not found")
+            if task["status"]["state"] != "submitted":
+                raise ValueError(
+                    f"Task {task_id} has already been processed (state: {task['status']['state']})"
+                )
+            await self.storage.update_task(task_id, state="working")
+
+            history = await self.storage.load_context(context_id) or []
+            history.extend(self.build_message_history(task.get("history", [])))
+
+            try:
+                result = await self.agent.run(message_history=history)  # type: ignore[arg-type]
+            except Exception:
+                await self.storage.update_task(task_id, state="failed")
+                raise
+
+            # ``AgentRunResult.usage`` is a property as of pydantic-ai
+            # 0.1+ (calling it raises a deprecation warning and will
+            # break in a future release).
+            usage = result.usage
+            tokens_in = int(getattr(usage, "input_tokens", 0) or 0)
+            tokens_out = int(getattr(usage, "output_tokens", 0) or 0)
+
+            await self.storage.update_context(context_id, result.all_messages())
+
+            a2a_messages: list[Message] = []
+            for message in result.new_messages():
+                if isinstance(message, ModelRequest):
+                    continue
+                a2a_parts = self._response_parts_to_a2a(message.parts)
+                if a2a_parts:
+                    a2a_messages.append(
+                        Message(
+                            role="agent",
+                            parts=a2a_parts,
+                            kind="message",
+                            message_id=str(uuid.uuid4()),
+                        )
+                    )
+            artifacts = self.build_artifacts(result.output)
+            await self.storage.update_task(
+                task_id,
+                state="completed",
+                new_artifacts=artifacts,
+                new_messages=a2a_messages,
+            )
         except Exception as exc:  # pragma: no cover - parity with parent
             state = "failed"
             logging.getLogger("jac.a2a").exception("guest run_task failed: %s", exc)
             raise
         finally:
             duration_ms = int((time.monotonic() - started_at) * 1000)
-            tokens_used = 0  # PR4 wires real usage accounting; PR1 logs zero
+            tokens_used = tokens_in + tokens_out
+            if self._usage_tracker is not None and tokens_used > 0:
+                with contextlib.suppress(Exception):
+                    await self._usage_tracker.add_external(tokens_in, tokens_out)
             await self._emit(
                 A2AInboundCompleted(
                     peer_id=peer_id,
@@ -192,14 +264,17 @@ class A2AServer:
         bus: EventBus | None = None,
         profile_name: str | None = None,
         retention_days: int = 3,
+        usage_tracker: UsageTracker | None = None,
     ) -> None:
         self._guest_agent = guest_agent
         self._bus = bus
         self._profile_name = profile_name
         self._retention_days = retention_days
+        self._usage_tracker = usage_tracker
 
         self._uvicorn_server: uvicorn.Server | None = None
         self._serve_task: asyncio.Task[None] | None = None
+        self._retention_task: asyncio.Task[None] | None = None
         self._info: ServerInfo | None = None
         # Peer identity for the *current* inbound request. fasta2a's
         # worker doesn't expose the originating HTTP request to the
@@ -297,6 +372,14 @@ class A2AServer:
         if removed:
             logging.getLogger("jac.a2a").info("pruned %d expired A2A context file(s)", removed)
 
+        # And keep pruning while we run — once an hour, regardless of
+        # whether anyone is calling. Phase 4.d.
+        if self._retention_days > 0:
+            self._retention_task = asyncio.create_task(
+                self._retention_loop(),
+                name="jac.a2a.retention",
+            )
+
         await self._emit(
             A2AServerStarted(
                 url=base_url,
@@ -314,6 +397,15 @@ class A2AServer:
         if server is None or task is None:
             return
 
+        # Cancel the retention loop first so it doesn't keep running
+        # after the server is gone (mostly benign, but cleaner not to).
+        retention = self._retention_task
+        if retention is not None and not retention.done():
+            retention.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await retention
+        self._retention_task = None
+
         server.should_exit = True
         with contextlib.suppress(Exception):
             await asyncio.wait_for(task, timeout=5.0)
@@ -322,6 +414,28 @@ class A2AServer:
         self._serve_task = None
         self._info = None
         await self._emit(A2AServerStopped(reason=reason))
+
+    async def _retention_loop(self) -> None:
+        """Sleep ``_RETENTION_INTERVAL_S``, then prune; repeat until cancelled.
+
+        Best-effort: any error inside the prune call is logged and the
+        loop continues. Cancellation (via :meth:`stop`) unwinds the sleep
+        cleanly without raising past the cancel.
+        """
+        log = logging.getLogger("jac.a2a")
+        try:
+            while True:
+                await asyncio.sleep(_RETENTION_INTERVAL_S)
+                try:
+                    removed = cleanup_old_contexts(
+                        paths.project_a2a_contexts_dir(), self._retention_days
+                    )
+                    if removed:
+                        log.info("pruned %d expired A2A context file(s)", removed)
+                except Exception:  # pragma: no cover - belt + braces
+                    log.exception("retention pass failed; will retry next interval")
+        except asyncio.CancelledError:
+            return
 
     # ---------- internal helpers ----------
 
@@ -379,6 +493,7 @@ class A2AServer:
             bus=self._bus,
             inbound_log=inbound_log,
             get_peer_id=_get_peer_id,
+            usage_tracker=self._usage_tracker,
         )
 
         # Lifespan: run task_manager + agent context + worker, mirroring

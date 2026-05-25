@@ -52,6 +52,25 @@ class _SessionCounters:
 
 
 @dataclass
+class _ExternalCounters:
+    """A2A guest token usage attributed to this REPL session (D25 + D24).
+
+    Distinct from :class:`_SessionCounters` because A2A guest calls do **not**
+    count toward ``session_total`` — they're a project-level cost (the host
+    consented to expose the guest server, peers driving it consume host model
+    tokens). They DO count toward ``project_total`` so a runaway peer can't
+    bypass the project budget.
+    """
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+    @property
+    def total_tokens(self) -> int:
+        return self.input_tokens + self.output_tokens
+
+
+@dataclass
 class BudgetLimits:
     """Snapshot of budget knobs the tracker checks against.
 
@@ -99,10 +118,13 @@ class UsageTracker:
     usage_file: Path | None
     limits: BudgetLimits
     counters: _SessionCounters = field(default_factory=_SessionCounters)
+    external: _ExternalCounters = field(default_factory=_ExternalCounters)
+    """A2A guest call usage attributed to this session (Phase 4.d).
+    Counts toward :attr:`project_total_tokens` but NOT toward session totals."""
     project_baseline: int = 0
-    """Sum of input+output across **every prior session** in this project.
-    Loaded once on construction from ``usage.jsonl``; never mutated again
-    (this session's contributions live in ``counters``)."""
+    """Sum of input+output across **every prior session** in this project,
+    plus any prior-session external (A2A guest) usage. Loaded once on
+    construction from ``usage.jsonl``; never mutated again."""
     _warned: set[BudgetKind] = field(default_factory=set)
     """Dedup set so each ``(kind, warn)`` event fires at most once."""
     _stopped: set[BudgetKind] = field(default_factory=set)
@@ -110,8 +132,8 @@ class UsageTracker:
 
     @property
     def project_total_tokens(self) -> int:
-        """Live project total: prior-session baseline + current-session usage."""
-        return self.project_baseline + self.counters.total_tokens
+        """Live project total: baseline + current session + A2A guest usage."""
+        return self.project_baseline + self.counters.total_tokens + self.external.total_tokens
 
     def usage_for(self, kind: BudgetKind) -> int:
         if kind == "session_input":
@@ -129,10 +151,30 @@ class UsageTracker:
         """
         self.counters.input_tokens += max(0, input_tokens)
         self.counters.output_tokens += max(0, output_tokens)
-        self._append_jsonl(input_tokens, output_tokens)
+        self._append_jsonl(input_tokens, output_tokens, kind="session")
         await self._check_thresholds()
 
-    def _append_jsonl(self, input_tokens: int, output_tokens: int) -> None:
+    async def add_external(self, input_tokens: int, output_tokens: int) -> None:
+        """Record A2A guest call usage (Phase 4.d, D24 budget integration).
+
+        Mirrors :meth:`record` but:
+
+        - Bumps the **external** counters instead of session counters, so
+          ``session_total`` is unaffected. A peer running the guest server
+          can't make the host's session look like it ran a 10x longer
+          conversation than it did.
+        - Tags the JSONL row with ``kind="a2a_guest"`` so
+          :func:`load_project_baseline` can reconstruct the same split
+          on restart.
+        - Only re-checks the ``project_total`` threshold (the only one
+          external usage can move).
+        """
+        self.external.input_tokens += max(0, input_tokens)
+        self.external.output_tokens += max(0, output_tokens)
+        self._append_jsonl(input_tokens, output_tokens, kind="a2a_guest")
+        await self._check_thresholds()
+
+    def _append_jsonl(self, input_tokens: int, output_tokens: int, *, kind: str) -> None:
         if self.usage_file is None:
             return
         line = json.dumps(
@@ -141,6 +183,7 @@ class UsageTracker:
                 "ts": int(time.time()),
                 "input_tokens": int(max(0, input_tokens)),
                 "output_tokens": int(max(0, output_tokens)),
+                "kind": kind,
             }
         )
         self.usage_file.parent.mkdir(parents=True, exist_ok=True)

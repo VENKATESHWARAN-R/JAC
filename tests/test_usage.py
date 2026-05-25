@@ -320,3 +320,85 @@ def test_extend_rejects_non_positive_amount() -> None:
         pass
     else:
         raise AssertionError("extend should reject non-positive amounts")
+
+
+# ---------- add_external (Phase 4.d — A2A inbound usage) ----------
+
+
+def test_add_external_bumps_project_not_session(tmp_path: Path) -> None:
+    """A2A guest calls feed project_total but never session_total (D24)."""
+    tracker = UsageTracker(
+        session_id="s1",
+        bus=None,
+        usage_file=tmp_path / "usage.jsonl",
+        limits=_limits(),
+    )
+    _run(tracker.record(input_tokens=100, output_tokens=50))  # host session traffic
+    _run(tracker.add_external(input_tokens=400, output_tokens=200))  # guest traffic
+
+    # Session counters reflect host only.
+    assert tracker.counters.input_tokens == 100
+    assert tracker.counters.output_tokens == 50
+    assert tracker.counters.total_tokens == 150
+
+    # External counters carry the guest call.
+    assert tracker.external.input_tokens == 400
+    assert tracker.external.output_tokens == 200
+    assert tracker.external.total_tokens == 600
+
+    # Project_total sums both.
+    assert tracker.project_total_tokens == 750
+
+
+def test_add_external_persists_jsonl_with_kind_marker(tmp_path: Path) -> None:
+    usage_file = tmp_path / "usage.jsonl"
+    tracker = UsageTracker(session_id="s1", bus=None, usage_file=usage_file, limits=_limits())
+    _run(tracker.add_external(input_tokens=10, output_tokens=20))
+
+    lines = usage_file.read_text().strip().splitlines()
+    assert len(lines) == 1
+    entry = json.loads(lines[0])
+    assert entry["session_id"] == "s1"
+    assert entry["input_tokens"] == 10
+    assert entry["output_tokens"] == 20
+    assert entry["kind"] == "a2a_guest"
+
+
+def test_record_persists_with_kind_session(tmp_path: Path) -> None:
+    """Regular .record() lines carry kind='session' so future loaders can
+    disaggregate host vs guest activity."""
+    usage_file = tmp_path / "usage.jsonl"
+    tracker = UsageTracker(session_id="s1", bus=None, usage_file=usage_file, limits=_limits())
+    _run(tracker.record(input_tokens=42, output_tokens=8))
+    entry = json.loads(usage_file.read_text().strip().splitlines()[0])
+    assert entry["kind"] == "session"
+
+
+def test_add_external_triggers_project_total_warning() -> None:
+    """A peer can push us over project_total even if session_total stays small."""
+    bus = EventBus()
+    tracker = UsageTracker(
+        session_id="s1",
+        bus=bus,
+        usage_file=None,
+        limits=_limits(project_total=1000),
+    )
+    _run(tracker.add_external(input_tokens=400, output_tokens=400))  # 80% of project
+    events = _drain(bus)
+    assert len(events) == 1
+    assert isinstance(events[0], BudgetWarning)
+    assert events[0].kind == "project_total"
+
+
+def test_add_external_does_not_double_count_session_budgets() -> None:
+    """A2A traffic must NOT trigger session_input / session_total thresholds."""
+    bus = EventBus()
+    tracker = UsageTracker(
+        session_id="s1",
+        bus=bus,
+        usage_file=None,
+        limits=_limits(session_input=100, session_total=100),
+    )
+    _run(tracker.add_external(input_tokens=5000, output_tokens=5000))
+    # No session_* events — only project_total could fire and it's unconfigured.
+    assert _drain(bus) == []

@@ -160,6 +160,104 @@ def test_status_when_not_running(ctx: _Captured):
     assert "not running" in ctx.buf.getvalue()
 
 
+def test_status_renders_peer_count(ctx: _Captured):
+    """When peers are configured, /a2a status shows a count line."""
+    from jac.profiles import A2APeerConfig, BearerAuth
+
+    ctx.ctx.a2a.profile_peers = {
+        "remote-a": A2APeerConfig(url="http://a.example", auth=BearerAuth(token="t1")),
+        "remote-b": A2APeerConfig(url="http://b.example"),
+    }
+    a2a_handler(ctx.ctx, "status")
+    out = ctx.buf.getvalue()
+    assert "A2A peers" in out
+    assert "2" in out
+    assert "/a2a peers" in out  # follow-up hint
+
+
+def test_status_renders_last_inbound_calls(ctx: _Captured, tmp_path, monkeypatch):
+    """When inbound.jsonl has entries, /a2a status surfaces the last 5."""
+    import json as _json
+
+    from jac.workspace import paths
+
+    log_dir = tmp_path / ".agents" / "a2a"
+    log_dir.mkdir(parents=True)
+    log_file = log_dir / "inbound.jsonl"
+    monkeypatch.setattr(paths, "project_a2a_inbound_log", lambda: log_file)
+
+    # Seed seven rows; status should only print the last five.
+    rows = [
+        {
+            "ts": f"2026-05-25T10:0{i}:00+00:00",
+            "peer_id": f"peer-{i}",
+            "context_id": f"ctx-{i}",
+            "task_id": f"task-{i}",
+            "state": "completed" if i % 2 == 0 else "failed",
+            "duration_ms": 100 + i,
+            "tokens_used": 10 * i,
+            "message_preview": f"hi from peer {i}",
+        }
+        for i in range(7)
+    ]
+    log_file.write_text("\n".join(_json.dumps(r) for r in rows) + "\n")
+
+    a2a_handler(ctx.ctx, "status")
+    out = ctx.buf.getvalue()
+    assert "last 5 call(s)" in out
+    # First two peers should NOT appear (older than the window).
+    assert "peer-0" not in out
+    assert "peer-1" not in out
+    # Latest five should.
+    for i in range(2, 7):
+        assert f"peer-{i}" in out
+    # A failed row colors red (look for the state literal not the color tag).
+    assert "failed" in out
+    assert "completed" in out
+
+
+def test_status_handles_empty_inbound_log(ctx: _Captured, tmp_path, monkeypatch):
+    from jac.workspace import paths
+
+    log_file = tmp_path / ".agents" / "a2a" / "inbound.jsonl"
+    monkeypatch.setattr(paths, "project_a2a_inbound_log", lambda: log_file)
+    # File doesn't exist — status should not crash.
+    a2a_handler(ctx.ctx, "status")
+    out = ctx.buf.getvalue()
+    assert "no calls recorded" in out
+
+
+def test_status_skips_malformed_inbound_rows(ctx: _Captured, tmp_path, monkeypatch):
+    """A garbled row must never bring /a2a status down."""
+    import json as _json
+
+    from jac.workspace import paths
+
+    log_dir = tmp_path / ".agents" / "a2a"
+    log_dir.mkdir(parents=True)
+    log_file = log_dir / "inbound.jsonl"
+    monkeypatch.setattr(paths, "project_a2a_inbound_log", lambda: log_file)
+    log_file.write_text(
+        "{not json\n"
+        + _json.dumps(
+            {
+                "ts": "2026-05-25T11:00:00+00:00",
+                "peer_id": "good-peer",
+                "context_id": "c",
+                "task_id": "t",
+                "state": "completed",
+                "duration_ms": 42,
+                "tokens_used": 0,
+                "message_preview": "ok",
+            }
+        )
+        + "\n"
+    )
+    a2a_handler(ctx.ctx, "status")
+    out = ctx.buf.getvalue()
+    assert "good-peer" in out
+
+
 def test_token_when_not_running(ctx: _Captured):
     result = a2a_handler(ctx.ctx, "token")
     assert isinstance(result, Handled)

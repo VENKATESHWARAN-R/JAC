@@ -337,6 +337,11 @@ async def _repl_loop(
             hardstop_pct=settings.budget.hardstop_pct,
         ),
     )
+    # Wire the tracker into the A2A capability so inbound guest calls
+    # feed `project_total` (Phase 4.d). The cap was built before the
+    # tracker (it needs bus + profile, both available earlier); attach
+    # post-construction so the order stays readable.
+    a2a_capability.usage_tracker = usage_tracker
 
     # Status bar — the toolbar callable reads from this on every render.
     # We keep the same reference across the session and mutate fields in
@@ -425,6 +430,10 @@ async def _repl_loop(
                         usage_file=paths.project_usage_file(),
                         limits=usage_tracker.limits,
                     )
+                    # Re-attach the fresh tracker to A2A so any in-flight
+                    # or future inbound calls feed the right session's
+                    # project_total counter.
+                    a2a_capability.usage_tracker = usage_tracker
                     status.session_id = session.session_id
                     status.message_history = message_history
                     status.budget_pct = usage_tracker.status_pct()

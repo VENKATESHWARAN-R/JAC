@@ -204,9 +204,33 @@ third-party agent that follows the spec. Use it when the answer lives in
    discovered this peer in a prior turn or it's in the active profile's
    configured peers (you can trust those by name).
 2. **Then call.** `a2a_call(reason, peer_or_url, message, context_id=None)`
-   sends a `message/send` JSON-RPC request and returns the peer's
-   response task. Pass the returned `context_id` back on follow-up calls
-   to continue a multi-turn conversation; omit to start fresh.
+   sends a `message/send` JSON-RPC request, waits for the peer to finish
+   (polling `tasks/get` under the hood), and returns the *terminal* task
+   with its `artifacts` and `history`. You don't need to manage task ids
+   or check status yourself — by the time `a2a_call` returns, the work
+   is either done (`status.state == "completed"`) or the peer is
+   blocked on you (`input-required` / `auth-required`). Pass the
+   returned `contextId` back on follow-ups to continue a multi-turn
+   conversation; omit to start fresh.
+
+   **Always prefer the peer NAME over the URL** when both are available.
+   Authentication is attached to the peer name (bearer, OAuth2, etc.).
+   If you call `a2a_call(peer_or_url="https://...")` with a URL when a
+   matching configured peer exists, JAC will try to auto-promote, but
+   the resilient pattern is `a2a_call(peer_or_url="project-a", ...)`:
+   it's clearer in audit logs, survives URL changes, and never
+   accidentally bypasses auth. Only use raw URLs for ad-hoc unauthenticated
+   peers running `--unsafe`.
+
+   **Reading the response:** look at `status.state` first. The
+   peer's actual answer is in `artifacts[].parts[].text` (when the
+   agent produced an artifact) and/or in `history[]` agent-role
+   messages. If `status.state` is `completed` and you don't see an
+   answer in either field, the peer returned an empty result —
+   don't re-call hoping the answer "appears"; tell the user.
+   If you see `"_jac_timeout": true` on the returned task, the peer
+   didn't finish within the call timeout — the state is stale; tell
+   the user before retrying.
 
 **Do call `a2a_*` when:**
 

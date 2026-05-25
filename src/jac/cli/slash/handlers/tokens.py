@@ -26,12 +26,19 @@ def tokens_handler(ctx: SlashContext, args: str) -> SlashResult:
         return Handled()
 
     ctx.console.print(
-        f"[bold]session:[/bold]  input={tracker.counters.input_tokens:,}  "
+        f"[bold]session:[/bold]   input={tracker.counters.input_tokens:,}  "
         f"output={tracker.counters.output_tokens:,}  "
         f"total={tracker.counters.total_tokens:,}"
     )
+    if tracker.external.total_tokens > 0:
+        ctx.console.print(
+            f"[bold]a2a guest:[/bold] input={tracker.external.input_tokens:,}  "
+            f"output={tracker.external.output_tokens:,}  "
+            f"total={tracker.external.total_tokens:,}  "
+            "[dim](counted under project_total only)[/dim]"
+        )
     ctx.console.print(
-        f"[bold]project:[/bold] total={tracker.project_total_tokens:,}  "
+        f"[bold]project:[/bold]   total={tracker.project_total_tokens:,}  "
         f"[dim](baseline={tracker.project_baseline:,} "
         "from prior sessions in this repo)[/dim]"
     )

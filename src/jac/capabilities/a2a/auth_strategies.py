@@ -56,6 +56,7 @@ import httpx
 
 from jac.errors import JacConfigError
 from jac.profiles import ApiKeyAuth, BearerAuth, OAuth2ClientCredentialsAuth, PeerAuth
+from jac.runtime.events import A2AOutboundTokenMinted, EventBus
 
 # Matches ${NAME} where NAME is alnum + underscore. Anchored to allow
 # embedded references like "https://login/${TENANT}/oauth2/v2.0/token".
@@ -119,9 +120,15 @@ class OAuth2ClientCredentialsStrategy:
     :class:`A2ACapability` caches per peer. So every call to the same
     peer reuses the same access token until it expires; calls to
     different peers (even with the same IDP) don't share state.
+
+    When ``bus`` is provided, every successful token mint emits a
+    :class:`A2AOutboundTokenMinted` event — gives the operator
+    visibility into IDP roundtrips (Phase 4.d).
     """
 
     config: OAuth2ClientCredentialsAuth
+    bus: EventBus | None = None
+    peer_name: str | None = None
     _access_token: str | None = field(default=None, init=False, repr=False)
     _expires_at: float = field(default=0.0, init=False, repr=False)
 
@@ -174,16 +181,36 @@ class OAuth2ClientCredentialsStrategy:
         self._access_token = access
         self._expires_at = time.monotonic() + expires_in
 
+        if self.bus is not None:
+            await self.bus.emit(
+                A2AOutboundTokenMinted(
+                    token_url=token_url,
+                    peer_name=self.peer_name,
+                    expires_in_s=expires_in,
+                )
+            )
+
 
 # ---------- Dispatcher ----------
 
 
-def make_strategy(auth: PeerAuth) -> AuthStrategy:
+def make_strategy(
+    auth: PeerAuth,
+    *,
+    bus: EventBus | None = None,
+    peer_name: str | None = None,
+) -> AuthStrategy:
     """Build the strategy for a peer's ``auth:`` block.
 
     Args:
         auth: Discriminated union member from
             :class:`jac.profiles.A2APeerConfig.auth`.
+        bus: optional event bus — OAuth2 strategies emit
+            :class:`A2AOutboundTokenMinted` after every successful
+            refresh so the operator sees IDP roundtrips. Bearer / api
+            key strategies don't use it (no I/O to surface).
+        peer_name: the configured peer name, surfaced in token events
+            so the operator knows which peer the mint was for.
 
     Returns:
         The matching :class:`AuthStrategy` instance.
@@ -198,7 +225,7 @@ def make_strategy(auth: PeerAuth) -> AuthStrategy:
     if isinstance(auth, ApiKeyAuth):
         return ApiKeyStrategy(config=auth)
     if isinstance(auth, OAuth2ClientCredentialsAuth):
-        return OAuth2ClientCredentialsStrategy(config=auth)
+        return OAuth2ClientCredentialsStrategy(config=auth, bus=bus, peer_name=peer_name)
     raise JacConfigError(  # pragma: no cover - defensive
         f"no auth strategy for auth.type={type(auth).__name__}"
     )

@@ -30,6 +30,8 @@ never crosses the agent boundary.
 
 from __future__ import annotations
 
+import asyncio
+import json as _json
 import time
 import uuid
 from collections.abc import Callable
@@ -57,7 +59,30 @@ from jac.tools import jac_tool
 # because the well-known endpoint is just a JSON file. The call timeout
 # is generous because the peer may run a real model behind the request.
 _DISCOVER_TIMEOUT_S = 10.0
-_CALL_TIMEOUT_S = 60.0
+# Total time we'll wait for an a2a_call to reach a terminal task state
+# (message/send + tasks/get polling combined). Generous because peers
+# may run a real model on a slow tier.
+_CALL_TIMEOUT_S = 120.0
+
+# ---- Polling configuration ----
+#
+# When ``message/send`` returns a Task in non-terminal state (the common
+# case with fasta2a's broker-backed worker), we poll ``tasks/get`` until
+# we see a terminal state OR a state that requires client action.
+#
+# Total wait is bounded by ``_CALL_TIMEOUT_S``. The interval is
+# exponential with a cap so peers running fast respond quickly without
+# the slow ones eating ratelimits.
+_POLL_INITIAL_INTERVAL_S = 0.25
+_POLL_MAX_INTERVAL_S = 2.0
+_POLL_BACKOFF_FACTOR = 1.5
+
+# Task states. Per A2A spec / fasta2a's TaskState literal.
+_TERMINAL_STATES = frozenset({"completed", "failed", "canceled", "rejected"})
+# Non-terminal but waiting on the *client* to act — we stop polling and
+# return so the calling Gru can decide what to do (e.g. ask the user,
+# supply more input). The renderer/agent will see the embedded message.
+_CLIENT_ACTION_STATES = frozenset({"input-required", "auth-required"})
 
 
 @dataclass(frozen=True)
@@ -83,15 +108,23 @@ def resolve_target(peer_or_url: str, *, peers: dict[str, A2APeerConfig]) -> _Res
 
     Resolution rules:
 
-    - If ``peer_or_url`` starts with ``http://`` or ``https://``, treat
-      it as a raw URL; no auth (peer must be running ``--unsafe``).
-      Display = the URL; ``peer`` is ``None``.
-    - Otherwise look it up in ``peers``. Found → return the peer config
-      with display = the peer name. Auth strategy lookup happens in
-      ``a2a_call`` via the strategy provider passed to
-      :func:`build_outbound_tools`.
-    - Otherwise raise :class:`JacConfigError` with a list of configured
-      peer names so the agent can re-call with a valid one.
+    - If ``peer_or_url`` starts with ``http://`` or ``https://``:
+      - If exactly one configured peer's URL matches (after trailing-slash
+        normalization), **promote** to that peer — apply its auth, use
+        its name in the display. This catches the common case where
+        the model copies the URL from a prior ``a2a_discover`` into
+        ``a2a_call`` even though a named peer was configured. Without
+        the promote, the call would silently go unauthenticated and
+        401 against any auth-enabled peer.
+      - If zero or multiple peers match, fall through to a raw call
+        (no auth). Multi-match means the operator has two peers with
+        the same URL — that's a config smell; we don't guess which
+        auth strategy to use.
+    - Otherwise look up ``peer_or_url`` in ``peers``. Found → return
+      the peer config with display = the peer name.
+    - Unknown name (no http(s):// prefix, not in ``peers``): raise
+      :class:`JacConfigError` with a list of configured peer names so
+      the agent can re-call with a valid one.
 
     Args:
         peer_or_url: peer name (e.g. ``"backend-jac"``) or raw URL.
@@ -105,7 +138,14 @@ def resolve_target(peer_or_url: str, *, peers: dict[str, A2APeerConfig]) -> _Res
         JacConfigError: unknown peer name with no http(s):// prefix.
     """
     if peer_or_url.startswith(("http://", "https://")):
-        return _ResolvedTarget(url=peer_or_url.rstrip("/"), peer=None, display=peer_or_url)
+        normalized = peer_or_url.rstrip("/")
+        matches = [
+            (name, peer) for name, peer in peers.items() if peer.url.rstrip("/") == normalized
+        ]
+        if len(matches) == 1:
+            name, peer = matches[0]
+            return _ResolvedTarget(url=normalized, peer=peer, display=name)
+        return _ResolvedTarget(url=normalized, peer=None, display=peer_or_url)
 
     peer = peers.get(peer_or_url)
     if peer is None:
@@ -126,7 +166,7 @@ def resolve_target(peer_or_url: str, *, peers: dict[str, A2APeerConfig]) -> _Res
 def build_outbound_tools(
     *,
     peers_getter: Callable[[], dict[str, A2APeerConfig]],
-    strategy_provider: Callable[[A2APeerConfig], AuthStrategy | None] | None = None,
+    strategy_provider: Callable[[A2APeerConfig, str | None], AuthStrategy | None] | None = None,
     bus: EventBus | None = None,
 ):
     """Build the outbound tool closures bound to runtime accessors and a bus.
@@ -162,8 +202,10 @@ def build_outbound_tools(
     if strategy_provider is None:
         from jac.capabilities.a2a.auth_strategies import make_strategy
 
-        def _default_provider(peer: A2APeerConfig) -> AuthStrategy | None:
-            return make_strategy(peer.auth) if peer.auth is not None else None
+        def _default_provider(peer: A2APeerConfig, peer_name: str | None) -> AuthStrategy | None:
+            if peer.auth is None:
+                return None
+            return make_strategy(peer.auth, bus=bus, peer_name=peer_name)
 
         strategy_provider = _default_provider
 
@@ -278,7 +320,11 @@ def build_outbound_tools(
         # both skip this — the caller is on the hook for ensuring the
         # remote allows unauthenticated requests.
         if target.peer is not None and target.peer.auth is not None:
-            strategy = strategy_provider(target.peer)
+            # target.display is the peer name when resolved by name,
+            # the raw URL otherwise. We only reach this branch with a
+            # named peer (raw URLs leave target.peer=None), so display
+            # is safe to pass as the peer_name for events.
+            strategy = strategy_provider(target.peer, target.display)
             if strategy is not None:
                 # Auth resolution can do I/O (OAuth2 token fetch) and
                 # raise JacConfigError on missing env vars or token-
@@ -308,37 +354,54 @@ def build_outbound_tools(
         started = time.monotonic()
         state = "completed"
         try:
+            # Single client used for the initial message/send AND any
+            # subsequent tasks/get polls — keeps the TCP connection
+            # warm and the auth headers consistent (auth strategies
+            # like OAuth2 are stable inside a single call window).
             async with httpx.AsyncClient(timeout=_CALL_TIMEOUT_S) as client:
                 resp = await client.post(target.url, content=payload, headers=headers)
-            if resp.status_code >= 400:
-                state = "failed"
-                raise ValueError(
-                    f"A2A call to {target.display} failed: HTTP {resp.status_code} "
-                    f"— {resp.text[:200]}"
-                )
-            try:
-                parsed = send_message_response_ta.validate_json(resp.content)
-            except Exception as exc:
-                state = "failed"
-                raise ValueError(f"A2A call: peer returned malformed response: {exc}") from exc
+                if resp.status_code >= 400:
+                    state = "failed"
+                    raise ValueError(
+                        f"A2A call to {target.display} failed: HTTP {resp.status_code} "
+                        f"— {resp.text[:200]}"
+                    )
+                try:
+                    parsed = send_message_response_ta.validate_json(resp.content)
+                except Exception as exc:
+                    state = "failed"
+                    raise ValueError(f"A2A call: peer returned malformed response: {exc}") from exc
 
-            error = parsed.get("error")
-            if error is not None:
-                state = "failed"
-                raise ValueError(
-                    f"A2A call to {target.display} returned JSON-RPC error "
-                    f"{error.get('code')}: {error.get('message')}"
-                )
+                error = parsed.get("error")
+                if error is not None:
+                    state = "failed"
+                    raise ValueError(
+                        f"A2A call to {target.display} returned JSON-RPC error "
+                        f"{error.get('code')}: {error.get('message')}"
+                    )
 
-            result = parsed.get("result")
-            if result is None:
-                state = "failed"
-                raise ValueError(
-                    f"A2A call to {target.display} returned neither result nor "
-                    "error — peer is not spec-compliant."
+                result = parsed.get("result")
+                if result is None:
+                    state = "failed"
+                    raise ValueError(
+                        f"A2A call to {target.display} returned neither result nor "
+                        "error — peer is not spec-compliant."
+                    )
+
+                # Most peers (fasta2a included) return the Task envelope
+                # in 'submitted' state with the work running async in a
+                # broker. Poll tasks/get until terminal so the calling
+                # Gru sees the actual artifacts, not the submission
+                # receipt.
+                final = await _wait_for_terminal(
+                    client=client,
+                    target_url=target.url,
+                    target_display=target.display,
+                    initial=dict(result),
+                    headers=headers,
+                    deadline=started + _CALL_TIMEOUT_S,
                 )
-            # result is Task | Message TypedDict (runtime dict).
-            return dict(result)
+                return final
         finally:
             await _emit(
                 A2AOutboundCompleted(
@@ -349,6 +412,129 @@ def build_outbound_tools(
             )
 
     return [a2a_discover, a2a_call]
+
+
+async def _wait_for_terminal(
+    *,
+    client: httpx.AsyncClient,
+    target_url: str,
+    target_display: str,
+    initial: dict[str, Any],
+    headers: dict[str, str],
+    deadline: float,
+) -> dict[str, Any]:
+    """Poll ``tasks/get`` until ``initial`` reaches a terminal state.
+
+    Args:
+        client: open httpx client (we reuse it for keepalive).
+        target_url: peer's JSON-RPC endpoint.
+        target_display: peer name / URL for error messages.
+        initial: the Task envelope from the original ``message/send`` —
+            may already be terminal (some peers complete inline), in
+            which case we return immediately.
+        headers: same auth headers as the initial POST.
+        deadline: ``time.monotonic()`` cutoff after which we surface a
+            timeout error to the calling Gru.
+
+    Returns:
+        The latest task envelope — terminal state when we win, the
+        last-observed state on timeout (with a marker so the agent
+        can tell the difference).
+
+    Raises:
+        ValueError: peer returned a malformed ``tasks/get`` response,
+            JSON-RPC error, or HTTP failure.
+
+    Notes:
+        Returns early for ``input-required`` / ``auth-required`` —
+        these are non-terminal but waiting on the *client* to act.
+        The calling Gru can read the embedded message and decide
+        whether to ask the user, supply more input, etc.
+    """
+    state = _task_state(initial)
+    # No status block, or a Message response (not a Task) — just return
+    # what we got. Some peers reply with a direct Message for simple
+    # synchronous queries.
+    if state is None:
+        return initial
+    if state in _TERMINAL_STATES or state in _CLIENT_ACTION_STATES:
+        return initial
+
+    task_id = initial.get("id")
+    if not isinstance(task_id, str) or not task_id:
+        # Spec violation — peer gave us a non-terminal task with no id
+        # to poll. Hand it back as-is and let the calling Gru deal.
+        return initial
+
+    interval = _POLL_INITIAL_INTERVAL_S
+    latest = initial
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            # Timeout — return the last task we saw with a `_jac_timeout`
+            # marker so the calling Gru knows the state is stale. Don't
+            # raise: a partial state is more useful than a generic error.
+            latest = dict(latest)
+            latest["_jac_timeout"] = True
+            return latest
+
+        # Sleep first so a sub-second task doesn't get polled twice
+        # back-to-back with no breathing room for the broker.
+        await asyncio.sleep(min(interval, remaining))
+
+        get_req = {
+            "jsonrpc": "2.0",
+            "id": str(uuid.uuid4()),
+            "method": "tasks/get",
+            "params": {"id": task_id},
+        }
+        resp = await client.post(
+            target_url,
+            content=_json.dumps(get_req).encode("utf-8"),
+            headers=headers,
+        )
+        if resp.status_code >= 400:
+            raise ValueError(
+                f"A2A tasks/get on {target_display}#{task_id} failed: "
+                f"HTTP {resp.status_code} — {resp.text[:200]}"
+            )
+        try:
+            envelope = _json.loads(resp.content)
+        except ValueError as exc:
+            raise ValueError(
+                f"A2A tasks/get on {target_display}#{task_id}: peer returned non-JSON body"
+            ) from exc
+
+        error = envelope.get("error") if isinstance(envelope, dict) else None
+        if error is not None:
+            raise ValueError(
+                f"A2A tasks/get on {target_display}#{task_id} returned JSON-RPC "
+                f"error {error.get('code')}: {error.get('message')}"
+            )
+        result = envelope.get("result") if isinstance(envelope, dict) else None
+        if not isinstance(result, dict):
+            raise ValueError(
+                f"A2A tasks/get on {target_display}#{task_id}: peer returned no result"
+            )
+        latest = result
+        state = _task_state(latest)
+        if state is None or state in _TERMINAL_STATES or state in _CLIENT_ACTION_STATES:
+            return latest
+
+        interval = min(interval * _POLL_BACKOFF_FACTOR, _POLL_MAX_INTERVAL_S)
+
+
+def _task_state(envelope: dict[str, Any]) -> str | None:
+    """Extract ``status.state`` from a Task envelope, or ``None`` if absent.
+
+    Robust against peers that return a bare Message (no status block)
+    or task envelopes with a missing/non-string state.
+    """
+    status = envelope.get("status")
+    if not isinstance(status, dict):
+        return None
+    state = status.get("state")
+    return state if isinstance(state, str) else None
 
 
 def _card_to_dict(card: AgentCard) -> dict[str, Any]:

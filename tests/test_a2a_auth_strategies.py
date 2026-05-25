@@ -312,3 +312,93 @@ def test_oauth2_raises_on_missing_env_var(monkeypatch):
     )
     with pytest.raises(JacConfigError, match="MISSING_SECRET"):
         _run(s.headers_for())
+
+
+# ---------- Fresh-token visibility event (Phase 4.d) ----------
+
+
+def test_oauth2_emits_token_minted_event_on_refresh():
+    """OAuth2 strategies post A2AOutboundTokenMinted after a successful refresh
+    so operators see IDP roundtrips in the CLI."""
+    from jac.runtime.events import A2AOutboundTokenMinted, EventBus
+
+    bus = EventBus()
+    app, _log = _make_token_endpoint(access_token="MINTED", expires_in=900)
+    s = OAuth2ClientCredentialsStrategy(
+        config=OAuth2ClientCredentialsAuth(
+            token_url="http://idp/tok", client_id="cid", client_secret="sec"
+        ),
+        bus=bus,
+        peer_name="azure-coworker",
+    )
+    with _drive_via_asgi(app):
+        _run(s.headers_for())
+
+    events = []
+    while not bus._queue.empty():  # type: ignore[attr-defined]
+        events.append(bus._queue.get_nowait())  # type: ignore[attr-defined]
+    assert len(events) == 1
+    evt = events[0]
+    assert isinstance(evt, A2AOutboundTokenMinted)
+    assert evt.token_url == "http://idp/tok"
+    assert evt.peer_name == "azure-coworker"
+    assert evt.expires_in_s == 900
+
+
+def test_oauth2_does_not_re_emit_when_cached():
+    """A cached-token call must NOT post a token-minted event — the operator
+    only cares about real IDP roundtrips."""
+    from jac.runtime.events import A2AOutboundTokenMinted, EventBus
+
+    bus = EventBus()
+    app, _log = _make_token_endpoint(access_token="CACHED", expires_in=3600)
+    s = OAuth2ClientCredentialsStrategy(
+        config=OAuth2ClientCredentialsAuth(
+            token_url="http://idp/tok", client_id="cid", client_secret="sec"
+        ),
+        bus=bus,
+        peer_name="p1",
+    )
+    with _drive_via_asgi(app):
+        _run(s.headers_for())
+        _run(s.headers_for())  # cached — no new mint
+        _run(s.headers_for())
+
+    minted = [e for e in _drain_queue(bus) if isinstance(e, A2AOutboundTokenMinted)]
+    assert len(minted) == 1
+
+
+def _drain_queue(bus):
+    out = []
+    while not bus._queue.empty():
+        out.append(bus._queue.get_nowait())
+    return out
+
+
+def test_make_strategy_threads_bus_into_oauth2():
+    """Dispatch should pass bus + peer_name through to OAuth2 strategies so
+    the capability's _strategy_for caches a bus-aware instance."""
+    from jac.runtime.events import EventBus
+
+    bus = EventBus()
+    s = make_strategy(
+        OAuth2ClientCredentialsAuth(
+            token_url="http://idp/tok", client_id="cid", client_secret="sec"
+        ),
+        bus=bus,
+        peer_name="azure-peer",
+    )
+    assert isinstance(s, OAuth2ClientCredentialsStrategy)
+    assert s.bus is bus
+    assert s.peer_name == "azure-peer"
+
+
+def test_make_strategy_ignores_bus_for_bearer():
+    """Bearer and api_key strategies don't carry a bus — they have no
+    I/O to surface."""
+    from jac.runtime.events import EventBus
+
+    bus = EventBus()
+    s = make_strategy(BearerAuth(token="x"), bus=bus, peer_name="p")
+    # No bus attribute on BearerStrategy — accessing it would AttributeError.
+    assert not hasattr(s, "bus")
