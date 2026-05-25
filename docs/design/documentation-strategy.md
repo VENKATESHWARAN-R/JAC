@@ -21,7 +21,7 @@ JAC's docs site is built with [Zensical](https://zensical.org/) (`just docs-serv
 | --- | --- | --- | --- |
 | Product vision & scope | [`idea.md`](../idea.md) | No | What JAC is and is not |
 | Locked design & decisions | [`architecture.md`](../architecture.md) §11 | No | Decision IDs (D14, D20, …) live here |
-| Implementation status | [`progress.md`](../progress.md) | No | Checkboxes; update when work lands |
+| Implementation status | [`progress.md`](../progress.md) | No | Live dashboard; update when work lands. Detailed history lives in `progress-history.md`, `progress-a2a.md`, and `progress-roadmap.md` |
 | Released behavior (versions) | [`changelog.md`](../changelog.md) | Optional one-liner | User-facing releases |
 | Install & first run | [`user-guide/getting-started.md`](../user-guide/getting-started.md) | — | README duplicates quickstart; link to docs |
 | CLI commands & slash | [`user-guide/cli-reference.md`](../user-guide/cli-reference.md) | — | Must match `jac.cli` and `jac.cli.slash` |
@@ -55,7 +55,7 @@ Defined in `zensical.toml` at the repo root:
 - **Overview** — `index.md` (routing table only)
 - **User Guide** — getting started, CLI, configuration, sessions & memory, examples, A2A operator
 - **Developer** — contributing, codebase map, capabilities
-- **Design** — idea, architecture, progress, changelog, documentation strategy, drift matrix
+- **Design** — idea, architecture, progress dashboard + archives, changelog, documentation strategy, drift matrix
 
 The old `docs/usage/` placeholder stubs have been removed. All user-facing content is under `docs/user-guide/`.
 

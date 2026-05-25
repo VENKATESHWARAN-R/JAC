@@ -35,7 +35,12 @@ nav = [
     { "Design" = [
         { "Idea" = "idea.md" },
         { "Architecture" = "architecture.md" },
-        { "Progress" = "progress.md" },
+        { "Progress" = [
+            { "Dashboard" = "progress.md" },
+            { "History" = "progress-history.md" },
+            { "A2A log" = "progress-a2a.md" },
+            { "Roadmap" = "progress-roadmap.md" },
+        ] },
         { "Changelog" = "changelog.md" },
         { "Documentation strategy" = "design/documentation-strategy.md" },
         { "Drift matrix" = "design/audit/drift-matrix.md" },

@@ -58,7 +58,7 @@ Full user guide: **[Getting started](https://venkateshwaran-r.github.io/JAC/user
 | --- | --- |
 | **User guide** | [Getting started](https://venkateshwaran-r.github.io/JAC/user-guide/getting-started/) · [CLI reference](https://venkateshwaran-r.github.io/JAC/user-guide/cli-reference/) · [Configuration](https://venkateshwaran-r.github.io/JAC/user-guide/configuration/) · [Sessions & memory](https://venkateshwaran-r.github.io/JAC/user-guide/sessions-and-memory/) · [Examples](https://venkateshwaran-r.github.io/JAC/user-guide/examples/) · [A2A operator](https://venkateshwaran-r.github.io/JAC/user-guide/a2a-operator/) |
 | **Developer** | [Contributing](https://venkateshwaran-r.github.io/JAC/developer/contributing/) · [Module strategy](https://venkateshwaran-r.github.io/JAC/developer/module-strategy/) · [Codebase map](https://venkateshwaran-r.github.io/JAC/developer/codebase-map/) · [Capabilities & hooks](https://venkateshwaran-r.github.io/JAC/developer/capabilities/) |
-| **Design** | [Idea](https://venkateshwaran-r.github.io/JAC/idea/) · [Architecture](https://venkateshwaran-r.github.io/JAC/architecture/) · [Progress](https://venkateshwaran-r.github.io/JAC/progress/) |
+| **Design** | [Idea](https://venkateshwaran-r.github.io/JAC/idea/) · [Architecture](https://venkateshwaran-r.github.io/JAC/architecture/) · [Progress dashboard](https://venkateshwaran-r.github.io/JAC/progress/) · [History](https://venkateshwaran-r.github.io/JAC/progress-history/) · [A2A log](https://venkateshwaran-r.github.io/JAC/progress-a2a/) · [Roadmap](https://venkateshwaran-r.github.io/JAC/progress-roadmap/) |
 
 To edit docs locally: `just docs-serve` → http://127.0.0.1:8000 (sources live under `docs/`).
 

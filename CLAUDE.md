@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-See [`docs/progress.md`](docs/progress.md) for what's implemented, in flight, and queued. **Update it as work lands.**
+Start with [`docs/progress.md`](docs/progress.md) for the live dashboard: what's implemented, what's active, and what should happen next. **Update it as work lands.** If you need deeper context, use the split progress archives: [`docs/progress-history.md`](docs/progress-history.md) for completed-phase detail, [`docs/progress-a2a.md`](docs/progress-a2a.md) for the detailed A2A log, and [`docs/progress-roadmap.md`](docs/progress-roadmap.md) for extended queued/future context.
 
 For the *why*, read [`docs/idea.md`](docs/idea.md). For the *how*, read [`docs/architecture.md`](docs/architecture.md). When the design is ambiguous, **`docs/architecture.md` is the source of truth for *how* JAC is built**; **`docs/idea.md` is the source of truth for *what it is and is not*.** If you deviate from either, update the doc in the same change.
 
