@@ -5,8 +5,10 @@ the user can do on this machine. v1 has no sandbox; HITL is the safety net.
 Sandboxing (Monty + ``sandbox-exec`` / ``bwrap``) lands in v2 YOLO mode.
 
 The command runs with the project root as CWD, with a default 30-second
-timeout, and the combined stdout/stderr is truncated to 2000 chars before
-returning to keep context windows sane.
+timeout. Output is returned verbatim — large outputs are routed through
+the tool result post-processor (:mod:`jac.runtime.tool_summarize`) at the
+toolset boundary when a small-tier model is configured and strictly cheaper
+than the current tier. See ``cost.*`` settings.
 """
 
 from __future__ import annotations
@@ -20,15 +22,14 @@ from pydantic_ai.capabilities import AbstractCapability
 from jac.tools import jac_function_toolset, jac_tool
 from jac.workspace.paths import find_project_root
 
-_OUTPUT_TRUNCATE_AT = 10000
 _DEFAULT_TIMEOUT_S = 30.0
 
 
-@jac_tool
+@jac_tool(summarizable=True)
 def run_shell(reason: str, command: str, timeout_s: float = _DEFAULT_TIMEOUT_S) -> str:
     """Execute ``command`` in a shell, CWD = project root.
 
-    Returns a formatted block with exit code, stdout, and stderr (truncated).
+    Returns a formatted block with exit code, stdout, and stderr.
     **Always approval-required** — surfaces a prompt to the user via the bus.
     """
     try:
@@ -50,11 +51,7 @@ def run_shell(reason: str, command: str, timeout_s: float = _DEFAULT_TIMEOUT_S) 
     if result.stderr:
         parts.append("--- stderr ---")
         parts.append(result.stderr.rstrip())
-    combined = "\n".join(parts)
-
-    if len(combined) > _OUTPUT_TRUNCATE_AT:
-        combined = combined[: _OUTPUT_TRUNCATE_AT - 16] + "\n[…truncated]"
-    return combined
+    return "\n".join(parts)
 
 
 def _always_require(*_args: Any, **_kwargs: Any) -> bool:

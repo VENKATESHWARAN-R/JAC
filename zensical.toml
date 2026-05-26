@@ -22,6 +22,7 @@ nav = [
         { "Getting started" = "user-guide/getting-started.md" },
         { "CLI reference" = "user-guide/cli-reference.md" },
         { "Configuration" = "user-guide/configuration.md" },
+        { "Cost controls" = "user-guide/cost-controls.md" },
         { "Sessions & memory" = "user-guide/sessions-and-memory.md" },
         { "Examples" = "user-guide/examples.md" },
         { "A2A operator" = "user-guide/a2a-operator.md" },

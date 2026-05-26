@@ -45,10 +45,28 @@ class _SessionCounters:
 
     input_tokens: int = 0
     output_tokens: int = 0
+    cache_read_tokens: int = 0
+    """Prompt-cache hits — input tokens served from the provider's cache
+    instead of re-billed at full input price. Phase A.2 visibility only;
+    not enforced against any budget."""
+    cache_write_tokens: int = 0
+    """Tokens written to the prompt cache this session (Phase A.2)."""
 
     @property
     def total_tokens(self) -> int:
         return self.input_tokens + self.output_tokens
+
+    @property
+    def cache_hit_pct(self) -> int | None:
+        """Cache-read tokens as a percent of total cacheable input.
+
+        Returns ``None`` when nothing has been tracked yet (no signal —
+        either no requests, or the provider doesn't report cache stats).
+        """
+        cacheable = self.input_tokens + self.cache_read_tokens
+        if cacheable == 0:
+            return None
+        return int((self.cache_read_tokens / cacheable) * 100)
 
 
 @dataclass
@@ -142,15 +160,30 @@ class UsageTracker:
             return self.counters.total_tokens
         return self.project_total_tokens
 
-    async def record(self, input_tokens: int, output_tokens: int) -> None:
+    async def record(
+        self,
+        input_tokens: int,
+        output_tokens: int,
+        *,
+        cache_read_tokens: int = 0,
+        cache_write_tokens: int = 0,
+    ) -> None:
         """Record one completed turn.
 
         Appends to :attr:`usage_file` if set, bumps in-memory counters,
         then checks every configured budget for a freshly-crossed warn or
         hardstop threshold and emits the appropriate event.
+
+        ``cache_read_tokens`` / ``cache_write_tokens`` come from
+        ``RunUsage`` when the provider reports them (Anthropic does).
+        They're tracked for ``/tokens`` visibility only — not enforced
+        against any budget, since prompt caching is a discount on
+        ``input_tokens``, not extra spend.
         """
         self.counters.input_tokens += max(0, input_tokens)
         self.counters.output_tokens += max(0, output_tokens)
+        self.counters.cache_read_tokens += max(0, cache_read_tokens)
+        self.counters.cache_write_tokens += max(0, cache_write_tokens)
         self._append_jsonl(input_tokens, output_tokens, kind="session")
         await self._check_thresholds()
 

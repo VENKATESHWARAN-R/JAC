@@ -1,13 +1,26 @@
 """The ``@jac_tool`` decorator.
 
-Every tool exposed to Gru or a minion **must** be decorated with
+Every tool exposed to Gru or a sub-agent **must** be decorated with
 ``@jac_tool``. The decorator validates structurally that the function's
 first non-``ctx`` parameter is annotated ``reason: str`` — see
 docs/architecture.md §6a.
 
-Decoration is the fail-first guard. A future ``JacToolset`` wrapper will
-additionally assert that every tool in a JAC toolset went through this
-decorator, catching tools registered via other paths.
+Two call forms:
+
+    @jac_tool
+    def foo(reason: str, ...): ...
+
+    @jac_tool(summarizable=True)
+    def run_shell(reason: str, ...): ...
+
+``summarizable=True`` opts the tool into AI summarization of large outputs
+via :mod:`jac.runtime.tool_summarize` (Phase A.1). Default is ``False`` —
+tools whose output is structurally exact (``read_file``, ``list_dir``, …)
+must never be summarized.
+
+Decoration is the fail-first guard. ``jac_function_toolset`` additionally
+asserts every tool went through here, catching tools registered via other
+paths at agent construction.
 """
 
 from __future__ import annotations
@@ -17,6 +30,7 @@ import typing
 from collections.abc import Callable
 
 _JAC_TOOL_MARKER = "__jac_tool__"
+_SUMMARIZABLE_MARKER = "__jac_tool_summarizable__"
 
 
 def _tool_qualname(func: Callable[..., object]) -> str:
@@ -36,17 +50,7 @@ def _resolve_annotation(func: Callable[..., object], name: str, raw: object) -> 
     return resolved.get(name, raw)
 
 
-def jac_tool[F: Callable[..., object]](func: F) -> F:
-    """Mark ``func`` as a JAC tool and validate its signature.
-
-    The first parameter (or first parameter after a leading ``ctx``) must
-    be named ``reason`` and annotated ``str``. Validation runs at decoration
-    time, so any breach surfaces when the module loads, not at runtime.
-
-    Raises:
-        TypeError: if ``func`` is missing the ``reason: str`` parameter
-            or it isn't where expected.
-    """
+def _validate_and_mark[F: Callable[..., object]](func: F, *, summarizable: bool) -> F:
     sig = inspect.signature(func)
     params = list(sig.parameters.values())
 
@@ -74,9 +78,50 @@ def jac_tool[F: Callable[..., object]](func: F) -> F:
         )
 
     setattr(func, _JAC_TOOL_MARKER, True)
+    setattr(func, _SUMMARIZABLE_MARKER, bool(summarizable))
     return func
+
+
+def jac_tool[F: Callable[..., object]](
+    func: F | None = None,
+    /,
+    *,
+    summarizable: bool = False,
+) -> F | Callable[[F], F]:
+    """Mark ``func`` as a JAC tool and validate its signature.
+
+    Supports both ``@jac_tool`` (bare) and ``@jac_tool(summarizable=True)``.
+    The first parameter (or first parameter after a leading ``ctx``) must be
+    named ``reason`` and annotated ``str``. Validation runs at decoration
+    time, so any breach surfaces when the module loads.
+
+    Args:
+        func: Function being decorated (only when called bare).
+        summarizable: When ``True``, large outputs from this tool may be
+            routed through the small-tier summarizer (see
+            :mod:`jac.runtime.tool_summarize`). Default ``False`` — tools
+            whose output is structurally exact must keep this off.
+
+    Raises:
+        TypeError: if ``func`` is missing the ``reason: str`` parameter
+            or it isn't where expected.
+    """
+    if func is not None:
+        # Bare form: @jac_tool
+        return _validate_and_mark(func, summarizable=summarizable)
+
+    # Parameterized form: @jac_tool(summarizable=True)
+    def _decorator(fn: F) -> F:
+        return _validate_and_mark(fn, summarizable=summarizable)
+
+    return _decorator
 
 
 def is_jac_tool(func: object) -> bool:
     """True if ``func`` was decorated with :func:`jac_tool`."""
     return getattr(func, _JAC_TOOL_MARKER, False) is True
+
+
+def is_summarizable(func: object) -> bool:
+    """True if the tool opted into summarization via ``summarizable=True``."""
+    return getattr(func, _SUMMARIZABLE_MARKER, False) is True

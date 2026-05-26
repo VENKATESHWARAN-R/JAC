@@ -23,6 +23,14 @@ providers:
       label: Anthropic
       suggested_model: claude-sonnet-4-6
       model_format: "anthropic:{model}"
+    # USD per 1M tokens. Used by the tool-result post-processor to decide
+    # whether routing a large output through a small-tier model is strictly
+    # cheaper than keeping it raw in the current-tier context. Unknown models
+    # are treated as "no pricing data" → summarization is skipped.
+    pricing:
+      claude-haiku-4-5: { input: 1.00, output: 5.00 }
+      claude-sonnet-4-6: { input: 3.00, output: 15.00 }
+      claude-opus-4-7: { input: 15.00, output: 75.00 }
 
   openai:
     prefix: openai
@@ -32,6 +40,9 @@ providers:
       label: OpenAI
       suggested_model: gpt-5
       model_format: "openai:{model}"
+    pricing:
+      gpt-5-mini: { input: 0.25, output: 2.00 }
+      gpt-5: { input: 1.25, output: 10.00 }
 
   google:
     prefix: google-gla
@@ -41,6 +52,9 @@ providers:
       label: Google (Gemini API)
       suggested_model: gemini-3.5-flash
       model_format: "google-gla:{model}"
+    pricing:
+      gemini-3.5-flash: { input: 0.30, output: 2.50 }
+      gemini-3.5-pro: { input: 1.25, output: 10.00 }
 
   ollama:
     prefix: ollama

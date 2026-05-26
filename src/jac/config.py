@@ -95,6 +95,63 @@ class BudgetSettings(BaseModel):
     """Threshold at which the next user turn is pre-flight refused."""
 
 
+_DEFAULT_SUMMARIZE_PROMPT = """\
+You are summarizing the output of a developer tool for another AI agent
+that needs to keep working on a task. Preserve every fact the agent might
+need to act on:
+
+- exit codes, error messages, file paths, line numbers
+- counts (tests passed/failed, files changed)
+- any URL, identifier, or token mentioned
+- the first ~200 chars of any stack trace verbatim
+
+Drop only noise: repeated lines, decorative banners, progress bars, ANSI
+codes, irrelevant warnings. Stay under 600 words. If the output is mostly
+structured (JSON, table), keep the structure.
+
+Tool: {tool_name}
+Original output ({original_tokens} tokens):
+---
+{output}
+---
+
+Summary:"""
+
+
+class CostSettings(BaseModel):
+    """Tool-result post-processor knobs (Phase A.1).
+
+    When a tool opted into summarization via ``@jac_tool(summarizable=True)``
+    returns output above ``tool_result_threshold_tokens``, JAC routes the
+    result through the active profile's *small* tier model and returns the
+    summary in place of the raw output. The original is saved to disk so
+    the agent can re-read it via ``read_file`` if needed.
+
+    Summarization is skipped (passthrough) when:
+
+    - no ``small`` tier is configured in the active profile, or
+    - the small-tier model isn't strictly cheaper per output token than
+      the current tier (pricing lookup via :mod:`jac.providers.registry`).
+
+    Use ``no_summarize_tools`` to force-off a specific tool even when its
+    decorator says ``summarizable=True``; use ``summarize_tools`` to force-on
+    a tool whose decorator default is ``False``.
+    """
+
+    tool_result_threshold_tokens: int = 8000
+    """Outputs over this estimated token count get routed through the summarizer."""
+
+    no_summarize_tools: list[str] = Field(default_factory=list)
+    """Tool names to force-skip summarization for. User override."""
+
+    summarize_tools: list[str] = Field(default_factory=list)
+    """Tool names to force-summarize even if the decorator says no. User override."""
+
+    summarize_prompt_template: str = _DEFAULT_SUMMARIZE_PROMPT
+    """Prompt sent to the small-tier model. Receives ``tool_name``,
+    ``original_tokens``, ``output`` via ``str.format``."""
+
+
 class Settings(BaseSettings):
     """Top-level JAC configuration.
 
@@ -129,6 +186,9 @@ class Settings(BaseSettings):
 
     budget: BudgetSettings = Field(default_factory=BudgetSettings)
     """Token budgets (D25). Opt-in only — see :class:`BudgetSettings`."""
+
+    cost: CostSettings = Field(default_factory=CostSettings)
+    """Tool-result post-processor (Phase A.1). See :class:`CostSettings`."""
 
     @classmethod
     def settings_customise_sources(

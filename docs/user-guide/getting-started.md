@@ -125,6 +125,7 @@ JAC instruments model and tool calls with [Logfire](https://logfire.pydantic.dev
 | --- | --- |
 | All commands and tools | [CLI reference](cli-reference.md) |
 | Profiles, budgets, compaction | [Configuration](configuration.md) |
+| Tool-result summarization & cost levers | [Cost controls](cost-controls.md) |
 | Sessions and memory files | [Sessions & memory](sessions-and-memory.md) |
 | Worked scenarios | [Examples](examples.md) |
 | Expose JAC to other agents | [A2A operator](a2a-operator.md) |

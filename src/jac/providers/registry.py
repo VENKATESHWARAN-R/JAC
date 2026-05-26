@@ -24,6 +24,17 @@ class WizardSpec(BaseModel):
     model_format: str
 
 
+class ModelPricing(BaseModel):
+    """USD per 1M tokens for one model. Used by the cost gate in
+    :mod:`jac.runtime.tool_summarize` to decide whether routing a large
+    tool output through a small-tier model is strictly cheaper than
+    keeping it raw in the current-tier context.
+    """
+
+    input: float
+    output: float
+
+
 class ProviderSpec(BaseModel):
     """One provider entry in the catalog."""
 
@@ -34,6 +45,12 @@ class ProviderSpec(BaseModel):
     wizard: WizardSpec | None = None
     profile_env_keys: list[str] = Field(default_factory=list)
     """Non-secret env vars prompted during init (e.g. ``OLLAMA_BASE_URL``)."""
+
+    pricing: dict[str, ModelPricing] = Field(default_factory=dict)
+    """Optional per-model pricing in USD/MTok. Keys are bare model ids (no
+    provider prefix). Unknown models return ``None`` from
+    :meth:`ProviderRegistry.get_pricing` — the summarizer treats that as
+    "skip" rather than guessing."""
 
 
 class InitDefaults(BaseModel):
@@ -76,6 +93,24 @@ class ProviderRegistry(BaseModel):
                 f"Available: {', '.join(self.providers)}."
             )
         return self.providers[provider_id]
+
+    def get_pricing(self, model: str) -> ModelPricing | None:
+        """Return pricing for a fully-qualified model id, or ``None`` if unknown.
+
+        ``model`` is a pydantic-ai id like ``anthropic:claude-haiku-4-5`` or
+        ``gateway/openai:gpt-5``. We map the prefix to a provider entry, then
+        look up the bare model id in that provider's ``pricing`` table. A
+        missing prefix, missing provider, or missing model all return ``None``.
+
+        The cost gate treats ``None`` as "skip summarization" — never guesses.
+        """
+        prefix = provider_prefix(model)
+        for spec in self.providers.values():
+            if spec.prefix != prefix:
+                continue
+            bare = model.split(":", 1)[1] if ":" in model else model
+            return spec.pricing.get(bare)
+        return None
 
 
 # Back-compat alias for callers that imported the old name from the plan sketch.

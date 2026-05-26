@@ -104,7 +104,7 @@ async def _search_ddg(query: str, max_results: int) -> list[_SearchHit]:
     ]
 
 
-@jac_tool
+@jac_tool(summarizable=True)
 async def web_search(
     reason: str, query: str, max_results: int = _DEFAULT_MAX_RESULTS
 ) -> list[_SearchHit]:
@@ -137,7 +137,7 @@ async def web_search(
     return await _search_ddg(q, max_results)
 
 
-@jac_tool
+@jac_tool(summarizable=True)
 async def fetch_url(reason: str, url: str) -> str:
     """Fetch ``url`` and return the page content as Markdown.
 

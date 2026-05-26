@@ -66,6 +66,7 @@ from jac.runtime.events import (
 from jac.runtime.gru import build_gru
 from jac.runtime.hooks import make_hooks
 from jac.runtime.session import Session
+from jac.runtime.tool_summarize import reset_summarizer_stats, set_summarizer_model
 from jac.runtime.usage import BudgetLimits, UsageTracker, make_usage_tracker
 from jac.secrets import (
     apply_ad_hoc_model_env,
@@ -217,6 +218,8 @@ async def _run_turn(
         await usage_tracker.record(
             input_tokens=usage.input_tokens,
             output_tokens=usage.output_tokens,
+            cache_read_tokens=getattr(usage, "cache_read_tokens", 0),
+            cache_write_tokens=getattr(usage, "cache_write_tokens", 0),
         )
     return result.all_messages()
 
@@ -246,6 +249,12 @@ async def _repl_loop(
     # Make the active session id discoverable to tools (e.g. `remember`)
     # without threading a session object through every call site.
     set_current_session_id(session.session_id)
+
+    # Same pattern for the small-tier model: the tool-result post-processor
+    # (Phase A.1) reads it via a ContextVar so capabilities don't have to
+    # thread it through. ``None`` disables summarization.
+    set_summarizer_model(_resolve_summarizer_model(profile_name))
+    reset_summarizer_stats()
 
     # Best-effort resolve optional feature-keys from the configured secrets
     # backend into os.environ before any tool fires. Today this is just
@@ -667,11 +676,13 @@ def _rebuild_gru(
             # new model's required env (no-op when the union already covered it).
             apply_ad_hoc_model_env(new_model_id)
 
+        resolved_summarizer = _resolve_summarizer_model(new_profile_name)
         new_gru = build_gru(
             extra_capabilities=capabilities,
             bus=bus,
-            summarizer_model=_resolve_summarizer_model(new_profile_name),
+            summarizer_model=resolved_summarizer,
         )
+        set_summarizer_model(resolved_summarizer)
     except JacConfigError as exc:
         restore_env(snap)
         _warn_switch_failed(exc, current_profile_name)

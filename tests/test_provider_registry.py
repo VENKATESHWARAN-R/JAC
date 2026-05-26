@@ -74,6 +74,51 @@ def test_unknown_prefix_warns_and_returns_empty() -> None:
     assert keys == []
 
 
+def test_get_pricing_returns_known_model() -> None:
+    registry = get_provider_registry()
+    pricing = registry.get_pricing("anthropic:claude-haiku-4-5")
+    assert pricing is not None
+    assert pricing.input == 1.00
+    assert pricing.output == 5.00
+
+
+def test_get_pricing_returns_none_for_unknown_model() -> None:
+    registry = get_provider_registry()
+    assert registry.get_pricing("anthropic:claude-nonexistent") is None
+
+
+def test_get_pricing_returns_none_for_unknown_prefix() -> None:
+    registry = get_provider_registry()
+    assert registry.get_pricing("totally-unknown:foo") is None
+
+
+def test_pricing_overlay_from_user_yaml(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    user_jac = tmp_path / ".jac"
+    user_jac.mkdir()
+    monkeypatch.setattr(paths, "USER_PROVIDERS_FILE", user_jac / "providers.yaml")
+    (user_jac / "providers.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "providers": {
+                    "anthropic": {
+                        "pricing": {
+                            "claude-custom": {"input": 0.5, "output": 2.0},
+                        },
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    reset_provider_registry_cache()
+    registry = get_provider_registry()
+    custom = registry.get_pricing("anthropic:claude-custom")
+    assert custom is not None
+    assert custom.input == 0.5
+    # Package defaults still present alongside the user addition.
+    assert registry.get_pricing("anthropic:claude-haiku-4-5") is not None
+
+
 def test_invalid_user_yaml_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     user_jac = tmp_path / ".jac"
     user_jac.mkdir()

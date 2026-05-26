@@ -18,7 +18,7 @@ For deeper context:
 ## Agent Start Here
 
 - **Roadmap was reframed on 2026-05-26 around the cost-efficiency thesis.** Old Phase 3 (Skills with `mode: minion`), Phase 5 (Minion runtime), and Phase 6 (MCP) were archived to [`progress-archive-2026-05.md`](progress-archive-2026-05.md). Read [`architecture.md`](architecture.md) §0 and [`design/cost-efficient-orchestration.md`](design/cost-efficient-orchestration.md) before touching anything in Phases A–G.
-- **Current active work:** Phase A — Context-cost foundation (tool result post-processor + cache-friendly prompt assembly + `/tokens` breakdown).
+- **Current active work:** Phase A — Context-cost foundation. A.1 (tool-result post-processor) and A.3 (`/tokens` breakdown) ✅ landed 2026-05-27. **Remaining: A.2 — prompt-cache audit of `build_instructions` + capability `get_instructions`.** Anthropic returns cache stats in `RunUsage`; `/tokens` now surfaces them, so A.2 progress is measurable.
 - **Nearest follow-up after A:** Phase B — `spawn_sub_agent` tool.
 - **Terminology change:** "Minion" is retired. New name: **sub-agent**. If you touch old "minion" references in unrelated changes, rename in the same commit.
 - **A2A is feature-complete** for its v1 scope. Phase 4.e (OIDC/GCP) was demoted to Phase G; not urgent.
@@ -38,7 +38,7 @@ For deeper context:
 | Phase 1.6 — Tool surface polish | ✅ Complete | plan, processes, fs/grep upgrades, web search, clarify |
 | Phase 1.7 — Coworker experience | ✅ Complete | compaction, status bar, slash commands, budgets, feedback, plan persistence, web backends |
 | Phase 4 — A2A | ✅ Complete (v1 scope) | inbound + outbound + file transfer + demo peer + hotfixes. Phase 4.e (OIDC/GCP) demoted to Phase G. |
-| **Phase A — Context-cost foundation** | 🚧 Active | Tool result post-processor (D38) + cache-friendly prompt assembly + `/tokens` breakdown |
+| **Phase A — Context-cost foundation** | 🚧 Active | A.1 ✅ landed (post-processor + opt-in decorator + pricing gate + disk cache). A.3 ✅ landed (`/tokens` summarize + cache lines, REPL passes cache tokens). A.2 prompt-cache audit still TODO. |
 | Phase B — Sub-agent tool | ⏸ Next | `spawn_sub_agent` (D35), task packet (D36), tier-HITL (D39), depth cap = 1 (D40) |
 | Phase C — Deterministic hooks | ⏸ Queued | Per-spawn callables (D37); retry budget 3 |
 | Phase D — Skill loader | ⏸ Queued | Anthropic community format, no `mode: minion` (D21 revised) |
@@ -56,15 +56,17 @@ For deeper context:
 
 ### A.1 Tool result post-processor (D38)
 
-- [ ] `jac.runtime.tool_summarize` module — `maybe_summarize_tool_result()` async wrapper
-- [ ] Tokenizer for input sizing (provider-agnostic — use a simple heuristic, refine later)
-- [ ] Wire wrapper into `FunctionToolset.call_tool` boundary for **both** Gru and (future) sub-agents
-- [ ] Settings additions: `cost.tool_result_threshold_tokens` (default 8000), `cost.no_summarize_tools: []`, `cost.summarize_prompt_template`
-- [ ] Tier-pricing read from `providers.yaml`; only summarize when small tier is strictly cheaper per output token than current tier
-- [ ] Disk cache at `<project>/.agents/cache/tool-results/<run-id>/<call-id>.txt`; agent can `read_file` to retrieve full output
-- [ ] Tagged return format: `[AI-summarized via <model>: original NNN tokens — full output at <path>]\n\n<summary>`
-- [ ] Unit tests: above threshold → summarize; below → passthrough; no small tier → passthrough; not cheaper → passthrough; opted-out → passthrough; cache file written + re-readable
-- [ ] User-guide page: `docs/user-guide/cost-controls.md` (new) — when summarization kicks in, how to opt out, where originals live
+- [x] `jac.runtime.tool_summarize` module — `maybe_summarize_tool_result()` async (uses `pydantic_ai.direct.model_request`)
+- [x] Tokenizer for input sizing — chars/4 heuristic (looser than compaction's 3; this is a should-summarize gate)
+- [x] Wire wrapper into `FunctionToolset.call_tool` boundary via `SummarizingToolset` wrapper in `jac.tools.toolset`. Layering: `ApprovalRequired → Summarizing → Function`. Same wrapper covers Gru today + future sub-agents.
+- [x] Settings additions: `cost.tool_result_threshold_tokens` (8000), `cost.no_summarize_tools: []`, `cost.summarize_tools: []`, `cost.summarize_prompt_template`
+- [x] Tier-pricing in `providers.yaml` (Anthropic/OpenAI/Google seeded); `ProviderRegistry.get_pricing()`; gate is `is_strictly_cheaper(small, current)` — both must be priced, equal price returns False
+- [x] **Opt-in via decorator instead of opt-out**: `@jac_tool(summarizable=True)` (bare `@jac_tool` still works, defaults to False). Default-summarizable tools: `run_shell`, `web_search`, `fetch_url`. `read_file` / `list_dir` / `grep` / memory / plan tools never opted in (preserves line numbers + exact content).
+- [x] `run_shell` 10KB hard-truncate removed — summarizer now handles large output instead of throwing it away.
+- [x] Disk cache at `<project>/.agents/cache/tool-results/<session-id>/<call-id>.txt`; agent re-reads via existing `read_file`
+- [x] Tagged return format: `[AI-summarized via <model> — original NNN tokens, full output at <path>]\n\n<summary>`
+- [x] Tests (15): above threshold → summarize; below → passthrough; no summarizer model → passthrough; not cheaper / equal → passthrough; decorator-off → passthrough; force-on override; summarizer failure → fallback; non-string output JSON-serialized for sizing; toolset wrapper smoke; stats accumulate
+- [x] User-guide page: `docs/user-guide/cost-controls.md` + nav entry in `zensical.toml`
 
 ### A.2 Cache-friendly prompt assembly audit (L4)
 
@@ -77,17 +79,18 @@ For deeper context:
 
 ### A.3 `/tokens` breakdown improvements
 
-- [ ] Add `tool_summarize` line when small-tier calls have run this session
-- [ ] Add placeholder for `sub_agents` line (filled in Phase B; show only when count > 0)
-- [ ] Show cache hit rate when the provider returns it
-- [ ] Update `test_usage.py` with the new lines
+- [x] Add `summarize:` line with calls / original / summary / saved / small-tier in+out — only shown when activity > 0 this session
+- [x] Show `cache:` line with read / write / hit-rate when the provider populates `RunUsage.cache_read_tokens` / `cache_write_tokens` (Anthropic does). `UsageTracker.record()` now accepts both as kwargs; REPL passes through from `result.usage`.
+- [ ] Placeholder for `sub_agents` line — deferred to Phase B (no point adding a dead line)
+- [x] Tests in `test_budget_slash.py`: cache visible when populated, hidden when silent; summarize line visible after activity
 
 ### A.4 Documentation
 
-- [ ] `docs/user-guide/cost-controls.md` — new page covering: tool result thresholds, opt-outs, the disk cache, what the AI-summarized tag means
-- [ ] `docs/user-guide/configuration.md` — add `cost.*` block to the schema
-- [ ] Cross-link from `docs/user-guide/getting-started.md`
-- [ ] `progress.md` checkbox flip + one-line note per item as work lands
+- [x] `docs/user-guide/cost-controls.md` — new page covering tool result thresholds, opt-in/opt-out, the disk cache, the AI-summarized tag, where to read the originals
+- [x] `docs/user-guide/configuration.md` — `cost.*` block documented in its own section
+- [x] Cross-linked from `docs/user-guide/getting-started.md` → Next steps table
+- [x] `zensical.toml` nav — new entry "Cost controls" between "Configuration" and "Sessions & memory"
+- [x] `progress.md` flipped + landed notes
 
 ---
 

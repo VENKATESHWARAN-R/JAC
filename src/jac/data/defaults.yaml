@@ -24,3 +24,19 @@ compaction:
   refuse_pct: 85
   # Auto-compaction shrinks the kept history until it's below this percent.
   target_pct_after_compact: 50
+
+cost:
+  # Tool outputs above this estimated token count (chars/4 heuristic) get
+  # routed through the active profile's small-tier model for summarization
+  # — but only for tools opted in via @jac_tool(summarizable=True), and only
+  # when the small tier is strictly cheaper per output token than the
+  # current tier (pricing comes from providers.yaml). Original output is
+  # always saved to <project>/.agents/cache/tool-results/ so the agent can
+  # re-read via read_file.
+  tool_result_threshold_tokens: 8000
+  # Force-off list: tool names that must never be summarized even when
+  # their decorator opted in. User override.
+  no_summarize_tools: []
+  # Force-on list: tool names that get summarized even when the decorator
+  # default is False. Use sparingly — defaults exist for a reason.
+  summarize_tools: []

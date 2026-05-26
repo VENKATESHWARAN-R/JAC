@@ -8,7 +8,7 @@ Phase 1 step 1 ships only the decorator; concrete tools (filesystem, shell,
 search) arrive in subsequent steps and live as sibling modules here.
 """
 
-from jac.tools.decorator import is_jac_tool, jac_tool
+from jac.tools.decorator import is_jac_tool, is_summarizable, jac_tool
 from jac.tools.toolset import jac_function_toolset
 
-__all__ = ["is_jac_tool", "jac_function_toolset", "jac_tool"]
+__all__ = ["is_jac_tool", "is_summarizable", "jac_function_toolset", "jac_tool"]

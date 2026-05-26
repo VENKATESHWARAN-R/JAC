@@ -126,6 +126,19 @@ REPL:
 
 Status bar shows `bud:` only when at least one limit is set.
 
+## Cost controls (tool result post-processor)
+
+Large outputs from opted-in tools (today: `run_shell`, `web_search`, `fetch_url`) are routed through the active profile's `small`-tier model and replaced with a summary before they enter Gru's context. Original output is always saved to `<repo>/.agents/cache/tool-results/<session>/<call-id>.txt` so the agent can re-read via `read_file` when needed. See [Cost controls](cost-controls.md) for the full story.
+
+```yaml
+cost:
+  tool_result_threshold_tokens: 8000
+  no_summarize_tools: []   # force-off list (overrides decorator opt-in)
+  summarize_tools: []      # force-on list (overrides decorator default)
+```
+
+Summarization is skipped (raw passthrough) when no `small` tier is configured, the small model isn't strictly cheaper than the current tier, or the tool didn't opt in. Pricing lookup uses `providers.yaml`.
+
 ## A2A block (per profile)
 
 Optional `a2a:` section on each profile — see [A2A operator](a2a-operator.md). Defaults: `host: 127.0.0.1`, `port: 8001`, `context_retention_days: 3`.

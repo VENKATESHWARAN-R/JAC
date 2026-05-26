@@ -184,3 +184,56 @@ def test_tokens_ignores_arguments(
     ctx, _tracker, buf = ctx_with_tracker
     dispatch("/tokens extra args", ctx)
     assert "takes no arguments" in buf.getvalue()
+
+
+def test_tokens_shows_cache_when_provider_reports(
+    ctx_with_tracker: tuple[SlashContext, UsageTracker, StringIO],
+) -> None:
+    ctx, tracker, buf = ctx_with_tracker
+    asyncio.run(
+        tracker.record(
+            input_tokens=200,
+            output_tokens=50,
+            cache_read_tokens=800,
+            cache_write_tokens=400,
+        )
+    )
+    dispatch("/tokens", ctx)
+    out = buf.getvalue()
+    assert "cache:" in out
+    assert "read=800" in out
+    assert "write=400" in out
+    assert "hit_rate=80%" in out  # 800 / (200 + 800)
+
+
+def test_tokens_hides_cache_when_provider_silent(
+    ctx_with_tracker: tuple[SlashContext, UsageTracker, StringIO],
+) -> None:
+    ctx, tracker, buf = ctx_with_tracker
+    asyncio.run(tracker.record(input_tokens=100, output_tokens=50))
+    dispatch("/tokens", ctx)
+    assert "cache:" not in buf.getvalue()
+
+
+def test_tokens_shows_summarizer_after_activity(
+    ctx_with_tracker: tuple[SlashContext, UsageTracker, StringIO],
+) -> None:
+    from jac.runtime.tool_summarize import get_summarizer_stats, reset_summarizer_stats
+
+    reset_summarizer_stats()
+    stats = get_summarizer_stats()
+    stats.calls = 2
+    stats.original_tokens = 20_000
+    stats.summary_tokens = 1_500
+    stats.summarizer_input_tokens = 20_100
+    stats.summarizer_output_tokens = 1_500
+    try:
+        ctx, _tracker, buf = ctx_with_tracker
+        dispatch("/tokens", ctx)
+        out = buf.getvalue()
+        assert "summarize:" in out
+        assert "calls=2" in out
+        assert "original=20,000" in out
+        assert "saved=18,500" in out
+    finally:
+        reset_summarizer_stats()
