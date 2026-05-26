@@ -42,6 +42,18 @@ class ContextCapability(AbstractCapability[Any]):
         base = self.base_prompt
 
         def _instructions(_ctx: Any) -> str:
+            # === Prompt cache boundary (Phase A.2) ===
+            # Everything above this point is the static gru_system.md body,
+            # captured once at capability construction. Everything below is
+            # dynamic but must stay STABLE across turns or the prompt cache
+            # invalidates every request:
+            #   - `load_session_context()` returns date (day granularity) +
+            #     AGENTS.md + memory.md. Files re-read each turn so fresh
+            #     `remember()` writes land immediately; cache invalidates
+            #     only on actual file change, not on a clock tick.
+            #   - If you add anything time-varying here (timestamps, run
+            #     ids, RNG strings), move it to the per-turn user prompt
+            #     instead, not the instructions block.
             context = load_session_context()
             return f"{base}\n\n---\n\n# Session context\n\n{context}"
 

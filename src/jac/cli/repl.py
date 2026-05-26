@@ -63,9 +63,14 @@ from jac.runtime.events import (
     RunCompleted,
     RunFailed,
 )
-from jac.runtime.gru import build_gru
+from jac.runtime.gru import build_gru, sub_agent_capabilities
 from jac.runtime.hooks import make_hooks
 from jac.runtime.session import Session
+from jac.runtime.sub_agent import SubAgentCapability, set_sub_agent_capability
+from jac.runtime.sub_agent_usage import (
+    reset_sub_agent_stats,
+    set_sub_agent_usage_recorder,
+)
 from jac.runtime.tool_summarize import reset_summarizer_stats, set_summarizer_model
 from jac.runtime.usage import BudgetLimits, UsageTracker, make_usage_tracker
 from jac.secrets import (
@@ -76,6 +81,7 @@ from jac.secrets import (
     snapshot_env,
 )
 from jac.workspace import paths
+from jac.workspace.paths import load_prompt
 from jac.workspace.session_ctx import set_current_session_id
 
 _EXIT_WORDS = {"exit", "quit", ":q", ":quit"}
@@ -351,6 +357,28 @@ async def _repl_loop(
     # tracker (it needs bus + profile, both available earlier); attach
     # post-construction so the order stays readable.
     a2a_capability.usage_tracker = usage_tracker
+
+    # Phase B — install the sub-agent factory. Requires the active
+    # profile (for tier cascade) and a capability list factory (closes
+    # over bus + summarizer_model so spawned sub-agents inherit them).
+    # ``None`` profile disables spawning (the tool will error fail-fast
+    # with a setup message).
+    if active_profile is not None:
+        set_sub_agent_capability(
+            SubAgentCapability(
+                profile=active_profile,
+                base_prompt=load_prompt("sub_agent_system").strip(),
+                capability_factory=sub_agent_capabilities,
+            )
+        )
+    else:
+        set_sub_agent_capability(None)
+    reset_sub_agent_stats()
+
+    async def _record_sub_agent(in_tokens: int, out_tokens: int, tier: str) -> None:
+        await usage_tracker.add_sub_agent(in_tokens, out_tokens, tier)
+
+    set_sub_agent_usage_recorder(_record_sub_agent)
 
     # Status bar — the toolbar callable reads from this on every render.
     # We keep the same reference across the session and mutate fields in

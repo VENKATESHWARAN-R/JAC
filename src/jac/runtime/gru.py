@@ -26,6 +26,7 @@ from jac.capabilities.history import make_history_capability
 from jac.capabilities.memory import MemoryCapability
 from jac.capabilities.search import SearchCapability
 from jac.capabilities.shell import ShellCapability
+from jac.capabilities.sub_agent import SubAgentToolCapability
 from jac.capabilities.web import WebCapability
 from jac.config import get_settings
 from jac.errors import JacConfigError
@@ -34,7 +35,10 @@ from jac.workspace.paths import load_prompt
 
 
 def _default_tool_capabilities(
-    *, bus: EventBus | None = None, summarizer_model: str | None = None
+    *,
+    bus: EventBus | None = None,
+    summarizer_model: str | None = None,
+    include_spawn: bool = True,
 ) -> list[Any]:
     """The standard tool + history capabilities every interactive JAC session gets.
 
@@ -47,8 +51,13 @@ def _default_tool_capabilities(
         summarizer_model: model id used for auto-compaction summarization
             (typically the active profile's ``small`` tier). When ``None``,
             compaction falls back to drop-only.
+        include_spawn: whether to attach :class:`SubAgentToolCapability`.
+            Set ``False`` when assembling the capability list for a
+            **sub-agent** itself — depth cap = 1 (D40) is enforced
+            structurally by leaving the spawn tool out of sub-agent
+            toolsets.
     """
-    return [
+    caps: list[Any] = [
         Instrumentation(),
         make_context_capability(load_prompt("gru_system").strip()),
         FilesystemCapability(),
@@ -57,6 +66,31 @@ def _default_tool_capabilities(
         MemoryCapability(),
         WebCapability(),
         make_history_capability(bus=bus, summarizer_model=summarizer_model),
+    ]
+    if include_spawn:
+        caps.append(SubAgentToolCapability())
+    return caps
+
+
+def sub_agent_capabilities(allowed_tools: list[str] | None = None) -> list[Any]:
+    """Capability list a spawned sub-agent receives.
+
+    Mirrors :func:`_default_tool_capabilities` minus
+    :class:`SubAgentToolCapability` (depth cap = 1) and minus the
+    history capability (sub-agents are short-lived; compaction is
+    unnecessary overhead). The ``allowed_tools`` arg is reserved for
+    future filtering at the toolset level — Phase B accepts the param
+    for API stability but doesn't yet filter.
+    """
+    _ = allowed_tools  # reserved; honored in a follow-up that filters toolsets
+    return [
+        Instrumentation(),
+        make_context_capability(load_prompt("gru_system").strip()),
+        FilesystemCapability(),
+        SearchCapability(),
+        ShellCapability(),
+        MemoryCapability(),
+        WebCapability(),
     ]
 
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 from jac.cli.slash.context import SlashContext
 from jac.cli.slash.registry import register
 from jac.cli.slash.result import Handled, SlashResult
+from jac.runtime.sub_agent_usage import get_sub_agent_stats
 from jac.runtime.tool_summarize import get_summarizer_stats
 
 
@@ -59,6 +60,23 @@ def tokens_handler(ctx: SlashContext, args: str) -> SlashResult:
             f"[dim](small-tier spent "
             f"in={stats.summarizer_input_tokens:,} "
             f"out={stats.summarizer_output_tokens:,})[/dim]"
+        )
+
+    # Sub-agent spawns (Phase B) — only shown after at least one spawn.
+    # The tokens are already part of `session:` above (UsageTracker.add_sub_agent
+    # bumps the session counters); this line attributes the share to spawns
+    # so you can see how much delegation actually cost.
+    sub_stats = get_sub_agent_stats()
+    if sub_stats.spawns > 0:
+        per_tier = "  ".join(
+            f"{tier}={tokens:,}" for tier, tokens in sorted(sub_stats.by_tier.items())
+        )
+        ctx.console.print(
+            f"[bold]sub_agents:[/bold] spawns={sub_stats.spawns}  "
+            f"input={sub_stats.input_tokens:,}  "
+            f"output={sub_stats.output_tokens:,}  "
+            f"total={sub_stats.total_tokens:,}  "
+            f"[dim](by tier: {per_tier}; counted in session:)[/dim]"
         )
 
     if tracker.external.total_tokens > 0:

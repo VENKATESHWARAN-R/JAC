@@ -1,8 +1,9 @@
-"""Session context loading — clock + AGENTS.md + memory.md (user + project).
+"""Session context loading — date + AGENTS.md + memory.md (user + project).
 
-At session start we inject, in this order:
+Injected into Gru's system instructions, in this order:
 
-1. Current local date, weekday, and time (always).
+1. Current local date + weekday (changes at most once per day — see note
+   on prompt caching below).
 2. ``~/.jac/AGENTS.md`` — user-level context (user-authored), if present.
 3. ``~/.jac/memory.md`` — user-level JAC-managed memory, if present.
 4. ``<repo>/AGENTS.md`` — project context (user-authored, community
@@ -14,6 +15,22 @@ User-scope content comes first, project-scope second — so project
 specifics dominate when guidance overlaps. Within each scope,
 user-authored ``AGENTS.md`` comes before JAC-managed ``memory.md`` so the
 freshest learned facts are the latest thing the model sees.
+
+**Prompt-cache discipline (Phase A.2).** Everything here is re-evaluated
+per model request via :class:`jac.capabilities.context.ContextCapability`'s
+callable instructions. Anything that changes turn-to-turn invalidates
+Anthropic's prompt cache (10% input price → full price). So:
+
+- The date line uses **day granularity** — no hours/minutes/seconds. One
+  cache miss per midnight rollover is acceptable; one per turn is not.
+- ``AGENTS.md`` and ``memory.md`` are re-read each turn so fresh
+  ``remember()`` writes land immediately; cache invalidates only when the
+  files actually change, not on a clock tick.
+- File paths in provenance comments are stable per-project, so they cache
+  fine.
+
+If you add a new piece of context here, keep it stable across turns or
+move it to the per-turn user prompt slot.
 """
 
 from __future__ import annotations
@@ -22,7 +39,7 @@ from datetime import datetime
 
 from . import paths
 
-_DATETIME_HEADER = "<!-- session start: current local date/time -->"
+_DATE_HEADER = "<!-- current local date -->"
 _USER_CTX_HEADER = "<!-- user AGENTS.md (from ~/.jac/AGENTS.md) -->"
 _USER_MEM_HEADER = "<!-- user memory (from ~/.jac/memory.md) -->"
 _PROJECT_CTX_HEADER_FMT = "<!-- project AGENTS.md (from {}) -->"
@@ -30,13 +47,16 @@ _PROJECT_MEM_HEADER_FMT = "<!-- project memory (from {}) -->"
 
 
 def format_session_datetime() -> str:
-    """Human-readable local date, weekday, and time for Gru's instructions."""
+    """Human-readable local date + weekday for Gru's instructions.
+
+    **Day granularity only** — see the module docstring on prompt-cache
+    discipline. Hours / minutes / seconds were dropped in Phase A.2
+    because second-precision in the system prompt busts the prompt cache
+    every turn for negligible model benefit.
+    """
     now = datetime.now().astimezone()
-    tz_label = now.tzname() or "local"
-    hour12 = now.hour % 12 or 12
-    clock = f"{hour12}:{now.minute:02d}:{now.second:02d} {now.strftime('%p')}"
     date = f"{now.strftime('%A')}, {now.strftime('%B')} {now.day}, {now.year}"
-    return f"{_DATETIME_HEADER}\n{date} at {clock} ({tz_label})"
+    return f"{_DATE_HEADER}\n{date}"
 
 
 def _read_or_none(path, header: str) -> str | None:

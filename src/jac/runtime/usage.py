@@ -187,6 +187,20 @@ class UsageTracker:
         self._append_jsonl(input_tokens, output_tokens, kind="session")
         await self._check_thresholds()
 
+    async def add_sub_agent(self, input_tokens: int, output_tokens: int, tier: str) -> None:
+        """Record token usage from one completed sub-agent spawn (Phase B).
+
+        Sub-agent cost rolls into ``session_total`` (per the cost-efficient
+        orchestration design — the main agent paid for that work, just by
+        proxy). JSONL row is tagged ``kind="sub_agent"`` with the resolved
+        tier so :func:`load_project_baseline` reconstructs the split on
+        restart.
+        """
+        self.counters.input_tokens += max(0, input_tokens)
+        self.counters.output_tokens += max(0, output_tokens)
+        self._append_jsonl(input_tokens, output_tokens, kind=f"sub_agent:{tier}")
+        await self._check_thresholds()
+
     async def add_external(self, input_tokens: int, output_tokens: int) -> None:
         """Record A2A guest call usage (Phase 4.d, D24 budget integration).
 

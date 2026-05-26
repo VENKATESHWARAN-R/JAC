@@ -4,6 +4,42 @@
 
 This page keeps the detailed landed-phase notes out of the live progress dashboard while preserving the journey for future agents and maintainers.
 
+## v0.3.0 — Phase A: Context-cost foundation + Phase B: Sub-agent tool ✅
+
+Released 2026-05-27. First two milestones of the post-reframe cost-efficiency roadmap in one cut — A makes individual tool calls cheaper, B makes the whole *strategy* of doing context-heavy work cheaper.
+
+### Phase B — `spawn_sub_agent` (delegation)
+
+New tool the main agent calls when a task would otherwise consume tens of thousands of tokens of intermediate file reads / shell output / web fetches: spawn an isolated sub-agent, let it do the work in *its* context, return only the final answer.
+
+- **`SubAgentTaskPacket`** + `SubAgentResult` + `HookSpec` + `HookResult` Pydantic models in `jac.runtime.sub_agent`.
+- **Tier cascade** (`small → medium → large`, never down) so requesting `"small"` against a profile that only has `"medium"` cascades up; the cascade note appears in the result header so the main agent knows what actually ran.
+- **Depth cap = 1** enforced structurally: `sub_agent_capabilities()` factory excludes `SubAgentToolCapability` so a sub-agent literally has no spawn tool in its toolset. No runtime check, no way to recurse.
+- **HITL on every spawn** — reuses the existing approval flow; renderer shows reason / task_summary / tier / packet.
+- **Budget rollup** — `UsageTracker.add_sub_agent(in, out, tier)` lands tokens in `session_total` and writes a JSONL row tagged `kind: sub_agent:<tier>`. `/tokens` shows a `sub_agents:` line with spawns + per-tier breakdown when count > 0.
+- **Logfire span** `spawn_sub_agent` with tier / requested_tier / cascaded / model / objective / max_turns / allowed_tools / hook_count / turns_used / exit_status / hook_failures.
+- **`gru_system.md` updated** — new "When to call `spawn_sub_agent`" section telling Gru spawn criteria, tier guidance, and packet schema.
+
+Deferred: counter-tier deny flow (Phase E), reference example (`examples/sub-agent-summarize/`), hook *runner* implementation (Phase C — the surface is locked, the implementation lands next).
+
+17 new tests in `test_sub_agent.py` cover tier cascade (up / never down / unknown / no-tier-available), depth cap structural, packet rendering, budget rollup with JSONL tag, fail-fast when no capability, happy path tagged output + stats, cascade visible in header, error path, recorder forwarding, /tokens line.
+
+### Phase A — Context-cost foundation
+
+Three parallel wins, all in one cut:
+
+**A.1 — Tool result post-processor.** Outputs from `run_shell`, `web_search`, and `fetch_url` over `cost.tool_result_threshold_tokens` (default 8000) get routed through the active profile's `small`-tier model and replaced with a summary; raw output stays on disk under `<project>/.agents/cache/tool-results/<session>/<call-id>.txt` so the agent can re-read via `read_file`. Skip rules are conservative (decorator opt-in, pricing must be known on both sides, small tier must be *strictly* cheaper) — JAC never guesses. New `SummarizingToolset(WrapperToolset)` composes cleanly with existing `ApprovalRequiredToolset` (final stack: `ApprovalRequired → Summarizing → Function`). `@jac_tool` gained an optional `summarizable=True` flag; bare form still works. `run_shell`'s old 10KB hard-truncate removed — the summarizer now handles large output instead of throwing it away. Pricing for Anthropic / OpenAI / Google models seeded into `providers.yaml`. New `docs/user-guide/cost-controls.md`.
+
+**A.2 — Prompt-cache fix.** Audit of every `get_instructions()` site found one bug, but it was a doozy: `format_session_datetime()` baked **second-precision time** into the system prompt, so the cached prefix changed every turn and Anthropic's prompt cache never hit. Dropped to day granularity (`Wednesday, May 27, 2026`); now one cache miss per midnight rollover instead of one per turn. Added a `=== Prompt cache boundary ===` comment in `ContextCapability.get_instructions` documenting what must NOT be added there. Three regression-net tests in `test_prompt_cache_stability.py` (no clock, byte-stable across calls, but DOES invalidate when memory.md changes — confirming we didn't over-cache).
+
+**A.3 — `/tokens` visibility.** `UsageTracker.record()` gained `cache_read_tokens` / `cache_write_tokens` kwargs (Anthropic populates these in `RunUsage`; REPL passes them through). `/tokens` now shows a `cache:` line with read / write / hit-rate when provider reports stats, and a `summarize:` line with calls / original / summary / saved / small-tier in+out whenever post-processor activity > 0. Both lines hide when not applicable.
+
+Net effect: the two biggest single-session cost levers on Anthropic are live. Long sessions with heavy tool use should see meaningful drops in turn cost; `/tokens` makes the savings observable in-session.
+
+### Release totals
+
+Tests: **408 passing** (+39 from v0.2). New files: `jac.runtime.tool_summarize`, `jac.runtime.sub_agent`, `jac.runtime.sub_agent_usage`, `jac.capabilities.sub_agent`, `jac.providers.registry.ModelPricing`, `src/jac/prompts/sub_agent_system.md`, `docs/user-guide/cost-controls.md`, `tests/test_tool_decorator.py`, `tests/test_tool_summarize.py`, `tests/test_prompt_cache_stability.py`, `tests/test_sub_agent.py`. The two phases compose: a spawned sub-agent inherits the tool-result summarizer, so it sees less of its *own* tool output too.
+
 ## v0.2 Source Restructuring ✅
 
 Released as v0.2.0 on 2026-05-24. Moved misplaced runtime files, trimmed renderer and label-list dead weight, folded prompt path helpers into `workspace.paths`, merged `EventBus` into `runtime.events`, collapsed process/cache indirections, extracted the shared A2A banner, split slash handlers by command, split profile schema/YAML/CRUD modules, added `ContextCapability`, and adopted Pydantic AI's `Instrumentation` capability pattern. The rulebook for future placement is [`developer/module-strategy.md`](developer/module-strategy.md).

@@ -18,7 +18,7 @@ For deeper context:
 ## Agent Start Here
 
 - **Roadmap was reframed on 2026-05-26 around the cost-efficiency thesis.** Old Phase 3 (Skills with `mode: minion`), Phase 5 (Minion runtime), and Phase 6 (MCP) were archived to [`progress-archive-2026-05.md`](progress-archive-2026-05.md). Read [`architecture.md`](architecture.md) §0 and [`design/cost-efficient-orchestration.md`](design/cost-efficient-orchestration.md) before touching anything in Phases A–G.
-- **Current active work:** Phase A — Context-cost foundation. A.1 (tool-result post-processor) and A.3 (`/tokens` breakdown) ✅ landed 2026-05-27. **Remaining: A.2 — prompt-cache audit of `build_instructions` + capability `get_instructions`.** Anthropic returns cache stats in `RunUsage`; `/tokens` now surfaces them, so A.2 progress is measurable.
+- **Current active work:** Phases A + B both ✅ **complete and tagged v0.3.0** (2026-05-27). Next up: **Phase C — Deterministic hooks** (post-flight validators for sub-agents). Read `design/cost-efficient-orchestration.md` §5; the `HookSpec` / `HookResult` Pydantic models already exist in `jac.runtime.sub_agent` so the surface is locked.
 - **Nearest follow-up after A:** Phase B — `spawn_sub_agent` tool.
 - **Terminology change:** "Minion" is retired. New name: **sub-agent**. If you touch old "minion" references in unrelated changes, rename in the same commit.
 - **A2A is feature-complete** for its v1 scope. Phase 4.e (OIDC/GCP) was demoted to Phase G; not urgent.
@@ -38,8 +38,8 @@ For deeper context:
 | Phase 1.6 — Tool surface polish | ✅ Complete | plan, processes, fs/grep upgrades, web search, clarify |
 | Phase 1.7 — Coworker experience | ✅ Complete | compaction, status bar, slash commands, budgets, feedback, plan persistence, web backends |
 | Phase 4 — A2A | ✅ Complete (v1 scope) | inbound + outbound + file transfer + demo peer + hotfixes. Phase 4.e (OIDC/GCP) demoted to Phase G. |
-| **Phase A — Context-cost foundation** | 🚧 Active | A.1 ✅ landed (post-processor + opt-in decorator + pricing gate + disk cache). A.3 ✅ landed (`/tokens` summarize + cache lines, REPL passes cache tokens). A.2 prompt-cache audit still TODO. |
-| Phase B — Sub-agent tool | ⏸ Next | `spawn_sub_agent` (D35), task packet (D36), tier-HITL (D39), depth cap = 1 (D40) |
+| **Phase A — Context-cost foundation** | ✅ Complete (v0.3.0) | A.1 post-processor + A.2 prompt-cache fix + A.3 `/tokens` breakdown all landed 2026-05-27. Biggest single-session cost win shipped. |
+| Phase B — Sub-agent tool | ✅ Complete (v0.3.0) | `spawn_sub_agent`, packet model, tier cascade (small→medium→large, never down), depth cap = 1 structural, HITL via existing approval flow, UsageTracker.add_sub_agent + JSONL `kind=sub_agent:<tier>`, `/tokens` line. Hooks shape locked, runner stubbed (Phase C). |
 | Phase C — Deterministic hooks | ⏸ Queued | Per-spawn callables (D37); retry budget 3 |
 | Phase D — Skill loader | ⏸ Queued | Anthropic community format, no `mode: minion` (D21 revised) |
 | Phase E — Parallel + bidirectional | ⏸ Future | Parallel spawn + D41 bidirectional comms feature flag |
@@ -70,12 +70,13 @@ For deeper context:
 
 ### A.2 Cache-friendly prompt assembly audit (L4)
 
-- [ ] Read `Gru.build_instructions()` + `jac.workspace.context` end-to-end
-- [ ] Confirm/enforce order: stable header → slowly-changing (AGENTS.md + memory.md) → per-turn changing (history + user prompt)
-- [ ] Strip any time-of-day / session-id / random strings from the cached prefix
-- [ ] Audit `get_instructions()` on every Capability for hidden per-turn changes
-- [ ] Add an inline comment in `build_instructions()` marking the cache boundary
-- [ ] Smoke test: two consecutive identical requests show cache-hit metrics > 0 (Anthropic returns cache stats in usage)
+- [x] Read `jac.workspace.context` + `ContextCapability.get_instructions` end-to-end. **Only `ContextCapability` contributes instructions** — every other capability returns the default (none). `build_gru` passes no agent-level `instructions=`. So the audit surface is one function.
+- [x] Order confirmed: stable header (`gru_system.md` body, loaded once at construction) → slowly-changing (date + AGENTS.md + memory.md, re-read per turn) → per-turn (history + user prompt, owned by pydantic-ai).
+- [x] **Critical fix: dropped time-of-day from the system prompt.** `format_session_datetime()` used to emit `Tuesday, May 27, 2026 at 3:42:18 PM (PDT)` — second-precision → cached prefix changed every single turn → Anthropic prompt cache never hit. Now emits day-granularity only (`Wednesday, May 27, 2026`); one miss per midnight rollover instead of one per turn.
+- [x] Other `datetime.now()` call sites audited: `memory.py:283`, `history.py:133`, `audit.py:123`, `storage.py:154` — all write timestamps to *stored data* (memory entries, compaction markers, audit log), none touch the cached system prompt. Correct as-is.
+- [x] `gru_system.md` + `load_prompt()` confirmed static (no templating).
+- [x] Inline `=== Prompt cache boundary ===` comment added in `ContextCapability.get_instructions` documenting the static-vs-dynamic split and what must NOT be added to the instructions slot.
+- [x] Smoke tests (3, `tests/test_prompt_cache_stability.py`): regression guard against the second-precision clock; assertion that two back-to-back instruction callable invocations return byte-identical output; assertion that memory.md changes DO invalidate (we haven't over-cached).
 
 ### A.3 `/tokens` breakdown improvements
 
@@ -94,25 +95,24 @@ For deeper context:
 
 ---
 
-## Next Up — Phase B: Sub-agent tool ⏸
+## Phase B — Sub-agent tool ✅ (v0.3.0)
 
 **Goal:** introduce delegation as a single tool the main agent calls. Design: [`design/cost-efficient-orchestration.md`](design/cost-efficient-orchestration.md) §4.
 
-- [ ] `SubAgentTaskPacket` Pydantic model (D36): `objective`, `success_criteria`, `relevant_paths`, `forbidden_actions`, `expected_output`, `allowed_tools`, `hooks`, `max_turns`
-- [ ] `Hook` and `HookResult` Pydantic models (stub for Phase C — accept empty list in B)
-- [ ] `SubAgentResult` Pydantic model
-- [ ] `SubAgentCapability` — builds sub-agent `Agent` instances with: tier-resolved model, allowlisted toolset (default = main toolset minus `spawn_sub_agent`), short system prompt rendering the packet
-- [ ] `@jac_tool(approval_required=True) spawn_sub_agent(reason, task_summary, tier, task_packet)` — wires the capability + the tool result post-processor (A.1)
-- [ ] HITL approval renders: reason, task_summary, resolved tier (with cascade note), tool allowlist, max_turns, hook count (D39)
-- [ ] Tier cascade in `profiles`: missing tier resolves up; approval line includes cascade note
-- [ ] Counter-tier deny flow via D26's `denied_with_feedback("retry tier=large")` (D42)
-- [ ] `UsageTracker.add_sub_agent(in, out, tier)` — counts toward `session_total`; JSONL row `kind: sub_agent, tier: X`
-- [ ] `/tokens` shows sub-agent line
-- [ ] Logfire span: `tier`, `objective` (≤100 chars), `turns_used`, `hook_failures`, `exit_status`
-- [ ] Depth cap = 1: sub-agent toolset constructed without `spawn_sub_agent` (D40), enforced structurally
-- [ ] Tests: spawn approval, deny, counter-tier, tier cascade, depth cap, budget rollup, failure modes
-- [ ] Reference example: `examples/sub-agent-summarize/` — main agent reads big file via sub-agent, returns 3-paragraph summary
-- [ ] `gru_system.md` prompt update: when to spawn, heuristic threshold (>20k intermediate tokens), examples
+- [x] `SubAgentTaskPacket` Pydantic model in `jac.runtime.sub_agent` — objective, success_criteria, relevant_paths, forbidden_actions, expected_output, allowed_tools, hooks, max_turns
+- [x] `HookSpec` + `HookResult` Pydantic models (surface locked; runner stubbed for Phase C; tool accepts empty list)
+- [x] `SubAgentResult` Pydantic model — output, turns_used, resolved_tier, resolved_model, hook_failures, exit_status
+- [x] `SubAgentCapability` (factory pattern) — builds sub-agent Agent on demand with tier-resolved model + capability-list factory. Registered via module-level setter `set_sub_agent_capability`, mirroring `set_summarizer_model`.
+- [x] `@jac_tool(summarizable=True) spawn_sub_agent(reason, task_summary, tier, task_packet)` — wired through `SubAgentToolCapability` which marks it approval-required (existing HITL handler shows reason / task_summary / tier / packet)
+- [x] Tier cascade — `resolve_tier(profile, requested)` walks `small → medium → large` (never down). Cascade note appears in result header (`cascaded up to 'medium'`).
+- [x] `UsageTracker.add_sub_agent(in, out, tier)` — counts toward `session_total`; JSONL row tagged `kind: sub_agent:<tier>`. Recorder pattern (`sub_agent_usage.set_sub_agent_usage_recorder`) bridges the sub-agent module to the REPL's tracker without an import cycle.
+- [x] `/tokens` shows `sub_agents:` line with spawns / input / output / total + per-tier breakdown when count > 0.
+- [x] Logfire span `spawn_sub_agent` with `tier`, `requested_tier`, `cascaded`, `model`, `objective` (≤100 chars), `max_turns`, `allowed_tools`, `hook_count`, `turns_used`, `exit_status`, `hook_failures`.
+- [x] Depth cap = 1 — `sub_agent_capabilities()` excludes `SubAgentToolCapability`; verified by test. Recursion is structurally impossible.
+- [x] Tests (17, `test_sub_agent.py`): tier cascade up + never down + unknown tier + no-tier-available; depth cap structural; spawn_sub_agent is jac_tool + summarizable; packet rendering (every section + skip-empties); add_sub_agent bumps counters + writes tagged JSONL; fail-fast when no capability; happy path tagged output + stats; cascade visible in header; error path returns error result; recorder forwarding; /tokens line.
+- [x] `gru_system.md` updated — new "When to call `spawn_sub_agent`" section (spawn criteria, tier guidance, packet schema, depth cap explanation).
+- [ ] Counter-tier deny flow via D26's `denied_with_feedback("retry tier=large")` (D42) — **deferred to Phase E** (multi-spawn polish phase).
+- [ ] Reference example `examples/sub-agent-summarize/` — **deferred** (not blocking; the test suite + cost-controls.md cover the surface).
 
 ---
 

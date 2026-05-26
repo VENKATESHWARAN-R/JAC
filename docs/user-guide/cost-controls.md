@@ -82,6 +82,31 @@ If your provider reports prompt cache stats (Anthropic does), `/tokens` also sho
 
 Every summarization emits a Logfire span (`tool_summarize`) with `tool_name`, `original_tokens`, `summary_tokens`, `saved_tokens`, `summarizer_model`, and `cache_path` — useful for cross-session analysis.
 
+## Sub-agents (delegation)
+
+The next lever past the post-processor is **delegating context-heavy work to a sub-agent**. Gru calls `spawn_sub_agent(reason, task_summary, tier, task_packet)`; a fresh agent runs in its own isolated loop with its own message history and returns a short final answer. The 50k–200k tokens of intermediate file reads / shell output / web fetches stay over there — Gru's context never sees them.
+
+**Cost model.** The sub-agent's tokens roll into your session totals via `UsageTracker.add_sub_agent` — same budget envelope as the main loop, just attributed differently. `/tokens` shows a `sub_agents:` line with per-tier breakdown so you can see what delegation actually cost.
+
+**Tier cascade.** The main agent asks for `"small"` / `"medium"` / `"large"`. If your profile lacks the requested tier, JAC cascades **up** (small → medium → large) — never down, since that would silently exceed budget. The cascade is shown in the approval prompt and again in the result header.
+
+**Depth cap = 1.** Sub-agents do not get the `spawn_sub_agent` tool in their own toolset. Enforced structurally — the recursion is impossible, not just disallowed.
+
+**Always HITL-approved.** Every spawn surfaces a prompt with the resolved tier, the cascade note (if any), the packet, and the tool allowlist. Approve / deny with feedback / counter-tier (planned Phase E).
+
+**Hooks (Phase C, queued).** The packet accepts a `hooks: list[HookSpec]` field today but the runner is a stub — Phase C lands the post-flight validators (`ruff_check`, `pytest_run`, etc.) plus the "all-pass → return verbatim, no extra LLM turn" optimization.
+
+### When to spawn vs. when not to
+
+| Spawn | Don't spawn |
+| --- | --- |
+| Summarize a sweep of files for the user | A one-shot `read_file` |
+| Explore an unfamiliar module + return findings | Anything you need exact text back from |
+| Fetch + digest several web pages | A single `fetch_url` call |
+| Run a batch of validation commands + report | A single `run_shell` you'll reason over |
+
+The cost lever only fires when the sub-agent saves you *more tokens than its own run consumes*. A spawn that does one tool call and returns is pure overhead — three new model requests just to do what one tool call would have done inline.
+
 ## When to opt a new tool in
 
 Use `@jac_tool(summarizable=True)` when **both** are true:
