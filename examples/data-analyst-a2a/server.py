@@ -38,6 +38,7 @@ import base64
 import contextlib
 import contextvars
 import logging
+import warnings
 import os
 import re
 import secrets
@@ -355,8 +356,13 @@ def _chart_artifact(chart_path: Path) -> Artifact:
             {  # type: ignore[list-item]
                 "kind": "file",
                 "file": {
-                    "name": chart_path.name,
-                    "mimeType": "image/png",
+                    # fasta2a's FileWithBytes TypedDict only declares `bytes`
+                    # and `mime_type` (snake_case — no alias_generator on that
+                    # class). Including `name` or camelCase `mimeType` here
+                    # produces PydanticSerializationUnexpectedValue warnings
+                    # every time the task is serialized for a tasks/get poll.
+                    # Filename goes in `metadata` so JAC's auto-save path finds it.
+                    "mime_type": "image/png",
                     "bytes": base64.b64encode(data).decode("ascii"),
                 },
                 "metadata": {"filename": chart_path.name},
@@ -458,6 +464,18 @@ def main() -> None:
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    # fasta2a stores inbound FilePart dicts verbatim (including `name` /
+    # `mimeType` fields that aren't in FileWithBytes' TypedDict) and injects
+    # `task_id`/`context_id` into every message dict. These extra keys
+    # produce PydanticSerializationUnexpectedValue warnings each time
+    # a2a_response_ta serializes a task for a tasks/get poll — harmless but
+    # noisy. Suppress specifically for pydantic's TypeAdapter serializer.
+    warnings.filterwarnings(
+        "ignore",
+        message="Pydantic serializer warnings",
+        category=UserWarning,
+        module=r"pydantic.*",
+    )
     bearer: str | None = None
     if not args.unsafe:
         bearer = os.environ.get("ANALYST_BEARER")
