@@ -390,6 +390,26 @@ def test_inbound_file_part_lands_under_guest_uploads(tmp_path, monkeypatch, free
             assert len(saved) == 1
             assert saved[0].name == "data.csv"
             assert saved[0].read_bytes() == csv_bytes
+
+            # Regression: prior to the strip_binary_content fix, the
+            # worker would crash in agent.run() with "Unsupported binary
+            # content type" the moment a non-image FilePart hit the
+            # model adapter. TestModel doesn't reject binaries, but a
+            # `failed` terminal here would still flag any other
+            # regression in the worker's run_task path.
+            inbound_log = tmp_path / ".agents" / "a2a" / "inbound.jsonl"
+            for _ in range(40):  # ~4s — TestModel run + state update
+                if inbound_log.exists() and inbound_log.read_text().strip():
+                    break
+                await _asyncio.sleep(0.1)
+            assert inbound_log.exists(), "inbound.jsonl should be written"
+            import json as _json
+
+            last = inbound_log.read_text().splitlines()[-1]
+            record = _json.loads(last)
+            assert record["state"] == "completed", (
+                f"expected completed terminal state, got {record['state']!r}"
+            )
         finally:
             await cap.shutdown()
 

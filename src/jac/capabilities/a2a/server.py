@@ -58,6 +58,7 @@ from jac.capabilities.a2a.card import build_agent_card
 from jac.capabilities.a2a.guest_files import (
     build_attachment_prompt,
     materialize_inbound_files,
+    strip_binary_content_from_history,
 )
 from jac.capabilities.a2a.storage import JacFileStorage
 from jac.errors import JacConfigError
@@ -181,12 +182,13 @@ class AuditingAgentWorker(AgentWorker):
 
             # Save any FilePart-with-bytes attachments to disk so the
             # guest's path-based tools (read_file / grep / glob) can
-            # use them. Original FileParts are left in the message so
-            # multimodal models still get the raw bytes via fasta2a's
-            # existing BinaryContent path. The annotation we append is
-            # additive — it teaches the model where the file landed
-            # without removing the multimodal channel.
+            # use them, then strip the now-redundant BinaryContent
+            # entries that fasta2a synthesized. Model adapters reject
+            # most non-image mime types (text/csv, application/octet-
+            # stream, etc.) so we cannot pass the raw bytes through to
+            # the underlying model — paths are the contract.
             saved_paths = materialize_inbound_files(task, context_id)
+            history = strip_binary_content_from_history(history)
             if saved_paths:
                 history.append(
                     ModelRequest(

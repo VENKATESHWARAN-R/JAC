@@ -16,7 +16,7 @@ Usage:
     # Optional: pin an auth token (otherwise --unsafe)
     export ANALYST_BEARER=$(openssl rand -hex 24)
 
-    uv run server.py --model anthropic:claude-sonnet-4-6
+    uv run server.py --model anthropic:claude-haiku-4-5
 
 From JAC (in another terminal):
 
@@ -35,6 +35,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import contextlib
 import contextvars
 import logging
 import os
@@ -54,7 +55,7 @@ from fasta2a.pydantic_ai import AgentWorker, agent_to_a2a
 from fasta2a.schema import Artifact, Message, Skill, TaskSendParams
 from fasta2a.storage import InMemoryStorage
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelRequest, UserPromptPart
+from pydantic_ai.messages import BinaryContent, ModelRequest, UserPromptPart
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -198,6 +199,11 @@ class AnalystWorker(AgentWorker):
                 history.extend(self.build_message_history(task.get("history", [])))
 
                 saved = _materialize_inbound_files(task, tdir)
+                # fasta2a converts inbound FileParts into BinaryContent that
+                # the Anthropic adapter rejects for CSV (only image/*,
+                # application/pdf, text/plain are accepted). We've already
+                # saved the bytes to disk; strip the redundant binaries.
+                history = _strip_binary_content(history)
                 if saved:
                     note = (
                         "[a2a attachment] The caller attached file(s). Use these paths "
@@ -292,6 +298,53 @@ def _materialize_inbound_files(task: dict[str, Any], target_dir: Path) -> list[s
     return saved
 
 
+def _strip_binary_content(history: list[Any]) -> list[Any]:
+    """Drop BinaryContent items from UserPromptPart content lists.
+
+    Mirrors JAC's strip_binary_content_from_history. The agent's tools are
+    path-based (analyze_csv reads from disk), so the raw bytes that fasta2a
+    pre-decoded into BinaryContent are redundant — and would crash the
+    model adapter, since Anthropic only accepts image/* + application/pdf
+    + text/plain in binary form.
+    """
+    cleaned: list[Any] = []
+    for message in history:
+        if not isinstance(message, ModelRequest):
+            cleaned.append(message)
+            continue
+        new_parts: list[Any] = []
+        for part in message.parts:
+            if not isinstance(part, UserPromptPart):
+                new_parts.append(part)
+                continue
+            content = part.content
+            if isinstance(content, str) or not isinstance(content, list):
+                new_parts.append(part)
+                continue
+            filtered = [item for item in content if not isinstance(item, BinaryContent)]
+            if not filtered:
+                continue
+            if len(filtered) == len(content):
+                new_parts.append(part)
+                continue
+            new_parts.append(
+                UserPromptPart(
+                    content=filtered,
+                    timestamp=part.timestamp,
+                    part_kind=part.part_kind,
+                )
+            )
+        if new_parts:
+            cleaned.append(
+                ModelRequest(
+                    parts=new_parts,
+                    instructions=message.instructions,
+                    kind=message.kind,
+                )
+            )
+    return cleaned
+
+
 def _chart_artifact(chart_path: Path) -> Artifact:
     """Build an A2A Artifact containing a single PNG FilePart with inline bytes."""
     data = chart_path.read_bytes()
@@ -342,7 +395,7 @@ class _BearerMiddleware(BaseHTTPMiddleware):
 
 
 def build_app(model_id: str, *, base_url: str, bearer: str | None):
-    """Return the Starlette ASGI app + the worker (for explicit lifespan)."""
+    """Return the Starlette ASGI app."""
     agent = make_agent(model_id)
     storage: InMemoryStorage = InMemoryStorage()
     broker = InMemoryBroker()
@@ -364,6 +417,16 @@ def build_app(model_id: str, *, base_url: str, bearer: str | None):
         output_modes=["text/plain", "image/png"],
     )
 
+    # Wire our AnalystWorker into the lifespan so it — not fasta2a's
+    # default AgentWorker — handles inbound tasks. Without this,
+    # agent_to_a2a creates a plain AgentWorker internally and our custom
+    # run_task (file materialization + binary-strip) is never called.
+    @contextlib.asynccontextmanager
+    async def _lifespan(app):
+        async with app.task_manager, agent:
+            async with worker.run():
+                yield
+
     app = agent_to_a2a(
         agent,
         storage=storage,
@@ -374,8 +437,9 @@ def build_app(model_id: str, *, base_url: str, bearer: str | None):
         description="Pandas + matplotlib data analyst exposed over A2A (demo for JAC).",
         skills=[skill],
         middleware=middleware,
+        lifespan=_lifespan,
     )
-    return app, worker
+    return app
 
 
 # ---------- CLI ----------
@@ -383,7 +447,7 @@ def build_app(model_id: str, *, base_url: str, bearer: str | None):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Data-analyst A2A agent (demo for JAC).")
-    parser.add_argument("--model", default=os.getenv("ANALYST_MODEL", "anthropic:claude-sonnet-4-6"))
+    parser.add_argument("--model", default=os.getenv("ANALYST_MODEL", "anthropic:claude-haiku-4-5"))
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8002)
     parser.add_argument(
@@ -402,7 +466,7 @@ def main() -> None:
             print(f"\n  bearer token (set ANALYST_BEARER to pin): {bearer}\n", flush=True)
 
     base_url = f"http://{args.host}:{args.port}"
-    app, _worker = build_app(args.model, base_url=base_url, bearer=bearer)
+    app = build_app(args.model, base_url=base_url, bearer=bearer)
 
     print(f"\n=== data-analyst A2A agent ===\n  URL : {base_url}", flush=True)
     print(f"  card: {base_url}/.well-known/agent-card.json", flush=True)

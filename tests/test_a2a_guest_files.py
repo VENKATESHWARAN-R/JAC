@@ -10,9 +10,18 @@ from __future__ import annotations
 import base64
 from pathlib import Path
 
+from pydantic_ai.messages import (
+    BinaryContent,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    UserPromptPart,
+)
+
 from jac.capabilities.a2a.guest_files import (
     build_attachment_prompt,
     materialize_inbound_files,
+    strip_binary_content_from_history,
 )
 
 
@@ -247,3 +256,99 @@ def test_attachment_prompt_lists_each_path():
 
 def test_attachment_prompt_empty_when_no_paths():
     assert build_attachment_prompt([]) == ""
+
+
+# ---------- strip_binary_content_from_history ----------
+
+
+def test_strip_drops_binary_only_user_part():
+    """A UserPromptPart whose content list is pure BinaryContent vanishes."""
+    history = [
+        ModelRequest(
+            parts=[UserPromptPart(content=[BinaryContent(data=b"\x00\x01", media_type="text/csv")])]
+        )
+    ]
+    out = strip_binary_content_from_history(history)
+    assert out == []  # whole ModelRequest dropped (no parts left)
+
+
+def test_strip_filters_mixed_content_keeps_text():
+    """Mixed text + BinaryContent keeps the text, drops the binary."""
+    history = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        "explain this CSV",
+                        BinaryContent(data=b"a,b\n1,2\n", media_type="text/csv"),
+                    ]
+                )
+            ]
+        )
+    ]
+    out = strip_binary_content_from_history(history)
+    assert len(out) == 1
+    part = out[0].parts[0]
+    assert isinstance(part, UserPromptPart)
+    assert part.content == ["explain this CSV"]
+
+
+def test_strip_passes_string_content_through_unchanged():
+    """UserPromptPart whose content is a plain string is left alone."""
+    history = [ModelRequest(parts=[UserPromptPart(content="hello")])]
+    out = strip_binary_content_from_history(history)
+    assert len(out) == 1
+    assert out[0].parts[0].content == "hello"
+
+
+def test_strip_preserves_model_responses():
+    """ModelResponse messages flow through untouched."""
+    history = [
+        ModelRequest(parts=[UserPromptPart(content="hi")]),
+        ModelResponse(parts=[TextPart(content="hello back")]),
+    ]
+    out = strip_binary_content_from_history(history)
+    assert len(out) == 2
+    assert isinstance(out[1], ModelResponse)
+    assert out[1].parts[0].content == "hello back"
+
+
+def test_strip_empty_history_returns_empty():
+    assert strip_binary_content_from_history([]) == []
+
+
+def test_strip_returns_new_list_does_not_mutate_input():
+    """Caller may want to keep the original for audit; we never mutate it."""
+    original = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        "keep",
+                        BinaryContent(data=b"x", media_type="application/octet-stream"),
+                    ]
+                )
+            ]
+        )
+    ]
+    out = strip_binary_content_from_history(original)
+    # Original still has the BinaryContent.
+    assert any(isinstance(item, BinaryContent) for item in original[0].parts[0].content)
+    # Output is sanitized.
+    assert all(not isinstance(item, BinaryContent) for item in out[0].parts[0].content)
+
+
+def test_strip_drops_entire_request_when_all_parts_become_empty():
+    """ModelRequest holding only binary-only UserPromptParts is dropped."""
+    history = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(content=[BinaryContent(data=b"x", media_type="text/csv")]),
+                UserPromptPart(content=[BinaryContent(data=b"y", media_type="text/csv")]),
+            ]
+        ),
+        ModelRequest(parts=[UserPromptPart(content="still here")]),
+    ]
+    out = strip_binary_content_from_history(history)
+    assert len(out) == 1
+    assert out[0].parts[0].content == "still here"

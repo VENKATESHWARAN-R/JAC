@@ -14,7 +14,7 @@ For deeper context:
 
 ## Agent Start Here
 
-- **Current active work:** Phase 4.d wrapped 2026-05-26 (status / budget / retention / token-mint / polling / URL auto-promote / file transfer both ways / standalone `examples/data-analyst-a2a/` demo peer). Phase 4.e is next: OIDC + GCP ID token strategies.
+- **Current active work:** Phase 4.d.6 hotfixes wrapped 2026-05-26 (strip `BinaryContent` before agent run, wire `AnalystWorker` lifespan in demo, headless terminal feedback). Phase 4.e is next: OIDC + GCP ID token strategies — or skip to Phase 3 Skills if auth extensions aren't urgent.
 - **Nearest follow-up after 4.e:** Phase 3 — community-format Skills loader.
 - **A2A is feature-complete for the originally-scoped surface.** Outbound polling, inbound auth, bidirectional file transfer, pluggable peer auth, retention enforcement, usage accounting, demo peer — all shipped.
 - **Do not build yet without a grooming session:** Phase 5 minions, v2 YOLO/sandboxing, Plan Mode + `ModeCapability`.
@@ -55,6 +55,17 @@ For deeper context:
 - [ ] Update `gru_system.md` and user docs with Azure / GCP / Okta peer examples.
 
 See [`progress-a2a.md`](progress-a2a.md) for the completed PR1-PR4 log and queued Phase 4.1 context.
+
+---
+
+## Previously Active — Phase 4.d.6 A2A file-transfer hotfixes ✅ (landed 2026-05-26)
+
+**Goal:** fix real-world failures found during live testing of `jac a2a serve` and the data-analyst demo peer.
+
+- [x] **`strip_binary_content_from_history`** (new helper in `capabilities/a2a/guest_files.py`) — walks pydantic-ai message history and removes `BinaryContent` items from `UserPromptPart.content` lists. Model adapters (OpenAI/Ollama: `openai.py:1583`, Anthropic: `anthropic.py:1807`) reject `text/csv` / `application/octet-stream` / most non-image types. Called in `AuditingAgentWorker.run_task` right after `build_message_history`; the path-based annotation added by `materialize_inbound_files` is the contract for the guest — raw bytes are redundant and fatal. Same helper inlined in the demo peer.
+- [x] **Data-analyst demo `AnalystWorker` never ran** — `build_app` created the custom worker but passed no `lifespan=` to `agent_to_a2a`, so fasta2a used its own plain `AgentWorker` internally. Added `_lifespan` contextmanager to `build_app` that boots the `AnalystWorker`, mirroring JAC's own server pattern.
+- [x] **Headless `jac a2a serve` terminal feedback** — the command now creates an `EventBus`, passes it to the capability, and runs a `_print_events` background task that prints `[a2a in ←]` / `[a2a in ✓]` lines with `HH:MM:SS` timestamps, matching the in-REPL renderer format.
+- [x] Tests: 7 new unit tests for `strip_binary_content_from_history` in `test_a2a_guest_files.py`; `test_inbound_file_part_lands_under_guest_uploads` augmented to assert terminal state is `completed`. 357 tests pass.
 
 ---
 

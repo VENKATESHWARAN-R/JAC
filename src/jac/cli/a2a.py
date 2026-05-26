@@ -31,6 +31,7 @@ import asyncio
 import contextlib
 import os
 import signal
+from datetime import datetime
 from typing import Annotated
 
 import typer
@@ -40,6 +41,12 @@ from jac.capabilities.a2a import make_a2a_capability
 from jac.cli._a2a_banner import print_server_started_banner
 from jac.errors import JacConfigError
 from jac.profiles_crud import get_profile, resolve_active_profile_name
+from jac.runtime.events import (
+    A2AInboundCall,
+    A2AInboundCompleted,
+    A2AServerStopped,
+    EventBus,
+)
 from jac.runtime.observability import setup_observability
 from jac.secrets import apply_profile_env
 from jac.workspace.bootstrap import ensure_user_workspace
@@ -148,8 +155,13 @@ async def _serve(
     retention_days: int,
 ) -> None:
     """The actual async lifecycle. Boots the server, waits, tears down."""
+    # Headless still wants per-call feedback in the terminal — give it a
+    # bus + a small printer task so operators see who connected and how
+    # the call resolved. Inside the REPL the renderer owns this; here we
+    # roll a stripped-down equivalent.
+    bus = EventBus()
     cap = make_a2a_capability(
-        bus=None,
+        bus=bus,
         model=model_id,
         profile_name=profile_name,
         retention_days=retention_days,
@@ -167,6 +179,8 @@ async def _serve(
         token_hint="paste below into peer config; rotates on every restart",
     )
     console.print("[dim]Ctrl-C or SIGTERM to stop[/dim]")
+
+    printer_task = asyncio.create_task(_print_events(bus), name="jac.a2a.headless_printer")
 
     # Block until a signal arrives. asyncio.Event ensures we yield to
     # the uvicorn task while we wait, instead of busy-spinning.
@@ -186,4 +200,41 @@ async def _serve(
         await stop_event.wait()
     finally:
         await cap.shutdown()
+        printer_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await printer_task
         console.print("[green]✓ A2A server stopped[/green]")
+
+
+async def _print_events(bus: EventBus) -> None:
+    """Stream A2A lifecycle events to the headless console.
+
+    Mirrors the REPL renderer's formatting so scrollback looks the same
+    whether the server is run via ``jac a2a serve`` or ``/a2a serve``
+    inside the REPL. Cancellation is the normal exit path.
+    """
+    async for event in bus.stream():
+        if isinstance(event, A2AInboundCall):
+            unsafe_tag = " [red](unsafe)[/red]" if event.peer_id == "unsafe" else ""
+            console.print(
+                f"[dim]{_ts()}[/dim] [cyan][a2a in ←][/cyan] [bold]{event.peer_id}[/bold]"
+                f"{unsafe_tag} [dim](task {event.task_id[:8]})[/dim]: {event.message_preview}",
+                highlight=False,
+            )
+        elif isinstance(event, A2AInboundCompleted):
+            state_color = "green" if event.state == "completed" else "red"
+            console.print(
+                f"[dim]{_ts()}[/dim] [cyan][a2a in ✓][/cyan] "
+                f"[{state_color}]{event.state}[/{state_color}] "
+                f"[dim]{event.peer_id} (task {event.task_id[:8]}, "
+                f"{event.duration_ms}ms, {event.tokens_used} tok)[/dim]",
+                highlight=False,
+            )
+        elif isinstance(event, A2AServerStopped):
+            # The shutdown banner is already printed; nothing to add.
+            pass
+
+
+def _ts() -> str:
+    """``HH:MM:SS`` for the headless event log (local time)."""
+    return datetime.now().strftime("%H:%M:%S")

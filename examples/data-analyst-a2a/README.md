@@ -104,16 +104,18 @@ uv run server.py --model openrouter:openai/gpt-4o-mini
 
 ## Read the code
 
-`server.py` is intentionally one file (~200 LOC). Top-to-bottom it covers:
+`server.py` is intentionally one file. Top-to-bottom it covers:
 
 1. **Context-vars** for per-task workdir + chart paths (async-task-local; concurrent requests don't trample each other).
 2. **`make_agent`** — the pydantic-ai `Agent` with `analyze_csv` as the only tool.
 3. **`_make_chart`** — matplotlib over numeric columns; saves to the task's temp dir.
-4. **`AnalystWorker`** — re-implements fasta2a's `run_task` to wrap the agent call with file materialization (in) + chart artifacts (out).
+4. **`AnalystWorker`** — re-implements fasta2a's `run_task` to wrap the agent call with file materialization (in), `_strip_binary_content` (clears raw bytes fasta2a put in history before the model adapter sees them — Anthropic rejects `text/csv`), and chart artifacts (out).
 5. **`_materialize_inbound_files`** — decodes `FileWithBytes`, sanitizes filenames, writes to disk.
-6. **`_chart_artifact`** — builds an A2A `Artifact` with a `FilePart` of PNG bytes.
-7. **`_BearerMiddleware`** — same auth shape JAC uses.
-8. **CLI + uvicorn lifecycle** — straightforward.
+6. **`_strip_binary_content`** — removes `BinaryContent` entries from pydantic-ai history; model adapters only accept `image/*`, `application/pdf`, `text/plain` — everything else (CSV, TOML, octet-stream) crashes the API call.
+7. **`_chart_artifact`** — builds an A2A `Artifact` with a `FilePart` of PNG bytes.
+8. **`_BearerMiddleware`** — same auth shape JAC uses.
+9. **`build_app`** — wires `AnalystWorker` into the app via a custom `_lifespan` passed to `agent_to_a2a`. **Critical:** without this, fasta2a creates a plain `AgentWorker` internally and the custom `run_task` never runs.
+10. **CLI + uvicorn lifecycle** — straightforward.
 
 This is the receive-side counterpart to JAC's outbound file plumbing ([`jac/capabilities/a2a/client.py`](../../src/jac/capabilities/a2a/client.py)) and the same approach JAC's own guest server uses (see [`guest_files.py`](../../src/jac/capabilities/a2a/guest_files.py)) — just streamlined for the demo.
 

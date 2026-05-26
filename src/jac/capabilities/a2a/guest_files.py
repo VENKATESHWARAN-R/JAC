@@ -29,9 +29,11 @@ import base64
 import re
 import uuid
 from binascii import Error as _BinasciiError
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
+
+from pydantic_ai.messages import BinaryContent, ModelRequest, UserPromptPart
 
 from jac.workspace import paths
 
@@ -154,6 +156,74 @@ def _dedupe_against_disk(target_dir: Path, name: str) -> Path:
         if not candidate.exists():
             return candidate
         n += 1
+
+
+def strip_binary_content_from_history(history: Iterable[Any]) -> list[Any]:
+    """Remove ``BinaryContent`` items from ``UserPromptPart`` content lists.
+
+    The guest Gru ships path-based tools (``read_file`` / ``grep`` / ``glob``),
+    and :func:`materialize_inbound_files` already saves attached file bytes
+    to disk + tells the agent where they landed via a synthetic prompt. So
+    the original ``BinaryContent`` produced by fasta2a's
+    ``_request_parts_from_a2a`` is *redundant*. Worse: model adapters
+    reject most non-image mime types (CSV / TOML / octet-stream both
+    crash OpenAI/Ollama and Anthropic), so leaving the binary parts in
+    the history blows up :meth:`pydantic_ai.Agent.run`.
+
+    This pass walks the history, strips ``BinaryContent`` from every
+    ``UserPromptPart.content`` list, drops the part entirely when its
+    content becomes empty, and drops the whole ``ModelRequest`` when it
+    has no parts left. Non-binary parts (text, images-as-strings,
+    tool returns, model responses) pass through unchanged.
+
+    Args:
+        history: Sequence of ``ModelMessage`` values (typically from
+            :meth:`fasta2a.pydantic_ai.AgentWorker.build_message_history`).
+
+    Returns:
+        A new list. The input is not mutated — callers can keep a copy
+        for audit/logging if needed.
+    """
+    cleaned: list[Any] = []
+    for message in history:
+        if not isinstance(message, ModelRequest):
+            cleaned.append(message)
+            continue
+        new_parts: list[Any] = []
+        for part in message.parts:
+            if not isinstance(part, UserPromptPart):
+                new_parts.append(part)
+                continue
+            content = part.content
+            if isinstance(content, str):
+                new_parts.append(part)
+                continue
+            if not isinstance(content, list):
+                new_parts.append(part)
+                continue
+            filtered = [item for item in content if not isinstance(item, BinaryContent)]
+            if not filtered:
+                continue  # drop empty UserPromptPart
+            if len(filtered) == len(content):
+                new_parts.append(part)
+                continue
+            new_parts.append(
+                UserPromptPart(
+                    content=filtered,
+                    timestamp=part.timestamp,
+                    part_kind=part.part_kind,
+                )
+            )
+        if not new_parts:
+            continue  # drop empty ModelRequest
+        cleaned.append(
+            ModelRequest(
+                parts=new_parts,
+                instructions=message.instructions,
+                kind=message.kind,
+            )
+        )
+    return cleaned
 
 
 def build_attachment_prompt(saved_paths: list[str]) -> str:
