@@ -4,6 +4,28 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **JAC** (**J**ust **A**nother **C**ompanion/CLI) is an agentic harness built on Pydantic AI. See [`docs/idea.md`](docs/idea.md) for product vision and scope.
 
+## Core philosophy
+
+**JAC is orchestration around an intelligent layer.** The LLM is the *brain*; JAC builds the nervous system, eyes, hands, and feet — tools, memory, sub-agents, hooks, prompt assembly. The model only thinks. Everything around it determines whether thinking is *cheap and effective* or *expensive and wasteful*.
+
+**Cost is the metric.** Cost ≈ Σ over turns of `turn_tokens × turn_price`. Every architectural decision is judged against this equation. Our job is to **feed the right amount of information to the right model at the right time** to produce the right result.
+
+Five levers we actually pull (full design: [`docs/design/cost-efficient-orchestration.md`](docs/design/cost-efficient-orchestration.md)):
+
+1. **Sub-agents** — delegate context-heavy work to an isolated agent so the main loop's history doesn't bloat. The intermediate 50k–200k tokens stay in the sub-agent's context; only the result returns to the main agent.
+2. **Tier-aware model selection** — small / medium / large per profile. Small handles bulk summarization and quick lookups; large is reserved for hard reasoning. The main agent picks a *tier*, never a specific model.
+3. **Tool result post-processor** — when any tool returns above a threshold *and* a small tier is configured, route the result through the small model to extract + summarize before it enters the main loop. Original saved to disk; agent can re-read on demand.
+4. **Cache-friendly prompt assembly** — order system prompt + tools + memory + history so the cache breakpoint sits at the stable/changing boundary. Cache hits on Anthropic cost 10% of input.
+5. **Deterministic hooks** — post-flight validators (typecheck, tests, lint) that run after a sub-agent finishes. If all pass, the sub-agent's response returns verbatim — no extra LLM turn. If any fails, the failure routes back into the same sub-agent's loop for a fix (bounded retries).
+
+**Anti-patterns to refuse on sight:**
+
+- Letting the main agent's context grow turn-by-turn with tool results it doesn't need to reason over.
+- Calling an LLM to validate something a deterministic check can answer (`pytest --exitcode` beats "did the tests pass?").
+- Adding "another agent type" or "another runtime mode" when the answer is one more tool the existing agent calls.
+- Optimizing model choice while leaving raw 200KB tool outputs unfiltered.
+- Inventing bespoke skill formats when the community Anthropic format already covers it.
+
 ## Project state
 
 Start with [`docs/progress.md`](docs/progress.md) for the live dashboard: what's implemented, what's active, and what should happen next. **Update it as work lands.** If you need deeper context, use the split progress archives: [`docs/progress-history.md`](docs/progress-history.md) for completed-phase detail, [`docs/progress-a2a.md`](docs/progress-a2a.md) for the detailed A2A log, and [`docs/progress-roadmap.md`](docs/progress-roadmap.md) for extended queued/future context.
@@ -16,7 +38,7 @@ Long-form docs live under [`docs/`](docs/) and are published as a Zensical site 
 
 - **Python 3.13**, managed with `uv` (`uv.lock` committed).
 - **Pydantic AI** (`pydantic-ai-slim` with anthropic/openai/google/openrouter/mistral providers, plus duckduckgo, fastmcp, evals).
-- **Logfire** for tracing — every model call, tool call, minion spawn, and memory write must be instrumented.
+- **Logfire** for tracing — every model call, tool call, sub-agent spawn, and memory write must be instrumented.
 - **typer + rich + prompt-toolkit** for the CLI surface.
 - **fasta2a** for A2A (Phase 4; server-side only — outbound is a bespoke HTTP toolset).
 - **pydantic-settings[yaml]** for layered config.
@@ -92,7 +114,7 @@ Structural rules every change must respect. Full rationale in [`docs/architectur
 
 ### Capabilities are the atom of the system
 
-Almost every cross-cutting concern is a Pydantic AI `Capability`, not a hand-rolled class. Tools, memory, telemetry, the minion factory, sandboxing, even the CLI event bus — all capabilities. **If you find yourself writing a class that hooks into the agent lifecycle without being a Capability, you are probably wrong.**
+Almost every cross-cutting concern is a Pydantic AI `Capability`, not a hand-rolled class. Tools, memory, telemetry, the sub-agent factory, sandboxing, even the CLI event bus — all capabilities. **If you find yourself writing a class that hooks into the agent lifecycle without being a Capability, you are probably wrong.**
 
 ### Hooks are the runtime event bus, not a logging detail
 
@@ -100,7 +122,7 @@ The CLI does not poll the agent. The CLI installs a `Hooks` capability that push
 
 ### Every tool requires a `reason: str` parameter
 
-Every tool exposed to Gru or a minion **must** accept `reason: str` as its first argument. Enforced structurally via a `@jac_tool` decorator and a wrapper toolset that rejects tools missing the parameter at agent construction (fail-fast, not at runtime).
+Every tool exposed to Gru or a sub-agent **must** accept `reason: str` as its first argument. Enforced structurally via a `@jac_tool` decorator and a wrapper toolset that rejects tools missing the parameter at agent construction (fail-fast, not at runtime).
 
 ### HITL is built into Pydantic AI; don't reinvent it
 
@@ -114,25 +136,32 @@ Use built-in or `pydantic-ai-harness` primitives: `ApprovalRequiredToolset`, `de
 
 Every span carries: `template`, `task_id`, `parent_run_id`, `token_cost`, `duration`, `exit_status`.
 
-## What is v2 (do not build now)
+## Active roadmap (post-2026-05-26 reframe)
 
-After the 2026-05-22 roadmap reshuffle, **A2A and skills moved out of v2** (to Phase 4 and Phase 3 respectively). What's actually still v2:
+The roadmap was reframed around the cost-efficiency thesis. Live tracker: [`docs/progress.md`](docs/progress.md). Design spec: [`docs/design/cost-efficient-orchestration.md`](docs/design/cost-efficient-orchestration.md). Old Phase 3/5/6 entries archived: [`docs/progress-archive-2026-05.md`](docs/progress-archive-2026-05.md).
 
-- YOLO mode + sandboxing (Monty + `sandbox-exec` / `bwrap` + Git-Clean Guard)
-- CodeMode integration (`pydantic-ai-harness`) — deferred until we see real context bloat from individual file tools
-- Stuck-loop detection — low value in HITL where the human catches loops; mandatory only for YOLO
-- Night Shift / cron-triggered headless runs
-- User-tier predict-calibrate memory extraction (the `~/.jac/memory.md` *file* already exists per Phase 2a.1; what's deferred is the *automatic extraction*)
-- Browser / API / SDK surfaces
+Phases in dependency order:
 
-If a task seems to require any of the above, stop and ask before scaffolding. The full roadmap is `docs/architecture.md` §9; the live tracker is `docs/progress.md`.
+- **Phase A — Context-cost foundation.** Tool result caps; tool result post-processor (small-tier AI summarization above threshold); cache-friendly prompt assembly; `/tokens` breakdown. **Highest leverage, do first.**
+- **Phase B — Sub-agent tool.** Single `spawn_sub_agent(reason, task_summary, tier, task_packet)` tool. Sequential only. Tier-HITL approval. Depth cap = 1 (no recursive spawning). Logfire parent chain, budget rollup.
+- **Phase C — Deterministic hooks.** Per-spawn post-flight callables. All pass → return verbatim, no extra turn. Any fail → route failure back to same sub-agent (retry budget 3).
+- **Phase D — Skill loader.** Anthropic community format. Loadable prompts / playbooks the main agent reads when relevant. **No `mode: minion`** — skills are advice, not a runtime mode.
+- **Phase E — Parallel sub-agents + HITL multiplexing.** Polish on top of B/C/D.
+- **Phase F — Plan Mode.** Pulled forward from v2 — planning is more valuable now that sub-agent decisions exist.
+- **Phase G — A2A Phase 4.e (OIDC/GCP), MCP loader, broader test coverage.** Lower priority than A-F.
 
-**Things that are NOT v2 anymore** (look at the right phase block before touching):
+What's still genuinely v2:
 
-- **A2A interop** — Phase 4 (server-side `fasta2a` + outbound `a2a_call` tool, isolated guest-Gru — D24)
-- **Skills** — Phase 3 (community Anthropic format — D21)
-- **Tier-based models** — Phase 1.7.c (D22) — shipped
-- **Minion runtime** — Phase 5; grooming pending. **Don't write code against it yet.**
+- YOLO mode + sandboxing (Monty + `sandbox-exec` / `bwrap` + Git-Clean Guard).
+- CodeMode integration (`pydantic-ai-harness`) — deferred until real context bloat from individual file tools is measured.
+- Stuck-loop detection — low value in HITL; mandatory only for YOLO.
+- Night Shift / cron-triggered headless runs.
+- User-tier predict-calibrate memory extraction (the `~/.jac/memory.md` *file* already exists per Phase 2a.1; what's deferred is *automatic extraction*).
+- Browser / API / SDK surfaces.
+
+If a task seems to require any v2 item, stop and ask before scaffolding.
+
+**Watch the terminology change:** "Minions" (Phase 5, was queued) is **archived**. The new path is a single `spawn_sub_agent` tool the main agent calls — no bespoke runtime mode, no separate factory. If you see "minion" in old code or docs and the change touches it, rename to "sub-agent" in the same commit.
 
 ## Documentation discipline
 

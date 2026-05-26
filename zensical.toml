@@ -35,11 +35,13 @@ nav = [
     { "Design" = [
         { "Idea" = "idea.md" },
         { "Architecture" = "architecture.md" },
+        { "Cost-efficient orchestration" = "design/cost-efficient-orchestration.md" },
         { "Progress" = [
             { "Dashboard" = "progress.md" },
             { "History" = "progress-history.md" },
             { "A2A log" = "progress-a2a.md" },
             { "Roadmap" = "progress-roadmap.md" },
+            { "Archive 2026-05 reframe" = "progress-archive-2026-05.md" },
         ] },
         { "Changelog" = "changelog.md" },
         { "Documentation strategy" = "design/documentation-strategy.md" },

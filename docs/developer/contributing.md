@@ -60,7 +60,7 @@ Before you mark a PR ready for review:
 - **Docs in the same PR** as code when behavior is user-visible.
 - **No drive-by refactors** unrelated to the stated goal.
 
-Issues and discussions are welcome for bugs, design questions, and “is this in scope?” before large implementations. Check [`docs/progress.md`](../progress.md) and [`docs/architecture.md`](../architecture.md) so v2-deferred work (YOLO, minions runtime, etc.) is not re-implemented by accident.
+Issues and discussions are welcome for bugs, design questions, and “is this in scope?” before large implementations. Check [`docs/progress.md`](../progress.md) and [`docs/architecture.md`](../architecture.md) so v2-deferred work (YOLO, CodeMode, sandboxing, etc.) is not re-implemented by accident. **Heads up on the 2026-05-26 reframe:** "Minion" terminology was retired in favour of "sub-agent" (Phase B); the old `mode: minion` skill design is archived to [`docs/progress-archive-2026-05.md`](../progress-archive-2026-05.md).
 
 ## Required reading before your first PR
 
@@ -177,7 +177,7 @@ These are non-negotiable; full rationale is in [architecture.md](../architecture
 - **Capabilities** — cross-cutting behavior is a Pydantic AI `Capability`, not ad-hoc lifecycle classes.
 - **HITL** — use `ApprovalRequiredToolset` + `make_approval_handler(bus)`; do not build a custom approval system.
 - **Event bus** — CLI renders from `Hooks` → `EventBus` → `CliRenderer`; do not `await gru.run` directly in the REPL control path.
-- **Tracing** — model/tool/minion spans go through Logfire (`capabilities/observability.py`).
+- **Tracing** — model/tool/sub-agent spans go through Logfire (`capabilities/observability.py`).
 
 ## Tests
 

@@ -129,9 +129,11 @@ Slash input is **never** sent to the model — unknown commands raise `UnknownSl
 
 ## What not to build here
 
-- Custom minion factory (Phase 5 / skills `mode: minion`)
-- Plan Mode toolset swap (v2 / D23)
-- MCP loader (Phase 6)
-- CodeMode / Monty sandbox (v2)
+- Sub-agent runtime (Phase B — `SubAgentCapability` + `spawn_sub_agent`, design in [`design/cost-efficient-orchestration.md`](../design/cost-efficient-orchestration.md))
+- Post-flight hook runner (Phase C)
+- Skill loader (Phase D — community Anthropic format, no `mode: minion`)
+- Plan Mode toolset swap (Phase F / D23)
+- MCP loader (Phase G / D28)
+- YOLO / CodeMode / Monty sandbox (v2)
 
 If a task needs those, stop and check [`progress.md`](../progress.md) first.

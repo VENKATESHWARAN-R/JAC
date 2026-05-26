@@ -20,11 +20,14 @@ It runs on your machine — your keys, your files, your context.
 | **Add a capability or tool** | [Capabilities & hooks](developer/capabilities.md) |
 | **Understand the product vision** | [Idea](idea.md) |
 | **Review locked design decisions** | [Architecture](architecture.md) |
+| **Read the cost-efficiency thesis** | [Cost-efficient orchestration](design/cost-efficient-orchestration.md) |
 | **See what's shipped vs queued** | [Progress](progress.md) |
 
 ## Design & maintenance
 
 - [Documentation strategy](design/documentation-strategy.md) — audiences, single source of truth, writing rules.
+- [Cost-efficient orchestration](design/cost-efficient-orchestration.md) — the active Phase A–G design driver.
+- [Roadmap archive (2026-05 reframe)](progress-archive-2026-05.md) — the old Skills `mode: minion` / Minion / MCP entries.
 - [Drift matrix](design/audit/drift-matrix.md) — doc/code alignment audit (maintainers).
 
 ## Source

@@ -1,15 +1,50 @@
 # JAC — Architecture
 
-> **Last revised:** 2026-05-24 · Living design doc. Decisions are locked in §5.
+> **Last revised:** 2026-05-26 · Living design doc. Decisions are locked in §5.
 >
 > Module strategy (where things go + slash-vs-capability rulebook): [developer/module-strategy.md](developer/module-strategy.md).
 > As-built module map: [developer/codebase-map.md](developer/codebase-map.md).
 > Memory paths: [user-guide/sessions-and-memory.md](user-guide/sessions-and-memory.md).
 > Phase checklist: [progress.md](progress.md).
+> Cost-efficiency design (active roadmap driver): [design/cost-efficient-orchestration.md](design/cost-efficient-orchestration.md).
+
+## 0. Product thesis & cost model
+
+**JAC is orchestration around an intelligent layer.** The LLM is the brain; JAC is the nervous system, eyes, hands, and feet. The model only thinks. Everything that determines whether that thinking is cheap and effective — what enters the context, when it enters, which tier model processes it, what work is delegated elsewhere — is JAC's responsibility.
+
+**Cost is the metric we optimize against.** Approximately:
+
+```
+cost ≈ Σ over turns of (input_tokens × input_price + output_tokens × output_price)
+```
+
+The model's price-per-token is exogenous. JAC controls input_tokens. Every design decision is judged against that.
+
+### Five levers JAC pulls
+
+| Lever | Mechanism | Where in code |
+| --- | --- | --- |
+| **1. Sub-agents** | Delegate context-heavy work to an isolated `Agent` so its intermediate tokens never reach the main loop. Only the result returns. | Phase B — `spawn_sub_agent` tool + `SubAgentCapability`. |
+| **2. Tier-aware model selection** | Profiles map `small` / `medium` / `large` to ordered model lists (D22). Sub-agents take a `tier` arg, never a model name. Main agent stays on its profile tier. | `jac.profiles`, plus Phase B tier-HITL approval. |
+| **3. Tool result post-processor** | When a tool returns above a threshold AND a cheap tier is configured, route the raw output through the small model with a summarize prompt before it lands in the agent loop. Original cached to disk. | Phase A — wrapper around `FunctionToolset.call_tool`. |
+| **4. Cache-friendly prompt assembly** | Order system prompt → tools → memory → history so the cache breakpoint sits at the stable/changing boundary. Anthropic cache hits cost ~10% of input. | Phase A — `Gru.build_instructions()` review. |
+| **5. Deterministic hooks** | Post-flight callables (typecheck, tests, lint) run after a sub-agent finishes. All pass → response returns verbatim (no extra LLM turn). Any fail → failure routes back to the same sub-agent for a fix. | Phase C — `Hook` Protocol + retry loop in `SubAgentCapability`. |
+
+### Anti-patterns we structurally refuse
+
+- Letting the main agent's context grow turn-by-turn with tool results it doesn't need to reason over (→ Lever 3).
+- Calling an LLM to validate something a deterministic check can answer (`pytest --exitcode` beats "did the tests pass?") (→ Lever 5).
+- Adding "another agent type" or "another runtime mode" when the answer is one more tool the existing agent calls (→ Lever 1: one tool, many uses).
+- Optimizing model choice while leaving raw 200KB tool outputs unfiltered (→ Lever 3 before tier-tuning).
+- Inventing bespoke skill formats when the community Anthropic format already covers it (→ Phase D follows the spec).
+
+### Where each lever lives on the roadmap
+
+Phase A (foundation) handles levers 3 and 4 — pure plumbing, biggest immediate cost win. Phase B introduces lever 1 (sub-agents). Phase C adds lever 5 (hooks). Lever 2 (tier-aware) is already partially shipped via D22 but extended in Phase B with the HITL-approved tier on spawn. See [`design/cost-efficient-orchestration.md`](design/cost-efficient-orchestration.md) for the full Phase A-G design.
 
 ## 1. System overview
 
-JAC is a thin orchestration layer over Pydantic AI. The model and agent loop are Pydantic AI's. JAC's contribution is: persona (Gru), packaged capabilities, a CLI surface, and tier-aware memory.
+JAC is a thin orchestration layer over Pydantic AI. The model and agent loop are Pydantic AI's. JAC's contribution is: persona (Gru), packaged capabilities, a CLI surface, tiered memory, and cost-efficient delegation (sub-agents + hooks + tool-result summarization).
 
 ```mermaid
 flowchart TB
@@ -17,32 +52,40 @@ flowchart TB
     CLI[CLI Surface]
     Bus[Hooks / Event Bus]
     Gru[Gru Agent]
-    MF[Minion Factory - Phase 5]
-    Minion[Minion - ephemeral Agent]
+    SAC[SubAgentCapability - Phase B]
+    Sub[Sub-agent - ephemeral Agent]
+    Hooks[Post-flight hooks - Phase C]
+    Sum[Tool Result Post-processor - Phase A]
     SessionMem[Session Memory]
     ProjMem[Project Memory]
-    UserMem[User Memory - Phase 2a.1]
+    UserMem[User Memory]
     Tools[Tool Capabilities]
     Sandbox[Sandbox - v2]
-    A2A[A2A Capability - Phase 4]
+    A2A[A2A Capability - Phase 4 ✅]
+    Skills[SkillsCapability - Phase D]
 
     User <--> CLI
     CLI <--> Bus
     Bus <--> Gru
     Gru -.calls.-> Tools
+    Tools -.large outputs.-> Sum
+    Sum -.summarized.-> Gru
     Gru -.reads/writes.-> SessionMem
     Gru -.reads/writes.-> ProjMem
     Gru -.reads/writes.-> UserMem
-    Gru -.spawns via tool.-> MF
-    MF -.instantiates.-> Minion
-    Minion -.scoped tools.-> Tools
-    Minion -->|structured result| MF
-    MF -->|merged result| Gru
+    Gru -.reads on trigger.-> Skills
+    Gru -.spawn_sub_agent.-> SAC
+    SAC -.instantiates.-> Sub
+    Sub -.scoped tools.-> Tools
+    Sub -->|result| Hooks
+    Hooks -->|all pass| SAC
+    Hooks -.fail.-> Sub
+    SAC -->|result| Gru
     Tools -.optionally through.-> Sandbox
     Gru -.uses.-> A2A
 ```
 
-**Core idea:** every box that isn't `Gru`, `Minion`, or `CLI` is a **Pydantic AI Capability**. Capabilities are the atom of the system.
+**Core idea:** every box that isn't `Gru`, `Sub-agent`, or `CLI` is a **Pydantic AI Capability**. Capabilities are the atom of the system.
 
 ## 2. How JAC maps to Pydantic AI
 
@@ -51,23 +94,25 @@ Use these primitives — don't reimplement them.
 | JAC concept | Pydantic AI primitive | Notes |
 | --- | --- | --- |
 | **Gru** | `Agent` (long-lived) | One per session. Model selected by *tier* via active profile (D22), not hardcoded. |
-| **Minion** | `Agent` from a skill (`mode: minion`) | Short-lived. Loaded from a community-format `SKILL.md` file (D21). Phase 5. |
-| **Skill (inline)** | Markdown + YAML frontmatter | `SkillsCapability` injects body on trigger or `/skill NAME`. Phase 3. |
+| **Sub-agent** | `Agent` built fresh per spawn (Phase B) | Short-lived. Built by `SubAgentCapability` from a task packet (D36). Tier comes from the spawn args (D39). Depth cap = 1 — sub-agents cannot spawn further sub-agents (D40). |
+| **Skill** | Markdown + YAML frontmatter (community Anthropic format) | `SkillsCapability` (Phase D) injects body on trigger or `/skill NAME`. **No `mode: minion`** — skills are loadable prompts, not a runtime mode (D21 revised). |
 | **Tool bundles** | Custom `Capability` providing `FunctionToolset` | One capability per concern (fs, shell, search, memory, web, process, clarify, plan). |
-| **HITL approval** | `ApprovalRequiredToolset` + `deferred_tool_calls` hook | Built-in. Mark tools `approval_required`; CLI handles prompt. |
+| **Tool result post-processor** | Wrapper around `FunctionToolset.call_tool` | Above threshold + cheap tier available → routes through `direct.model_request_sync` to summarize (D38). Phase A. |
+| **Post-flight hooks** | `Hook` Protocol (Phase C) | Deterministic callables attached per-spawn. All pass → return verbatim. Any fail → route failure back into the sub-agent (retry budget 3) (D37). |
+| **HITL approval** | `ApprovalRequiredToolset` + `deferred_tool_calls` hook | Built-in. Mark tools `approval_required`; CLI handles prompt. Sub-agent spawns are HITL-gated and surface task summary + tier (D39). |
 | **CLI event bus** | `Hooks` lifecycle events → `asyncio.Queue` | CLI registers `Hooks`, renders from queue. All surfaces reuse same capabilities. |
 | **Session memory** | `ModelMessagesTypeAdapter` + disk | Storage is our responsibility; serialization is PAI's. |
 | **Project memory** | Custom `Capability` with `get_instructions()` | Auto-injects `<repo>/AGENTS.md` + `<repo>/.agents/memory.md` into system prompt. |
 | **History compaction** | `ProcessHistory` capability | Built-in processor function. Token-budget-aware (D20). |
-| **Cheap routing** | `pydantic_ai.direct.model_request_sync` | Lightweight model calls without spinning up a full agent loop. |
-| **Tracing** | `Instrumentation` capability + Logfire | One-line setup via `setup_observability()`. |
+| **Cheap routing** | `pydantic_ai.direct.model_request_sync` | Lightweight model calls without spinning up a full agent loop. Powers the tool result post-processor (D38). |
+| **Tracing** | `Instrumentation` capability + Logfire | One-line setup via `setup_observability()`. Sub-agent spans nest under parent via `parent_run_id` (D8). |
 | **A2A inbound** | `fasta2a` wrapped as a `Capability` | Guest Gru on background asyncio task; isolated from host session (D24). |
 | **A2A outbound** | Custom toolset: `a2a_discover` + `a2a_call` | Talks to any A2A-compatible agent (D24). |
-| **YOLO / Plan Mode** | `ModeCapability` base (v2) | Toolset filter + approval override. Deferred — D23/D29. |
+| **YOLO / Plan Mode** | `ModeCapability` base | Toolset filter + approval override. Plan Mode pulled forward to Phase F; YOLO still v2. (D23/D29) |
 
 ## 3. Tool calls must carry a `reason: str`
 
-**Every tool exposed to Gru or a minion must accept `reason: str` as its first argument.** The LLM justifies each call in one sentence.
+**Every tool exposed to Gru or a sub-agent must accept `reason: str` as its first argument.** The LLM justifies each call in one sentence.
 
 **Enforcement** — structural, not prompt-based:
 - `@jac_tool` decorator requires the parameter at registration time.
@@ -130,7 +175,7 @@ Locked decisions — do not deviate without updating this table and `docs/progre
 
 | # | Decision |
 | --- | --- |
-| D1 | **Minion task packet:** `objective` (req), `success_criteria` (req), `relevant_files` (opt), `forbidden_actions` (opt), `expected_output` (req). Templates may extend with their own fields. |
+| D1 | **Sub-agent task packet** (revised 2026-05-26, was "Minion task packet"): `objective` (req), `success_criteria` (req), `relevant_files` (opt), `forbidden_actions` (opt), `expected_output` (req). See D36 for the active Phase B Pydantic model. |
 | D2 | **Approval granularity:** per-tool, with an optional `risk: high` tag for one-off escalation. Every tool call carries a `reason: str` rendered in the approval UI. Approval responses may carry user feedback in-band (D26) so a denied call can redirect the model without a wasted turn. |
 | D3 | **Session ID:** timestamp folder — `<repo>/.agents/sessions/2026-05-19T16-23-04/`. Human-readable, sorts chronologically. |
 | D4 | **Project memory:** prose `memory.md` first. Add structured `facts.jsonl` only if/when prose retrieval gets noisy. Memory management is a last resort. |
@@ -150,9 +195,9 @@ Locked decisions — do not deviate without updating this table and `docs/progre
 | D18 | **Web tools:** `web_search` + `fetch_url` — read-only, no approval required. SSRF guard on fetch. `max_results` 1–10 (default 5); fetch returns ≤50k chars. **DDG is default; Tavily used when `TAVILY_API_KEY` is set** (Phase 1.7.h). |
 | D19 | **Provider catalog (`providers.yaml`):** shipped `src/jac/data/providers.yaml`, deep-merged with `~/.jac/providers.yaml`. Drives credential inference and `jac init` wizard. Unknown prefixes warn; no keys required unless `requires_env` set. |
 | D20 | **Token-aware history compaction (supersedes Phase 2b).** Budget: `settings.compaction.max_context_tokens` (default 200k). Ladder: warn at 60%, auto-compact at 70% (summarizes dropping slice using `small` tier), hard-refuse at 85% (user must `/clear`). Original slices preserved under `<session>/compacted/<n>.json`. |
-| D21 | **Skills use the Anthropic community format.** Loaded from `~/.jac/skills/<name>/SKILL.md` (user) and `<repo>/.agents/skills/<name>/SKILL.md` (project). YAML frontmatter + markdown body. `mode: inline` injects context; `mode: minion` spawns a sub-agent (Phase 5 runtime). Replaces the old bespoke YAML AgentSpec path. |
+| D21 | **Skills use the Anthropic community format** (revised 2026-05-26). Loaded from `~/.jac/skills/<name>/SKILL.md` (user) and `<repo>/.agents/skills/<name>/SKILL.md` (project). YAML frontmatter + markdown body. **Skills are loadable prompts / playbooks** — read into Gru's context on description-based trigger or via `/skill use NAME`. The previously-proposed `mode: minion` is dropped; sub-agents come from the `spawn_sub_agent` tool (D35), not from skills. A skill may *recommend* spawning a sub-agent in its prose, but the runtime mechanism is the tool, not a frontmatter field. |
 | D22 | **Tiered profiles (small / medium / large).** Profile `tiers:` block maps tier names to ordered model lists. `active_tier:` sets Gru's default. Minions select by `model_tier:`, never by model name. `/model TIER` switches tier for session; `/model PROVIDER:ID` ad-hoc override. Pre-D22 `model:` profiles raise on `list_profiles()` — `jac init` auto-migrates. |
-| D23 | **Plan Mode — deferred to v2 (2026-05-23).** Structural toolset swap: read-only subset + `write_plan`. Bundled `plan`→`tasks` rename defers with it. Open questions: multi-plan handoff, budget hazard, `ModeCapability` base scope. Design locked; only timing slipped. |
+| D23 | **Plan Mode — pulled forward to Phase F (2026-05-26 reframe).** Structural toolset swap: read-only subset + `write_plan`. Now valuable because the main agent benefits from planning *before* spawning sub-agents. Bundled `plan`→`tasks` rename moves with it. `ModeCapability` base built alongside Plan Mode so YOLO (still v2) slots in later. |
 | D24 | **A2A design.** Inbound: single guest Gru per server start, fresh context per request via fasta2a `Storage.load_context()`. Narrowed toolset: `[read_file, list_dir, grep, glob]` — no writes, no shell, no memory writes, no clarify. Auth: ephemeral bearer token, regenerated on restart. Outbound: `a2a_discover` + `a2a_call`. Peer config under profile `a2a.peers.<name>`. Guest token usage feeds `project_total_tokens` (D25). Streaming not supported in v1. Contexts + audit: `<project>/.agents/a2a/`. |
 | D25 | **Budgets are token-based, never dollar-based.** Knobs: `budget.session_input_tokens`, `session_total_tokens`, `project_total_tokens`. Warn at 80%, hard-stop at 100%; `/budget extend N` overrides for session. Defaults `null` — opt-in only. |
 | D26 | **In-band feedback on deny.** `denied_with_feedback(text)` returns user text as tool result — no wasted turn. `clarify` gains "Type your own answer" option (`free_text=True`). Both reuse existing event-bus `Future` plumbing. |
@@ -163,10 +208,21 @@ Locked decisions — do not deviate without updating this table and `docs/progre
 | D31 | **Outbound A2A auth is pluggable per peer.** `auth:` block is a discriminated union: `bearer` / `api_key` / `oauth2_client_credentials` (OIDC / GCP deferred to Phase 4.e). `AuthStrategy` Protocol: `async def headers_for() -> dict[str, str]`. Strategy instance cached per peer on `A2ACapability`. Session peers (`/a2a peer add`) are in-memory only — never on disk. The LLM only passes peer names; credentials never cross the agent boundary. |
 | D32 | **A2A `a2a_call` blocks until terminal.** fasta2a's `message/send` returns `submitted` immediately while the broker runs the work asynchronously. JAC's client transparently polls `tasks/get` (250 ms → 2 s backoff, 120 s total) until the task reaches a terminal state (`completed` / `failed` / `canceled` / `rejected`) or a client-action state (`input-required` / `auth-required`). On timeout the returned dict carries `_jac_timeout: true`. The model never manages task ids or polling. **URL → peer auto-promote:** a raw URL passed to `a2a_call` that exactly matches one configured peer's URL is promoted to that peer (auth applied). Zero or multi-match falls through to raw call. |
 | D33 | **A2A file transfer is inline-bytes only in v1.** Both directions use `FileWithBytes`; `FileWithUri` is deferred (no SSRF guard yet). Outbound `a2a_call(files=[paths])` reads, base64-encodes (5 MB cap per file), attaches as `FilePart`. Filename in both `file.name` (spec) and `metadata.filename` (belt-and-braces — fasta2a's TypedDict drops `file.name`). On receive, the client decodes `FilePart` bytes in `artifacts[]` and `history[]` to `<project>/.agents/a2a/inbound-files/<task_id>/<sanitized>` and surfaces paths as `_jac_saved_files`; bytes never enter the LLM context. **Inbound (server-side):** `AuditingAgentWorker` materializes file parts to `<project>/.agents/a2a/guest-uploads/<context_id>/<sanitized>` (per-context for multi-turn reuse) AND leaves the original `FilePart` intact so multimodal models still see bytes via fasta2a's existing `BinaryContent` path. A synthetic `[a2a attachment]` `UserPromptPart` tells the agent where files landed. Filename sanitization defeats `..` traversal; collisions get numeric suffixes. |
+| D34 | **Cost-efficiency is the product thesis** (2026-05-26 reframe). JAC is orchestration around an intelligent layer. Cost ≈ Σ(`turn_tokens × turn_price`). Every architectural decision is judged against this. Five levers: sub-agents (D35), tier-aware selection (D22 + D39), tool result post-processor (D38), cache-friendly prompt assembly (Phase A), deterministic hooks (D37). See §0 and `design/cost-efficient-orchestration.md`. |
+| D35 | **`spawn_sub_agent` is the only delegation primitive.** One tool exposed to the main agent: `spawn_sub_agent(reason, task_summary, tier, task_packet)`. No bespoke runtime modes, no separate factory tools. Skills (D21) may *recommend* spawning a sub-agent in their prose; the tool is the runtime. Sub-agents are isolated `Agent` instances with their own context. **Parallel spawn deferred to Phase E**; sequential only in v1. |
+| D36 | **Task packet schema.** `SubAgentTaskPacket` Pydantic model (Phase B): `objective: str` (req), `success_criteria: str` (req), `relevant_paths: list[str]` (opt), `forbidden_actions: list[str]` (opt), `expected_output: str \| type[BaseModel]` (req — free-text spec or Pydantic model class), `allowed_tools: list[str] \| None` (opt — toolset allowlist; default inherits main minus `spawn_sub_agent`), `hooks: list[Hook]` (opt — D37), `max_turns: int = 10`. Supersedes D1 fields list. |
+| D37 | **Post-flight hooks are deterministic callables.** A `Hook` is a pure Python callable or shell command returning `(ok: bool, output: str)`. Attached per-spawn via the task packet's `hooks` field. **Flow:** sub-agent emits final response → hooks run sequentially → all pass → response returns *verbatim* to main agent (no extra LLM turn). Any fail → the failure (`output`) becomes the next user-prompt in the *same* sub-agent's loop. **Retry budget: hard-coded 3 per spawn.** Exhaustion returns a `hooks_exhausted` error result to the main agent. Hooks must NOT call an LLM — that defeats the purpose. Per-skill / global hook scope is deferred (Phase D+). |
+| D38 | **Tool result post-processor with cheap-tier summarization.** When any tool's stringified result exceeds the threshold AND the active profile has a `small` tier strictly cheaper-per-output-token than the current agent's tier, route the result through `pydantic_ai.direct.model_request_sync` against the `small` tier with a fixed summarize prompt. Summarized result returns to the agent loop tagged: `[AI-summarized via <model>: original NNN tokens — full output at <path>]`. **Original is saved** to `<project>/.agents/cache/tool-results/<run-id>/<call-id>.txt` for re-read. **Defaults:** threshold = 8000 tokens (configurable per profile under `cost.tool_result_threshold_tokens`); opt-out per-tool-name via `cost.no_summarize_tools: [name, ...]`. Applies to main agent *and* sub-agents. |
+| D39 | **Sub-agent spawn is HITL-gated; tier (never model) is approved.** `spawn_sub_agent` is approval-required. The HITL prompt surfaces: `reason`, `task_summary`, `tier ∈ {small, medium, large}`. User can Approve, Deny, or counter-propose a different tier. Selected tier resolves against the active profile's tier mapping; if missing, cascade up (small → medium → large) with a note in the approval line. **The main agent never picks a specific model name.** |
+| D40 | **Sub-agent depth cap = 1 in v1.** Sub-agents inherit the main agent's toolset minus `spawn_sub_agent` — enforced structurally at agent construction (the tool literally isn't in the toolset), not via prompt. Configurable cap reconsidered only after real demand emerges. Logfire `parent_run_id` chain still works; nested span depth is bounded. |
+| D41 | **Bidirectional sub-agent ↔ main-agent comms — specced, ship cautiously.** Sub-agents get an `ask_main_agent(reason, question, context)` tool (carries `reason: str` per D2 — internal but consistent). **Semantics:** the question is delivered as the `spawn_sub_agent` tool's *intermediate yield* (return value with `_intermediate: true`); main agent processes it as a normal tool result, replies via a sibling `respond_to_sub_agent(answer)` tool call, sub-agent unblocks and continues. **Caps:** max 5 round-trips per spawn (anti-thrashing). **Risks acknowledged:** confusing transcript UX, doubled per-question turn cost, HITL multiplexing — renderer needs explicit `[sub-agent → main]` / `[main → sub-agent]` markers. v1 implementation gated behind a feature flag; default off until UX is validated. |
+| D42 | **Tier-HITL counter-proposal flow.** When user denies a `spawn_sub_agent` approval with a tier counter-proposal (`change tier: large`), the deny mechanism reuses D26's in-band feedback — the deny resolves the approval `Future` with a `denied_with_feedback("retry tier=large")` result, the main agent's next turn sees this as the tool result, retries the spawn with the suggested tier. No wasted user input. |
 
 ### Still open
 
-- Default model selection per minion template (Phase 5 grooming will lock this).
+- **Sub-agent file system semantics** (Phase B grooming sub-item): same CWD as main agent? Read-only by default? Per-spawn workdir? Current lean: same toolset → same filesystem view, HITL gates writes per-tool the same way the main agent's do.
+- **Hook scope beyond per-spawn** (Phase C+): skill-declared default hooks; project-global hook config. Deferred until Phase D ships and we see real usage.
+- **Logfire UX for nested traces**: depth-1 cap (D40) bounds the chain, but renderer affordances for inline sub-agent transcripts are TBD.
 - Which tools default to `risk: high` beyond the obvious (shell, delete).
 - Approval prompt response format — `y/n/feedback` or fewer options?
 
