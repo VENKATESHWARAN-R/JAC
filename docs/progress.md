@@ -43,10 +43,11 @@ For deeper context:
 | Phase C — Deterministic hooks | 🚫 Dropped | Complexity didn't earn its keep; `success_criteria` + post-return `run_shell` covers the use case |
 | **Phase D — Skill loader** | ✅ Complete (v0.4.0) | Loader walks project/user/package; 2 KB prompt cap with name-only fallback; `load_skill` tool; `/skill list|use|reload`; 3 reference skills (`code-review`, `summarize-large-files`, `verify-change`); A2A AgentCard publishes loaded skills as `jac-skill-<name>` entries. |
 | **Phase E — Parallel + bidirectional** | ⏸ Next | Parallel spawn + D41 bidirectional comms feature flag |
-| Phase F — Plan Mode | ⏸ Future | Pulled forward from v2 (D23 promoted) |
-| Phase G — A2A 4.e + MCP + tests | ⏸ Future | OIDC/GCP A2A auth; MCP loader; broader test coverage |
+| **Phase F — MCP loader** | ⏸ Future | **Promoted from old Phase G (2026-05-27)** — MCP is the ecosystem surface most users try first; precedes Plan Mode |
+| Phase G — Plan Mode | ⏸ Future | Pulled forward from v2 (D23 promoted); demoted from old Phase F to follow MCP |
+| Phase H — A2A 4.e + broader tests | ⏸ Future | OIDC/GCP A2A auth; broader test coverage; eval-loop work tracked under Phase 7 |
 | v0.2 source restructuring | ✅ Complete | released as v0.2.0 |
-| v2 | ⏸ Future | YOLO + Monty + sandbox + Stuck-loop + Night Shift + user-tier predict-calibrate memory |
+| v2 | ⏸ Future | YOLO + **direct `pydantic-monty` sandbox** (D43) + Stuck-loop + Night Shift + user-tier predict-calibrate memory |
 
 ---
 
@@ -145,9 +146,23 @@ For deeper context:
 
 ---
 
-## Queued — Phase F: Plan Mode (D23) ⏸
+## Queued — Phase F: MCP loader (D28) ⏸
 
-**Goal:** structural toolset swap pulled forward from v2 — now valuable because the main agent benefits from planning *before* spawning sub-agents.
+**Goal:** add the most-requested ecosystem surface before Plan Mode. **Promoted from old Phase G on 2026-05-27** after external review noted MCP is the protocol most users will try first; A2A's protocol-design work was the right early bet, but MCP now blocks daily-workflow integrations more than Plan Mode does.
+
+- [ ] `~/.jac/mcp.yaml` + `<repo>/.agents/mcp.yaml` schema + loader (layered like other config; project shadows user)
+- [ ] `MCPServerStdio` / `MCPServerHTTP` wiring as a JAC capability — tools published into Gru's toolset alongside local tools
+- [ ] **`reason: str` exemption per D28** — render `reason: (mcp tool — no reason captured)` in HITL approval UI; JAC-authored MCP tools still carry `reason:`
+- [ ] `/mcp list` / `/mcp reload` slash commands; per-server enable/disable knob in YAML
+- [ ] Audit: MCP tool usage flows through the same `SummarizingToolset` wrapper as local tools (so large MCP outputs go through the post-processor)
+- [ ] User-guide page: `docs/user-guide/mcp.md` + nav entry
+- [ ] Tests: loader (valid/invalid YAML, layered shadowing, missing server), approval flow, reload diff, large-output summarization round-trip
+
+---
+
+## Queued — Phase G: Plan Mode (D23) ⏸
+
+**Goal:** structural toolset swap pulled forward from v2 — now valuable because the main agent benefits from planning *before* spawning sub-agents. **Demoted from old Phase F to follow MCP** (2026-05-27): MCP delivers more daily-workflow value sooner; Plan Mode benefits from MCP tools being available when the plan executes.
 
 - [ ] `ModeCapability` base — `filter_capabilities()` + `approval_override()` knobs
 - [ ] Plan Mode toggle (slash `/plan-mode`); read-only subset + `write_plan` tool
@@ -156,10 +171,9 @@ For deeper context:
 
 ---
 
-## Queued — Phase G: A2A 4.e + MCP + tests ⏸
+## Queued — Phase H: A2A 4.e + broader tests ⏸
 
 - [ ] **A2A 4.e:** `OidcAuth` config (issuer + client_id + client_secret + scope, with `.well-known` discovery); `GcpIdTokenAuth` config (audience via `google-auth`); add `jac[gcp]` optional dep; user docs for Azure/GCP/Okta peers
-- [ ] **MCP loader (D28):** `~/.jac/mcp.yaml` schema + loader; `MCPServerStdio` / `MCPServerHTTP` wiring; `/mcp list` and `/mcp reload` slash commands; per-server enable/disable
 - [ ] **Broader test coverage:** Phase 1 core (session, fs/shell bus), memory (`remember`/`forget`), slash edge cases
 
 ---
@@ -170,16 +184,15 @@ For deeper context:
 - [x] Phase 1.7 capability tests
 - [x] Ruff + ty config; `just check`
 - [x] User docs on Zensical
-- [ ] Broader test suite (rolled into Phase G)
-- [x] CodeMode integration deferred to v2 (no concrete pain yet)
+- [ ] Broader test suite (rolled into Phase H)
 - [x] Stuck-loop detection deferred to v2 (low value in HITL)
+- [ ] **Evaluation loop on Logfire spans (D44, new 2026-05-27)** — trajectory tests that assert against span attributes already emitted per D8 (`template`, `task_id`, `parent_run_id`, `token_cost`, `duration`, `exit_status`). First targets: approval flow correctness, compaction trigger threshold, summarization savings (original vs summary tokens), memory write audit trail, sub-agent delegation (tier resolution + depth cap + parent chain), `/skill use` body injection. Run via `just eval` (new recipe), distinct from `just check` (fast unit tests). Builds on existing Logfire instrumentation rather than adding a separate test harness. Likely starts as `tests/eval/` directory with span-replay fixtures from a `logfire.testing.CaptureLogfire` style capture.
 
 ---
 
 ## Future — v2 ⏸
 
-- [ ] YOLO mode + sandboxing with Monty + `sandbox-exec` / `bwrap` + Git-Clean Guard (uses `ModeCapability`'s `approval_override` knob from Phase F)
-- [ ] CodeMode integration (`pydantic-ai-harness`)
+- [ ] YOLO mode + **sandboxing via direct `pydantic-monty` (D43)** — embedded Rust interpreter, microsecond cold start, zero-grant default. NOT via `pydantic-ai-harness`'s `CodeExecutionToolset` wrapper (which forces a "write code instead of call tools" mental model). NOT Docker (network call, cold-start seconds, external dep). JAC writes its own thin `MontyShellCapability` that opt-in routes specific tools (initially `run_shell`, later filesystem writes) through `pydantic_monty.Monty` with our existing toolset registered as external functions. Git-Clean Guard required before YOLO entry. Uses `ModeCapability`'s `approval_override` knob from Phase G.
 - [ ] Stuck-loop detection
 - [ ] Night Shift / cron scheduling
 - [ ] User-tier memory + predict-calibrate extraction (the `~/.jac/memory.md` file exists; automatic extraction deferred)

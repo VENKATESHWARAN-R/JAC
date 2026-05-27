@@ -267,13 +267,17 @@ Ship 2–3 in `src/jac/data/skills/`:
 - HITL approvals from *within* sub-agents bubble up serially to the same prompt-toolkit input (only one approval prompt visible at a time).
 - Logfire: parallel branches under the same parent span.
 
-## 7. Phase F — Plan Mode (forward from v2)
+## 7. Phase F — MCP loader (promoted 2026-05-27)
 
-Originally v2 (D23). Pulled forward because plans are more valuable now that the agent has the option to delegate. A plan step like "explore A/B/C and decide" is a natural sub-agent boundary. Implementation per D23: structural toolset swap (read-only + `write_plan`); the bundled `plan`→`tasks` rename moves with it. Builds the `ModeCapability` base, which YOLO mode will reuse when it lands.
+Promoted ahead of Plan Mode after external review. Rationale: MCP is the ecosystem surface most users try first; A2A's protocol-design work was the right early bet, but daily-workflow integrations now block on MCP more than on planning. Plan Mode also benefits from MCP tools being available when the plan executes. Scope per D28: `mcp.yaml` layered loader, `MCPServerStdio` / `MCPServerHTTP` wiring, slash surface (`/mcp list` / `/mcp reload`), MCP outputs route through `SummarizingToolset` automatically. MCP tools skip the `reason: str` enforcement per D28.
 
-## 8. Phase G — A2A 4.e + MCP + quality
+## 8. Phase G — Plan Mode (demoted to follow MCP)
 
-Lower priority but still planned. See `progress.md` for the live list.
+Originally v2 (D23). Pulled forward because plans are more valuable now that the agent has the option to delegate. A plan step like "explore A/B/C and decide" is a natural sub-agent boundary. Demoted from old Phase F to follow MCP — see Phase F rationale. Implementation per D23: structural toolset swap (read-only + `write_plan`); the bundled `plan`→`tasks` rename moves with it. Builds the `ModeCapability` base, which YOLO mode (v2) will reuse via the `approval_override` knob.
+
+## 8a. Phase H — A2A 4.e + broader tests
+
+Lower priority but still planned. (Old Phase G minus MCP.) A2A 4.e covers OIDC discovery and GCP id-token auth strategies for outbound peers; broader test coverage targets session, fs/shell bus, memory, and slash edge cases. See `progress.md` for the live list.
 
 ## 9. ⚠️ Risk areas (proceed with care)
 
@@ -310,8 +314,9 @@ Anything that goes into the system prompt becomes part of the cached prefix. If 
 3. **Phase B** (sub-agent tool) — sequential only, no bidirectional, no parallel.
 4. **Phase D** (skill loader) — gives the main agent the playbooks it needs to use sub-agents well.
 5. **Phase E** (parallel + bidirectional flag-flip after validation).
-6. **Phase F** (Plan Mode).
-7. **Phase G** (A2A 4.e, MCP, broader tests).
+6. **Phase F** (MCP loader) — promoted from old Phase G; ecosystem surface that unblocks daily-workflow integrations.
+7. **Phase G** (Plan Mode) — demoted from old Phase F to follow MCP; benefits from MCP tools being available when the plan executes.
+8. **Phase H** (A2A 4.e + broader tests).
 
 ## 11. Open questions tracked elsewhere
 

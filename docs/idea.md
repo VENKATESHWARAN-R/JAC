@@ -87,13 +87,14 @@ Gru ── receives result (full-fidelity, not compressed), decides next action
 
 The roadmap was reframed around the cost-efficiency thesis. Old Phase 3/5/6 entries (Skills with `mode: minion`, the minion runtime, the MCP loader) were archived to [`progress-archive-2026-05.md`](progress-archive-2026-05.md). New phasing:
 
-- **Phase A — Context-cost foundation.** Tool result caps; tool result post-processor; cache-friendly prompt assembly. Highest leverage; do first.
-- **Phase B — Sub-agent tool.** `spawn_sub_agent` with task packet, tier-HITL approval, depth cap = 1.
-- **Phase C — Deterministic hooks.** Post-flight callables; failures route back into the sub-agent.
-- **Phase D — Skill loader.** Anthropic community format; skills are loadable prompts, no `mode: minion`.
+- **Phase A — Context-cost foundation.** Tool result caps; tool result post-processor; cache-friendly prompt assembly. Highest leverage; do first. **Shipped v0.3.0.**
+- **Phase B — Sub-agent tool.** `spawn_sub_agent` with task packet, tier-HITL approval, depth cap = 1. **Shipped v0.3.0.**
+- **Phase C — Deterministic hooks.** **Dropped** — complexity didn't earn its keep; `success_criteria` + post-return `run_shell` covers verification.
+- **Phase D — Skill loader.** Anthropic community format; skills are loadable prompts, no `mode: minion`. **Shipped v0.4.0.**
 - **Phase E — Parallel sub-agents + HITL multiplexing.**
-- **Phase F — Plan Mode** (pulled forward from v2).
-- **Phase G — A2A Phase 4.e (OIDC/GCP), MCP loader, broader test coverage.**
+- **Phase F — MCP loader** (promoted from old Phase G after 2026-05-27 review).
+- **Phase G — Plan Mode** (pulled forward from v2; demoted from old Phase F to follow MCP).
+- **Phase H — A2A Phase 4.e (OIDC/GCP) + broader test coverage.**
 
 Already shipped (do not redo): Phase 1.7 coworker experience, Phase 2a/2a.1 memory, Phase 4 A2A (PR1–PR4 + 4.d hotfixes + file transfer + demo peer).
 

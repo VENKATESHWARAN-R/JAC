@@ -131,9 +131,9 @@ Slash input is **never** sent to the model — unknown commands raise `UnknownSl
 
 - Sub-agent runtime (Phase B — `SubAgentCapability` + `spawn_sub_agent`, design in [`design/cost-efficient-orchestration.md`](../design/cost-efficient-orchestration.md))
 - Post-flight hook runner (Phase C)
-- Plan Mode toolset swap (Phase F / D23)
-- MCP loader (Phase G / D28)
-- YOLO / CodeMode / Monty sandbox (v2)
+- MCP loader (Phase F / D28)
+- Plan Mode toolset swap (Phase G / D23)
+- YOLO / Monty sandbox (v2 — D43, direct `pydantic-monty`)
 
 (Phase D / skill loader **is** built — see `jac/capabilities/skills.py` and the user-guide [Skills](../user-guide/skills.md) page.)
 

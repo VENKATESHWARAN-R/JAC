@@ -57,19 +57,75 @@ Polish on top of B + D. Two pieces, both gated:
 
 The bidirectional comms is the highest-risk new capability in the roadmap. Read [`design/cost-efficient-orchestration.md`](design/cost-efficient-orchestration.md) §10.1 for the explicit risk table before implementing.
 
-## Phase F — Plan Mode (D23 promoted)
+## Phase F — MCP loader (promoted 2026-05-27)
 
-Plan Mode was v2; the reframe pulled it forward because the main agent benefits from planning *before* spawning sub-agents. A plan step like "explore A/B/C and decide" is a natural sub-agent boundary.
+Promoted ahead of Plan Mode after external review. Rationale: MCP is the ecosystem surface most users will try first; A2A's protocol-design work was the right early bet, but daily-workflow integrations now block on MCP more than on planning. Plan Mode also benefits from MCP tools being available when the plan executes.
+
+Scope per D28 (already in architecture):
+
+- `~/.jac/mcp.yaml` + `<repo>/.agents/mcp.yaml` schema; layered loader (project shadows user, mirroring other config and the skill loader).
+- `MCPServerStdio` / `MCPServerHTTP` wiring as a capability; tools registered into Gru's toolset.
+- Per D28, MCP tools skip the `reason: str` enforcement — render `reason: (mcp tool — no reason captured)` in the HITL approval line. JAC-authored MCP tools (if we ever expose Gru-side tools over MCP) still carry `reason:`.
+- MCP tool outputs flow through `SummarizingToolset`, so large responses get post-processor treatment automatically — no special-casing.
+- Slash surface: `/mcp list` / `/mcp reload` / per-server enable/disable in YAML.
+
+## Phase G — Plan Mode (D23 promoted, now post-MCP)
+
+Plan Mode was v2; the reframe pulled it forward because the main agent benefits from planning *before* spawning sub-agents. A plan step like "explore A/B/C and decide" is a natural sub-agent boundary. Demoted from old Phase F to follow MCP — see Phase F rationale.
 
 Implementation per D23: structural toolset swap (read-only + `write_plan`); bundled `plan`→`tasks` rename moves with it. Builds the `ModeCapability` base that YOLO (still v2) will reuse.
 
-## Phase G — A2A 4.e + MCP + tests
+## Phase H — A2A 4.e + broader tests
 
-Lower priority but still planned.
+Lower priority but still planned. (Old Phase G minus MCP, which was promoted out.)
 
 - **A2A Phase 4.e:** `OidcAuth` (discovery from `.well-known/openid-configuration`) and `GcpIdTokenAuth` (via `google-auth`, behind `jac[gcp]` optional dep). Strategy classes + `make_strategy` dispatch branches. User-guide examples for Azure / GCP / Okta peers.
-- **MCP loader (D28 already in architecture):** `~/.jac/mcp.yaml` schema + loader; `MCPServerStdio` / `MCPServerHTTP` wiring; `/mcp list`, `/mcp reload`.
 - **Broader test coverage:** Phase 1 core (session, fs/shell bus), memory (`remember`/`forget`), slash edge cases.
+
+## Evaluation loop (Phase 7 stream, added 2026-05-27)
+
+Not a phase of its own — a stream under Phase 7 Quality. The idea: every Logfire span already carries D8's schema (`template`, `task_id`, `parent_run_id`, `token_cost`, `duration`, `exit_status`). That makes span replay a natural eval surface: assertions about *what the agent actually did* rather than *what it returned*.
+
+First trajectory targets (chosen because each is a feature whose correctness is hard to verify with unit tests alone):
+
+1. **Approval flow** — given a tool call with `risk: high`, the span chain must include an approval event before the tool span starts. Denied → no tool span.
+2. **Compaction trigger** — given a synthesized 70%-budget history, exactly one compaction span fires with the correct `from_token_count` / `to_token_count` attributes; compacted slice file is written.
+3. **Summarization savings** — for a tool whose output exceeds threshold AND a small tier is cheaper, the span carries `original_tokens > summary_tokens` and the `[AI-summarized via …]` tag is present in the returned tool message.
+4. **Memory write audit** — `remember(scope=project)` outside a git repo raises; inside a repo, writes the file AND emits a span with the audit comment.
+5. **Sub-agent delegation** — `spawn_sub_agent(tier=small)` resolves to the configured small model when present, cascades up when missing; spawn span has correct `parent_run_id`; depth-1 cap structurally enforced (sub-agent toolset has no `spawn_sub_agent`).
+6. **Skill body injection** — `/skill use NAME` results in a turn whose user message equals the skill body verbatim.
+
+Mechanism: `tests/eval/` directory, `just eval` recipe (separate from `just check` because eval runs are slower and may need live providers — but the first cut can stub providers and only assert span shape). Likely uses Logfire's testing capture (`CaptureLogfire`-style) to pull spans without exporting.
+
+Tracked in `progress.md` under Phase 7. No new phase number because trajectory eval is ongoing rather than time-boxed.
+
+## Harness alignment — what we reuse vs build (added 2026-05-27)
+
+The Pydantic AI Harness ([README capability matrix](https://github.com/pydantic/pydantic-ai-harness)) overlaps substantially with JAC's roadmap. Most of the overlap is *PR-tracked* in Harness, not stable release — but the upstream gravity is real and we should track it deliberately rather than discover it after building something twice.
+
+**Capabilities we ship today that Harness covers via WIP PR:**
+
+| JAC capability | Harness PR | Decision |
+| --- | --- | --- |
+| Token-aware compaction (D20) | #191 (Sliding Window / Context Compaction) | **Keep ours.** Our compaction is wired to D25 budgets and `/tokens` UX; ripping it out for a PR-stage component is a regression risk for no user benefit. Revisit when #191 is merged + stable. |
+| Tool result post-processor (D38) | #185 (Tool Output Management) | **Keep ours.** Same reasoning. Our opt-in decorator + tier-pricing gate is already shipped and tested. |
+| Sub-agent (D35, Phase B) | #178 (Sub-agents) | **Keep ours.** Our packet schema, tier cascade, HITL flow, and depth cap are integrated with JAC's approval + usage tracking. Harness API is unknown until merge. |
+| Skills (D21, Phase D) | #183 (Skills) | **Keep ours.** Anthropic community format is the public contract; Harness's surface is implementation detail. Revisit if Harness ships the same format. |
+| Cost/token budgets (D25) | #182 (Cost/Token Budgets) | **Keep ours.** Integrated with our session/project rollup; would need to re-wire `/tokens` and `usage.jsonl` to migrate. |
+| Approval workflows (D2) | #173 (Approval Workflows) | **Keep ours.** Uses Pydantic AI's `ApprovalRequiredToolset` underneath already; our value-add is the event-bus + renderer integration. |
+| AGENTS.md auto-load (D11) | #175 (Repo Context Injection) | **Keep ours.** Same reasoning. |
+| Plan / tasks (D15 → Phase G D23) | #180 (Planning) | **Watch.** Plan Mode hasn't shipped in JAC yet. If Harness #180 lands a clean API before we start Phase G, evaluate migration before building. |
+| Session persistence (D3) | #176 | **Keep ours.** Filesystem layout is part of JAC's user contract. |
+| Memory (D14) | #179 | **Keep ours.** Same reasoning — `memory.md` is the user-visible file. |
+| Stuck-loop (v2) | #186 | **Defer decision** — we haven't built this yet; if Harness ships first, prefer adopting. |
+
+**Capabilities we explicitly DON'T reinvent — adopt directly:**
+
+- **`pydantic-monty`** — the Rust-written minimal Python interpreter that backs CodeMode in Harness. We adopt the lower layer (`pydantic_monty.Monty`) directly via a thin `MontyShellCapability`, NOT the higher `CodeExecutionToolset` wrapper from `pydantic-ai-harness`. Rationale: CodeMode's wrapper forces a "write code instead of call tools" execution model, which is the wrong default for JAC's HITL-per-tool UX. Using Monty directly lets us route specific risky tools through the sandbox without remodelling the agent loop. See D43.
+- **`pydantic-ai-harness` capability primitives** that don't overlap with what we've already built — likely candidates are `Verification Loop` (#169), `Tool Error Recovery` (#171), `Secret Masking` (#172), and `Adaptive Reasoning` (#174). These are evaluated case-by-case as Harness PRs merge.
+- **`pydantic-ai` core** itself — we never reinvent `ApprovalRequiredToolset`, `deferred_tool_calls`, `ProcessHistory`, `Instrumentation`, `ModelMessagesTypeAdapter`, or `pydantic_ai.direct.model_request`. This is already CLAUDE.md policy; restated here for clarity.
+
+**The "what's the point of reinventing the wheel" answer in one paragraph:** JAC's organising thesis (cost-efficiency: D34) and its protocol surface (A2A-first: D24) ARE the differentiation. Capabilities that map cleanly onto that thesis (post-processor, sub-agents, skills, budgets) are worth owning because they're tightly coupled to our UX and instrumentation. Capabilities that are infrastructure with no UX (Monty for sandboxing; pydantic-ai's toolset/agent/instrumentation primitives) we adopt directly. Capabilities still in Harness PR limbo we re-evaluate at merge time — they're tracked here so the reconsideration is deliberate, not accidental.
 
 ## Three open gaps tracked elsewhere
 
@@ -80,11 +136,10 @@ These are flagged under `architecture.md` §5 "Still open":
 
 ## v2 ⏸
 
-Unchanged from the prior plan:
+Updated 2026-05-27 with the Monty isolation decision (D43) and the Harness reuse list above:
 
-- YOLO mode + sandboxing (Monty + `sandbox-exec` / `bwrap` + Git-Clean Guard) — uses `ModeCapability`'s `approval_override` knob (D29 sketch). `ModeCapability` is built in Phase F so this slots in cleanly.
-- CodeMode integration (`pydantic-ai-harness`).
-- Stuck-loop detection.
+- YOLO mode + **sandboxing via direct `pydantic-monty` (D43)** — embedded Rust interpreter; microsecond cold start; zero-grant default (no fs/net/env until we register external functions). NOT `sandbox-exec` / `bwrap` (OS-specific, leaks host details), NOT Docker (network call + cold-start seconds + external dep), NOT `CodeExecutionToolset` from `pydantic-ai-harness` (wraps Monty but imposes a "write code, don't call tools" model that conflicts with JAC's per-tool HITL UX). Implementation sketch: `MontyShellCapability` that opt-in routes `run_shell` (and later mutating filesystem tools) through `pydantic_monty.Monty` with our existing toolset registered as external functions. Git-Clean Guard still required before YOLO entry. Uses `ModeCapability`'s `approval_override` knob from Phase G.
+- Stuck-loop detection (defer decision pending Harness #186).
 - Night Shift / cron scheduling.
 - User-tier memory + predict-calibrate extraction.
 - Browser / API / SDK surfaces.

@@ -142,22 +142,25 @@ The roadmap was reframed around the cost-efficiency thesis. Live tracker: [`docs
 
 Phases in dependency order:
 
-- **Phase A — Context-cost foundation.** Tool result caps; tool result post-processor (small-tier AI summarization above threshold); cache-friendly prompt assembly; `/tokens` breakdown. **Highest leverage, do first.**
-- **Phase B — Sub-agent tool.** Single `spawn_sub_agent(reason, task_summary, tier, task_packet)` tool. Sequential only. Tier-HITL approval. Depth cap = 1 (no recursive spawning). Logfire parent chain, budget rollup.
-- **Phase C — Deterministic hooks.** Per-spawn post-flight callables. All pass → return verbatim, no extra turn. Any fail → route failure back to same sub-agent (retry budget 3).
-- **Phase D — Skill loader.** Anthropic community format. Loadable prompts / playbooks the main agent reads when relevant. **No `mode: minion`** — skills are advice, not a runtime mode.
-- **Phase E — Parallel sub-agents + HITL multiplexing.** Polish on top of B/C/D.
-- **Phase F — Plan Mode.** Pulled forward from v2 — planning is more valuable now that sub-agent decisions exist.
-- **Phase G — A2A Phase 4.e (OIDC/GCP), MCP loader, broader test coverage.** Lower priority than A-F.
+- **Phase A — Context-cost foundation.** Tool result caps; tool result post-processor (small-tier AI summarization above threshold); cache-friendly prompt assembly; `/tokens` breakdown. **Shipped v0.3.0.**
+- **Phase B — Sub-agent tool.** Single `spawn_sub_agent(reason, task_summary, tier, task_packet)` tool. Sequential only. Tier-HITL approval. Depth cap = 1 (no recursive spawning). Logfire parent chain, budget rollup. **Shipped v0.3.0.**
+- **Phase C — Deterministic hooks.** **Dropped** — complexity didn't earn its keep; `success_criteria` in the packet + a post-return `run_shell` call cover verification without framework machinery.
+- **Phase D — Skill loader.** Anthropic community format. Loadable prompts / playbooks the main agent reads when relevant. **No `mode: minion`** — skills are advice, not a runtime mode. **Shipped v0.4.0.**
+- **Phase E — Parallel sub-agents + HITL multiplexing.** Polish on top of B/D. Next up.
+- **Phase F — MCP loader (D28).** Promoted from old Phase G after 2026-05-27 external review — MCP is the ecosystem surface most users try first.
+- **Phase G — Plan Mode (D23).** Pulled forward from v2; demoted from old Phase F to follow MCP.
+- **Phase H — A2A Phase 4.e (OIDC/GCP) + broader test coverage.** Lower priority than A-G.
+- **Phase 7 stream — Evaluation via Logfire span replay (D44).** Trajectory tests asserting span shape, not output text. Ongoing; not a numbered phase.
 
 What's still genuinely v2:
 
-- YOLO mode + sandboxing (Monty + `sandbox-exec` / `bwrap` + Git-Clean Guard).
-- CodeMode integration (`pydantic-ai-harness`) — deferred until real context bloat from individual file tools is measured.
-- Stuck-loop detection — low value in HITL; mandatory only for YOLO.
+- YOLO mode + sandboxing via direct `pydantic-monty` (D43) + Git-Clean Guard. **Decided 2026-05-27:** adopt the Monty library directly (Rust-written minimal Python interpreter; microsecond cold start; zero-grant default), NOT Docker, NOT `sandbox-exec` / `bwrap`, NOT `pydantic-ai-harness`'s `CodeExecutionToolset` wrapper (which forces a "write code instead of call tools" model that conflicts with JAC's per-tool HITL UX).
+- Stuck-loop detection — low value in HITL; mandatory only for YOLO. (Watch Harness PR #186.)
 - Night Shift / cron-triggered headless runs.
 - User-tier predict-calibrate memory extraction (the `~/.jac/memory.md` *file* already exists per Phase 2a.1; what's deferred is *automatic extraction*).
 - Browser / API / SDK surfaces.
+
+**Harness alignment policy:** several JAC capabilities overlap with `pydantic-ai-harness` PRs (sub-agents #178, skills #183, compaction #191, post-processor #185, budgets #182, etc.). Today they're PR-tracked in Harness, shipped in JAC. **We keep ours** because they're tightly coupled to JAC's HITL / `/tokens` UX and instrumentation; we revisit migration only when a Harness PR lands a clean stable API. **We don't reinvent** infrastructure with no UX (`pydantic-monty` for sandboxing; pydantic-ai's `ApprovalRequiredToolset`/`deferred_tool_calls`/`Instrumentation`/`ProcessHistory`). Full reuse-vs-build table: [`docs/progress-roadmap.md`](docs/progress-roadmap.md) "Harness alignment" section.
 
 If a task seems to require any v2 item, stop and ask before scaffolding.
 
