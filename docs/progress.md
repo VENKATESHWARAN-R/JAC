@@ -18,7 +18,7 @@ For deeper context:
 ## Agent Start Here
 
 - **Roadmap was reframed on 2026-05-26 around the cost-efficiency thesis.** Old Phase 3 (Skills with `mode: minion`), Phase 5 (Minion runtime), and Phase 6 (MCP) were archived to [`progress-archive-2026-05.md`](progress-archive-2026-05.md). Read [`architecture.md`](architecture.md) §0 and [`design/cost-efficient-orchestration.md`](design/cost-efficient-orchestration.md) before touching anything in Phases A–G.
-- **Current active work:** **Phase E — Parallel sub-agents**. Phase C (deterministic hooks) was dropped — the complexity doesn't earn its keep given that `success_criteria` in the task packet and a post-return `run_shell` call already cover the verification use case without any framework machinery.
+- **Current active work:** **Phase E.2 — Bidirectional comms (D41)**. E.1 (parallel spawn via `spawn_sub_agents`) landed this session; the highest-risk piece — `ask_main_agent` behind a feature flag — is the next slice. Phase C (deterministic hooks) was dropped — the complexity doesn't earn its keep given that `success_criteria` in the task packet and a post-return `run_shell` call already cover the verification use case without any framework machinery.
 - **Released:** v0.3.0 (Phases A + B, 2026-05-27) · v0.4.0 (Phase D skill loader, 2026-05-27).
 - **Terminology change:** "Minion" is retired. New name: **sub-agent**. If you touch old "minion" references in unrelated changes, rename in the same commit.
 - **A2A is feature-complete** for its v1 scope. Phase 4.e (OIDC/GCP) was demoted to Phase G; not urgent.
@@ -42,7 +42,7 @@ For deeper context:
 | Phase B — Sub-agent tool | ✅ Complete (v0.3.0) | `spawn_sub_agent`, packet model, tier cascade (small→medium→large, never down), depth cap = 1 structural, HITL via existing approval flow, UsageTracker.add_sub_agent + JSONL `kind=sub_agent:<tier>`, `/tokens` line. Hooks shape locked, runner stubbed (Phase C). |
 | Phase C — Deterministic hooks | 🚫 Dropped | Complexity didn't earn its keep; `success_criteria` + post-return `run_shell` covers the use case |
 | **Phase D — Skill loader** | ✅ Complete (v0.4.0) | Loader walks project/user/package; 2 KB prompt cap with name-only fallback; `load_skill` tool; `/skill list|use|reload`; 3 reference skills (`code-review`, `summarize-large-files`, `verify-change`); A2A AgentCard publishes loaded skills as `jac-skill-<name>` entries. |
-| **Phase E — Parallel + bidirectional** | ⏸ Next | Parallel spawn + D41 bidirectional comms feature flag |
+| **Phase E — Parallel + bidirectional** | 🚧 In progress | E.1 parallel `spawn_sub_agents` shipped; E.2 D41 bidirectional comms behind feature flag is next |
 | **Phase F — MCP loader** | ⏸ Future | **Promoted from old Phase G (2026-05-27)** — MCP is the ecosystem surface most users try first; precedes Plan Mode |
 | Phase G — Plan Mode | ⏸ Future | Pulled forward from v2 (D23 promoted); demoted from old Phase F to follow MCP |
 | Phase H — A2A 4.e + broader tests | ⏸ Future | OIDC/GCP A2A auth; broader test coverage; eval-loop work tracked under Phase 7 |
@@ -135,14 +135,35 @@ For deeper context:
 
 ---
 
-## Queued — Phase E: Parallel sub-agents + bidirectional comms ⏸
+## Current Focus — Phase E: Parallel sub-agents + bidirectional comms 🚧
 
-- [ ] `spawn_sub_agents([packet1, packet2, ...])` — single tool, list of packets
-- [ ] Batched HITL approval: `Approve N spawns? [a]ll [d]eny [r]eview each`
-- [ ] `asyncio.gather` with HITL serialization (only one prompt visible at a time)
-- [ ] Logfire parallel branches under one parent span
-- [ ] **Bidirectional comms (D41) — behind feature flag** `settings.cost.sub_agent_bidirectional` (default `false`): `ask_main_agent(reason, question, context)` tool registered in sub-agent toolset only when flag is on; 5-round-trip cap; renderer markers `[sub-agent → main]` / `[main → sub-agent]`
+**Goal:** add `spawn_sub_agents` so the main agent can fan out N independent delegations under one HITL approval; then (separately, behind a flag) the D41 bidirectional channel.
+
+### E.1 Parallel spawn ✅
+
+- [x] `SubAgentSpawnSpec` Pydantic model (tier + optional label + task_packet) — `runtime/sub_agent.py`
+- [x] `spawn_sub_agents(reason, task_summary, spawns)` tool — `@jac_tool(summarizable=True)`, registered alongside `spawn_sub_agent` in `SubAgentToolCapability` so depth cap = 1 is preserved structurally with no extra wiring
+- [x] Per-spawn tier resolution (each spawn cascades independently); unresolvable tiers surface as `exit=error` in that spawn's block without killing siblings
+- [x] `asyncio.gather` via `asyncio.create_task` — HITL multiplexing serializes automatically at the bus level (renderer reads the approval queue one event at a time)
+- [x] Logfire outer span `spawn_sub_agents` with `count` / `requested_tiers` / `resolved_tiers` / `ok_count` / `error_count`; each `_run_sub_agent` still opens its own `spawn_sub_agent` child span so the parent chain is intact
+- [x] Combined output: `[parallel spawn: N sub-agents]` header + `── spawn N (label): tier=X model=Y turns=N exit=ok ──` divider per block (label parens omitted when empty)
+- [x] One HITL approval covers the whole batch (existing approval renderer dumps `spawns` arg generically; batched "review each" prompt is polish for later)
+- [x] `gru_system.md` — new "When to call `spawn_sub_agents` (parallel)" section right after the single-spawn section
+- [x] Tests (10 new in `tests/test_sub_agent.py`): is_jac_tool + summarizable, structural depth cap, fail-fast no capability, reject empty list, gather happy path preserves order, partial failure doesn't kill batch, per-spawn cascade, unresolvable tier per-spawn surface, JSONL row per spawn
+
+### E.2 Bidirectional comms (D41) ⏸
+
+- [ ] `settings.cost.sub_agent_bidirectional` flag (default `false`)
+- [ ] `ask_main_agent(reason, question, context)` tool registered in sub-agent toolset only when flag is on
+- [ ] 5-round-trip cap per spawn; Logfire warning at 3
+- [ ] Renderer markers `[sub-agent → main]` / `[main → sub-agent]`
 - [ ] Validation: ship the flag off; flip on after manual testing demonstrates no UX regressions
+
+### E.3 Polish (post-bidirectional)
+
+- [ ] Batched approval line: `Approve N spawns? [a]ll [d]eny [r]eview each` (renderer special-case for `spawn_sub_agents`)
+- [ ] Counter-tier deny flow via D26's `denied_with_feedback("retry tier=large")` (D42) — carried over from Phase B
+- [ ] Reference example `examples/sub-agent-summarize/` — carried over from Phase B
 
 ---
 

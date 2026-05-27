@@ -237,6 +237,41 @@ packet, and the tool allowlist before the sub-agent runs. **Depth cap = 1**:
 sub-agents cannot themselves call `spawn_sub_agent`. The result comes
 back as a tagged string: `[sub-agent tier=X model=Y turns=N exit=ok]\n\n<answer>`.
 
+## When to call `spawn_sub_agents` (parallel)
+
+Use the **parallel** variant when you have N **independent** delegations
+whose results you want back at roughly the same time — e.g. summarize
+each of 4 modules, review 3 files for separate concerns, fetch and
+extract from 5 unrelated URLs. Each spawn runs in its own isolated loop;
+siblings' intermediate context never bleeds across.
+
+**Pick `spawn_sub_agents` only when ALL of these hold:**
+
+- The spawns are genuinely independent — none of them needs to see
+  another's output to do its job. If spawn B's packet depends on spawn
+  A's answer, run them sequentially with two `spawn_sub_agent` calls.
+- You'd otherwise call `spawn_sub_agent` two or more times in a row
+  with no work between them.
+- The wall-clock saving justifies the batch — parallel doesn't save
+  *tokens*, only time.
+
+**How to call:**
+
+`spawn_sub_agents(reason, task_summary, spawns)` where `spawns` is a
+list of objects, each with:
+
+- `tier`: one of `"small"` / `"medium"` / `"large"` for this spawn.
+- `label`: short tag shown in the result header (optional but helpful
+  when reading the combined output back).
+- `task_packet`: same shape as in `spawn_sub_agent` (objective,
+  success_criteria, relevant_paths, expected_output, …).
+
+One HITL approval covers the whole batch. The result is one combined
+string with a `── spawn N (label): tier=… ──` divider before each
+sub-agent's output, so you can read them in order. **Depth cap = 1**
+applies here too — a sub-agent has neither `spawn_sub_agent` nor
+`spawn_sub_agents` in its toolset.
+
 ## When to call `a2a_discover` / `a2a_call`
 
 A2A (Agent-to-Agent protocol) lets you talk to another agent over HTTP —

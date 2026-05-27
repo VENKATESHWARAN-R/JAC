@@ -30,11 +30,13 @@ from jac.runtime import sub_agent as sa
 from jac.runtime.events import EventBus
 from jac.runtime.sub_agent import (
     SubAgentCapability,
+    SubAgentSpawnSpec,
     SubAgentTaskPacket,
     _render_packet,
     resolve_tier,
     set_sub_agent_capability,
     spawn_sub_agent,
+    spawn_sub_agents,
 )
 from jac.runtime.sub_agent_usage import (
     get_sub_agent_stats,
@@ -432,6 +434,342 @@ def test_tokens_handler_shows_sub_agent_line_when_spawned() -> None:
     assert "spawns=3" in out
     assert "small=4,000" in out
     assert "medium=6,000" in out
+
+
+# ---------- parallel spawn (Phase E) ----------
+
+
+def test_spawn_sub_agents_is_a_jac_tool() -> None:
+    assert is_jac_tool(spawn_sub_agents)
+
+
+def test_spawn_sub_agents_is_summarizable() -> None:
+    """Combined output of N spawns can be N times larger than a single spawn
+    — summarization matters more, not less."""
+    assert is_summarizable(spawn_sub_agents)
+
+
+def test_parallel_depth_cap_structural() -> None:
+    """The parallel tool ships from the same capability as the single
+    spawn — so the depth cap (sub_agent_capabilities excludes
+    SubAgentToolCapability) covers it automatically. This test pins the
+    invariant: if anyone ever adds a separate parallel-only capability
+    they have to also exclude it in sub_agent_capabilities()."""
+    from jac.capabilities.sub_agent import SubAgentToolCapability
+    from jac.runtime.gru import sub_agent_capabilities
+
+    caps = sub_agent_capabilities()
+    assert not any(isinstance(c, SubAgentToolCapability) for c in caps)
+
+
+async def test_spawn_sub_agents_fails_fast_when_no_capability() -> None:
+    set_sub_agent_capability(None)
+    with pytest.raises(JacConfigError, match="not available in this session"):
+        await spawn_sub_agents(
+            reason="r",
+            task_summary="s",
+            spawns=[
+                SubAgentSpawnSpec(
+                    tier="medium",
+                    task_packet=SubAgentTaskPacket(objective="x"),
+                )
+            ],
+        )
+
+
+async def test_spawn_sub_agents_rejects_empty_list() -> None:
+    p = _profile(medium=["anthropic:claude-sonnet-4-6"])
+    set_sub_agent_capability(SubAgentCapability(p, "BASE", lambda _a: []))
+    with pytest.raises(JacConfigError, match="at least one spawn spec"):
+        await spawn_sub_agents(reason="r", task_summary="s", spawns=[])
+
+
+async def test_spawn_sub_agents_gather_happy_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """All N spawns succeed; combined output has the parallel header plus
+    one tagged block per spawn, in order."""
+    p = _profile(
+        small=["anthropic:claude-haiku-4-5"],
+        medium=["anthropic:claude-sonnet-4-6"],
+    )
+    set_sub_agent_capability(SubAgentCapability(p, "BASE", lambda _a: []))
+
+    # Each spawn gets a distinct answer keyed off its objective so we can
+    # verify ordering in the combined output.
+    objectives_seen: list[str] = []
+
+    class _U:
+        requests = 1
+        input_tokens = 100
+        output_tokens = 20
+
+    class _R:
+        def __init__(self, text: str) -> None:
+            self.output = text
+
+        def usage(self) -> _U:
+            return _U()
+
+    async def fake_run(self: Any, prompt: str, **_kwargs: Any) -> _R:
+        # Tag the answer with whichever objective was rendered into the
+        # prompt so we can prove the gather preserved ordering.
+        for obj in ("alpha", "beta", "gamma"):
+            if obj in prompt:
+                objectives_seen.append(obj)
+                return _R(f"answer-for-{obj}")
+        raise AssertionError(f"unexpected prompt: {prompt[:80]}")
+
+    monkeypatch.setattr("pydantic_ai.Agent.run", fake_run)
+
+    out = await spawn_sub_agents(
+        reason="batch",
+        task_summary="three things",
+        spawns=[
+            SubAgentSpawnSpec(
+                tier="small",
+                label="A",
+                task_packet=SubAgentTaskPacket(objective="alpha"),
+            ),
+            SubAgentSpawnSpec(
+                tier="medium",
+                label="B",
+                task_packet=SubAgentTaskPacket(objective="beta"),
+            ),
+            SubAgentSpawnSpec(
+                tier="small",
+                task_packet=SubAgentTaskPacket(objective="gamma"),
+            ),
+        ],
+    )
+
+    assert out.startswith("[parallel spawn: 3 sub-agents]")
+    # Per-spawn divider includes 1-based index and (when present) label.
+    assert "── spawn 1 (A): tier=small" in out
+    assert "── spawn 2 (B): tier=medium" in out
+    # Spawn 3 has no label — divider should NOT show parentheses.
+    assert "── spawn 3: tier=small" in out
+    # Outputs interleaved by gather, but the combined string reassembles
+    # them in submission order.
+    assert (
+        out.index("answer-for-alpha") < out.index("answer-for-beta") < out.index("answer-for-gamma")
+    )
+
+    # Each spawn bumps stats — three spawns, three JSONL-row equivalents.
+    stats = get_sub_agent_stats()
+    assert stats.spawns == 3
+    assert stats.by_tier == {"small": 2 * 120, "medium": 120}
+
+
+async def test_spawn_sub_agents_partial_failure_does_not_kill_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If one sub-agent raises, the others still complete and the failing
+    spawn surfaces as ``exit=error`` in its block. The combined string
+    still contains all N blocks."""
+    p = _profile(medium=["anthropic:claude-sonnet-4-6"])
+    set_sub_agent_capability(SubAgentCapability(p, "BASE", lambda _a: []))
+
+    class _U:
+        requests = 1
+        input_tokens = 50
+        output_tokens = 10
+
+    class _R:
+        output = "fine"
+
+        def usage(self) -> _U:
+            return _U()
+
+    async def fake_run(self: Any, prompt: str, **_kwargs: Any) -> _R:
+        if "boom" in prompt:
+            raise RuntimeError("model unreachable")
+        return _R()
+
+    monkeypatch.setattr("pydantic_ai.Agent.run", fake_run)
+
+    out = await spawn_sub_agents(
+        reason="r",
+        task_summary="s",
+        spawns=[
+            SubAgentSpawnSpec(
+                tier="medium",
+                task_packet=SubAgentTaskPacket(objective="boom"),
+            ),
+            SubAgentSpawnSpec(
+                tier="medium",
+                task_packet=SubAgentTaskPacket(objective="ok"),
+            ),
+        ],
+    )
+    # Failing spawn renders as exit=error; sibling renders as exit=ok.
+    assert "── spawn 1: tier=medium" in out
+    assert "exit=error" in out
+    assert "model unreachable" in out
+    assert "── spawn 2: tier=medium" in out
+    assert "fine" in out
+    # Sibling that succeeded should still bump stats; the failed one
+    # didn't reach the recorder.
+    assert get_sub_agent_stats().spawns == 1
+
+
+async def test_spawn_sub_agents_per_spawn_tier_cascade(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier cascade is per-spawn: requesting 'small' on a profile with
+    only 'medium' should cascade up just for that spawn; sibling tiers
+    are unaffected."""
+    p = _profile(medium=["anthropic:claude-sonnet-4-6"])  # no small
+    set_sub_agent_capability(SubAgentCapability(p, "BASE", lambda _a: []))
+
+    class _U:
+        requests = 1
+        input_tokens = 10
+        output_tokens = 5
+
+    class _R:
+        output = "ok"
+
+        def usage(self) -> _U:
+            return _U()
+
+    async def fake_run(self: Any, prompt: str, **_kwargs: Any) -> _R:
+        return _R()
+
+    monkeypatch.setattr("pydantic_ai.Agent.run", fake_run)
+
+    out = await spawn_sub_agents(
+        reason="r",
+        task_summary="s",
+        spawns=[
+            SubAgentSpawnSpec(
+                tier="small",
+                task_packet=SubAgentTaskPacket(objective="a"),
+            ),
+            SubAgentSpawnSpec(
+                tier="medium",
+                task_packet=SubAgentTaskPacket(objective="b"),
+            ),
+        ],
+    )
+    # First spawn cascaded; second resolved exactly.
+    assert "cascaded up to 'medium'" in out
+    # Both blocks landed on tier=medium in the rendered header.
+    assert out.count("tier=medium") >= 2
+
+
+async def test_spawn_sub_agents_unresolvable_tier_surfaces_per_spawn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If one spec asks for a tier with no upward fallback, that spawn's
+    block reports the setup error — the rest of the batch still runs."""
+    p = _profile(small=["anthropic:claude-haiku-4-5"])  # no medium/large
+    set_sub_agent_capability(SubAgentCapability(p, "BASE", lambda _a: []))
+
+    class _U:
+        requests = 1
+        input_tokens = 10
+        output_tokens = 5
+
+    class _R:
+        output = "ok"
+
+        def usage(self) -> _U:
+            return _U()
+
+    async def fake_run(self: Any, prompt: str, **_kwargs: Any) -> _R:
+        return _R()
+
+    monkeypatch.setattr("pydantic_ai.Agent.run", fake_run)
+
+    out = await spawn_sub_agents(
+        reason="r",
+        task_summary="s",
+        spawns=[
+            SubAgentSpawnSpec(
+                tier="large",
+                task_packet=SubAgentTaskPacket(objective="needs-big"),
+            ),
+            SubAgentSpawnSpec(
+                tier="small",
+                task_packet=SubAgentTaskPacket(objective="fine"),
+            ),
+        ],
+    )
+    assert "── spawn 1: tier=large exit=error" in out
+    assert "Spawn setup failed" in out
+    assert "── spawn 2: tier=small" in out
+    # Only the surviving spawn counted toward stats.
+    assert get_sub_agent_stats().spawns == 1
+
+
+async def test_spawn_sub_agents_each_spawn_writes_jsonl_row(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Per-spawn JSONL rows are the audit trail for parallel cost
+    rollup. Verify each spawn lands its own ``kind=sub_agent:<tier>`` row."""
+    p = _profile(
+        small=["anthropic:claude-haiku-4-5"],
+        medium=["anthropic:claude-sonnet-4-6"],
+    )
+    set_sub_agent_capability(SubAgentCapability(p, "BASE", lambda _a: []))
+
+    usage_file = tmp_path / "usage.jsonl"
+    tracker = UsageTracker(
+        session_id="s1",
+        bus=EventBus(),
+        usage_file=usage_file,
+        limits=BudgetLimits(
+            session_input_tokens=None,
+            session_total_tokens=None,
+            project_total_tokens=None,
+            warn_pct=80,
+            hardstop_pct=100,
+        ),
+    )
+
+    async def recorder(in_t: int, out_t: int, tier: str) -> None:
+        await tracker.add_sub_agent(input_tokens=in_t, output_tokens=out_t, tier=tier)
+
+    set_sub_agent_usage_recorder(recorder)
+
+    class _U:
+        requests = 1
+        input_tokens = 200
+        output_tokens = 50
+
+    class _R:
+        output = "ok"
+
+        def usage(self) -> _U:
+            return _U()
+
+    async def fake_run(self: Any, prompt: str, **_kwargs: Any) -> _R:
+        return _R()
+
+    monkeypatch.setattr("pydantic_ai.Agent.run", fake_run)
+
+    await spawn_sub_agents(
+        reason="r",
+        task_summary="s",
+        spawns=[
+            SubAgentSpawnSpec(
+                tier="small",
+                task_packet=SubAgentTaskPacket(objective="a"),
+            ),
+            SubAgentSpawnSpec(
+                tier="medium",
+                task_packet=SubAgentTaskPacket(objective="b"),
+            ),
+        ],
+    )
+
+    rows = [json.loads(line) for line in usage_file.read_text().splitlines() if line.strip()]
+    assert [r["kind"] for r in rows] == ["sub_agent:small", "sub_agent:medium"]
+    # Tracker counters reflect both spawns' tokens.
+    assert tracker.counters.input_tokens == 400
+    assert tracker.counters.output_tokens == 100
 
 
 # Silence the "imported but unused" warning when the module-level access

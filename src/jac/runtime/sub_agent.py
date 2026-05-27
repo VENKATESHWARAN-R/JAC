@@ -24,6 +24,7 @@ The tool itself (``spawn_sub_agent``) lives at module bottom.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -88,6 +89,25 @@ class SubAgentTaskPacket(BaseModel):
     max_turns: int = 10
     """Hard cap on the sub-agent's model-call count. Prevents runaway
     loops; returns ``exit_status=max_turns`` when hit."""
+
+
+class SubAgentSpawnSpec(BaseModel):
+    """One entry in a :func:`spawn_sub_agents` batch (Phase E).
+
+    Each spec is fully independent: per-spawn tier (with its own cascade),
+    per-spawn packet, optional label. The model emits a list of these as a
+    single tool call; the tool body runs all of them via ``asyncio.gather``.
+    """
+
+    tier: TierName
+    """Tier for this spawn. Cascades up independently of sibling spawns."""
+
+    label: str = ""
+    """Short tag shown in the HITL approval line and the per-spawn result
+    header. Optional — when empty the header omits it."""
+
+    task_packet: SubAgentTaskPacket
+    """Briefing for this spawn (same shape as the single-spawn tool)."""
 
 
 class SubAgentResult(BaseModel):
@@ -356,3 +376,139 @@ async def spawn_sub_agent(
         f"turns={result.turns_used} exit={result.exit_status}{cascade_note}]"
     )
     return f"{header}\n\n{result.output}"
+
+
+# ---------- parallel spawn (Phase E) ----------
+
+
+def _render_spawn_block(
+    index: int,
+    spec: SubAgentSpawnSpec,
+    result: SubAgentResult | Exception,
+    resolved: _ResolvedTier | None,
+) -> str:
+    """Render one block of the parallel-spawn combined output.
+
+    Mirrors the single-spawn tagged header so the main agent can read the
+    same shape no matter which tool it called. ``resolved`` is ``None`` when
+    tier resolution itself failed (the spawn never reached ``_run_sub_agent``).
+    """
+    label_part = f" ({spec.label})" if spec.label else ""
+    divider = f"── spawn {index}{label_part}"
+
+    if isinstance(result, Exception):
+        # Resolution failed (unknown tier, no tier available, etc.) — surface
+        # the requested tier so the user can fix the packet.
+        return f"{divider}: tier={spec.tier} exit=error ──\nSpawn setup failed: {result}"
+
+    assert resolved is not None  # paired with the non-exception branch
+    cascade_note = f", {resolved.cascade_note}" if resolved.cascaded else ""
+    header = (
+        f"{divider}: tier={result.resolved_tier} model={result.resolved_model} "
+        f"turns={result.turns_used} exit={result.exit_status}{cascade_note} ──"
+    )
+    return f"{header}\n{result.output}"
+
+
+@jac_tool(summarizable=True)
+async def spawn_sub_agents(
+    reason: str,
+    task_summary: str,
+    spawns: list[SubAgentSpawnSpec],
+) -> str:
+    """Delegate **multiple independent** tasks to sub-agents *in parallel*.
+
+    Use when you have N independent investigations whose results you want
+    back at roughly the same time (e.g. summarize each of 4 modules; review
+    3 files for separate concerns). Each spawn runs in its own isolated
+    Agent loop — siblings' intermediate context never bleeds across.
+
+    Sequential `spawn_sub_agent` calls are still the right tool when one
+    result must inform the next. Reach for this one only when the spawns
+    are genuinely independent.
+
+    Args:
+        reason: One-sentence justification (HITL prompt shows this).
+        task_summary: Short label covering the batch as a whole.
+        spawns: List of :class:`SubAgentSpawnSpec`. Each spec carries its
+            own tier (cascaded independently) and its own task packet.
+
+    Returns:
+        A single string combining every spawn's output. Each spawn is
+        delimited by a ``── spawn N (label): tier=... ──`` header so the
+        main agent can read results in order.
+
+    **Approval-required.** One HITL prompt covers the whole batch — the
+    user sees all spawns at once.
+    **Depth cap = 1.** Like the single-spawn tool, a spawned sub-agent's
+    toolset excludes this tool — spawn cannot recurse, even via the
+    parallel variant.
+    """
+    _ = task_summary  # surfaced via approval; tool body doesn't need it
+    cap = get_sub_agent_capability()
+    if cap is None:
+        raise JacConfigError(
+            "spawn_sub_agents is not available in this session — no profile "
+            "is active. Run with `--profile NAME` to enable sub-agents."
+        )
+    if not spawns:
+        raise JacConfigError(
+            "spawn_sub_agents requires at least one spawn spec; got an empty list."
+        )
+
+    # Resolve tiers up front so the outer span can show what was actually
+    # picked. Resolution failures are captured per-spawn rather than killing
+    # the whole batch — the rendered output flags them as `exit=error`.
+    resolved: list[_ResolvedTier | Exception] = []
+    for spec in spawns:
+        try:
+            resolved.append(resolve_tier(cap.profile, spec.tier))
+        except JacConfigError as exc:
+            resolved.append(exc)
+
+    resolved_tiers = [r.resolved if isinstance(r, _ResolvedTier) else "<error>" for r in resolved]
+    with logfire.span(
+        "spawn_sub_agents",
+        count=len(spawns),
+        requested_tiers=[spec.tier for spec in spawns],
+        resolved_tiers=resolved_tiers,
+        parallel=True,
+    ) as span:
+        # Launch every successful resolution under asyncio.gather. Failed
+        # resolutions become synthetic exceptions in the results list — they
+        # never fire a child task. Approvals raised by sub-agents serialize
+        # at the bus level (the renderer reads the queue one event at a
+        # time), so HITL multiplexing is correct by construction.
+        async def _run_one(spec: SubAgentSpawnSpec, r: _ResolvedTier) -> SubAgentResult:
+            return await _run_sub_agent(cap, spec.task_packet, r)
+
+        tasks: list[asyncio.Task[SubAgentResult] | None] = [
+            asyncio.create_task(_run_one(spec, r)) if isinstance(r, _ResolvedTier) else None
+            for spec, r in zip(spawns, resolved, strict=True)
+        ]
+
+        results: list[SubAgentResult | Exception] = []
+        for r, t in zip(resolved, tasks, strict=True):
+            if t is None:
+                # Carry the resolution error through to the renderer.
+                assert isinstance(r, Exception)
+                results.append(r)
+                continue
+            try:
+                results.append(await t)
+            except Exception as exc:
+                # _run_sub_agent catches the model's exceptions internally,
+                # but cancellation / out-of-band errors still bubble here.
+                results.append(exc)
+
+        ok_count = sum(
+            1 for r in results if isinstance(r, SubAgentResult) and r.exit_status == "ok"
+        )
+        span.set_attribute("ok_count", ok_count)
+        span.set_attribute("error_count", len(results) - ok_count)
+
+        blocks: list[str] = [f"[parallel spawn: {len(spawns)} sub-agents]"]
+        for idx, (spec, r, res) in enumerate(zip(spawns, resolved, results, strict=True), start=1):
+            resolved_arg = r if isinstance(r, _ResolvedTier) else None
+            blocks.append(_render_spawn_block(idx, spec, res, resolved_arg))
+        return "\n\n".join(blocks)
