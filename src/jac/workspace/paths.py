@@ -221,6 +221,18 @@ def package_minions_dir() -> Path:
     return package_root() / "minions" / "templates"
 
 
+def package_skills_dir() -> Path:
+    """Shipped reference skills under ``jac/data/skills/``.
+
+    Mirrors :func:`package_prompts_dir` for skills (Phase D). Each shipped
+    skill lives at ``data/skills/<name>/SKILL.md`` with YAML frontmatter +
+    markdown body, per the Anthropic community skill format. The user/
+    project skill loader treats this directory as the lowest-priority
+    source — user and project skills shadow shipped ones on name collision.
+    """
+    return package_data_dir() / "skills"
+
+
 # --- Layered prompt loader ----------------------------------------
 
 

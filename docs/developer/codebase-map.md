@@ -44,6 +44,7 @@ src/jac/
 │           ├── model.py     # /model
 │           ├── budget.py    # /budget
 │           ├── tokens.py    # /tokens
+│           ├── skill.py     # /skill list|use|reload
 │           └── a2a/         # /a2a multi-subcommand subpackage
 │               ├── __init__.py  # /a2a dispatcher
 │               ├── _args.py     # parsers
@@ -73,6 +74,7 @@ src/jac/
 │   ├── plan.py              # plan, update_plan, get_plan
 │   ├── process.py           # background processes (state on capability directly)
 │   ├── clarify.py           # clarify
+│   ├── skills.py            # SkillsCapability + load_skill (Phase D / D21) — three-source layered loader
 │   └── a2a/
 │       ├── __init__.py      # A2ACapability, make_a2a_capability
 │       ├── server.py        # A2AServer, uvicorn lifecycle
@@ -96,7 +98,11 @@ src/jac/
 │   └── registry.py          # providers.yaml catalog, prefix → env vars
 ├── data/
 │   ├── defaults.yaml        # Non-required tunables (secrets.backend, compaction)
-│   └── providers.yaml       # Provider catalog for init + key inference
+│   ├── providers.yaml       # Provider catalog for init + key inference
+│   └── skills/              # Shipped reference skills (Phase D)
+│       ├── code-review/SKILL.md
+│       ├── summarize-large-files/SKILL.md
+│       └── verify-change/SKILL.md
 └── prompts/
     └── gru_system.md        # Core Gru instructions
 ```
@@ -117,6 +123,7 @@ Filename = command. Open `cli/slash/handlers/` to see the catalog.
 | `/budget [extend …]` | `handlers/budget.py` | Show limits or extend session budget |
 | `/tokens` | `handlers/tokens.py` | Detailed usage counters |
 | `/a2a serve|stop|status|token|peers|peer` | `handlers/a2a/<sub>.py` | A2A server + peers (one file per subcommand) |
+| `/skill list|use|reload` | `handlers/skill.py` | Community-format skill loader (Phase D / D21) |
 
 Registration: import handlers in `jac/cli/slash/handlers/__init__.py`. Completer: `command_names()` in `repl.py`.
 
@@ -145,6 +152,7 @@ Registration: import handlers in `jac/cli/slash/handlers/__init__.py`. Completer
 | `clarify` | clarify | No (user picker) |
 | `a2a_discover` | a2a | No |
 | `a2a_call` | a2a | No |
+| `load_skill` | skills | No |
 
 **Guest Gru (inbound A2A only):** `read_file`, `list_dir`, `grep`, `glob`.
 

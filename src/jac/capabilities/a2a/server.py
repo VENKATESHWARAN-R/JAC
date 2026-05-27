@@ -33,6 +33,7 @@ import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 import uvicorn
 from fasta2a.broker import Broker, InMemoryBroker
@@ -286,12 +287,19 @@ class A2AServer:
         profile_name: str | None = None,
         retention_days: int = 3,
         usage_tracker: UsageTracker | None = None,
+        loaded_skills: dict[str, Any] | None = None,
     ) -> None:
         self._guest_agent = guest_agent
         self._bus = bus
         self._profile_name = profile_name
         self._retention_days = retention_days
         self._usage_tracker = usage_tracker
+        # Community-format skills (Phase D / D21). Used at start() to
+        # enrich the AgentCard so peers can see what playbooks this
+        # instance has loaded. ``dict[str, Any]`` here (not the precise
+        # ``LoadedSkill`` type) keeps server.py from importing the skills
+        # module — card.py uses TYPE_CHECKING to avoid the same circular.
+        self._loaded_skills = loaded_skills
 
         self._uvicorn_server: uvicorn.Server | None = None
         self._serve_task: asyncio.Task[None] | None = None
@@ -346,6 +354,7 @@ class A2AServer:
             profile_name=self._profile_name,
             base_url=base_url,
             unsafe=unsafe,
+            loaded_skills=self._loaded_skills,
         )
 
         app = self._build_app(card=card, token=effective_token, unsafe=unsafe)

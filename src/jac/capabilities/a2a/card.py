@@ -7,12 +7,13 @@ just supply the content. The card lists who we are (``name``,
 how to talk to us (``capabilities`` — streaming/push/etc.), and how
 to authenticate (``securitySchemes``).
 
-For v1 we ship a **single generic skill** rather than enumerating
-tools. The A2A ``Skill`` schema was designed for human-curated
-capabilities ("answer recipe questions", "process invoices") — peers
-don't want to see ``read_file`` / ``grep`` / ``glob`` as discoverable
-skills. Once Phase 3 (community skill loader, D21) ships, Phase 4.1
-auto-publishes every loaded inline-mode skill as a real A2A skill.
+The card always carries one generic "coding assistant" skill — the
+base offering peers can rely on regardless of local config. When the
+host has loaded community-format skills (Phase D / D21), each one is
+appended as an additional A2A ``Skill`` entry so peers can discover
+what this JAC instance is *especially* good at. Loaded skills are
+read at :meth:`A2AServer.start` time; ``/skill reload`` while the
+server is running won't refresh the card until the server restarts.
 
 When the server runs with ``--unsafe`` we **omit** ``securitySchemes``
 so clients don't try to send a bearer header the server isn't going
@@ -25,11 +26,14 @@ Streaming/push not supported in v1 (fasta2a 0.6.1 raises
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fasta2a.schema import AgentCapabilities, AgentCard, HttpSecurityScheme, Skill
 
 from jac import __version__
+
+if TYPE_CHECKING:
+    from jac.capabilities.skills import LoadedSkill
 
 _GENERIC_SKILL_ID = "jac-coding-assistant"
 
@@ -40,6 +44,7 @@ def build_agent_card(
     base_url: str,
     unsafe: bool,
     description: str | None = None,
+    loaded_skills: dict[str, LoadedSkill] | None = None,
 ) -> AgentCard:
     """Build the AgentCard shape fasta2a expects.
 
@@ -53,6 +58,11 @@ def build_agent_card(
             no bearer is required (matches the actual middleware state).
         description: optional human-readable override; defaults to a
             generic blurb pointing at the active profile.
+        loaded_skills: optional mapping of community-format skills (Phase
+            D) loaded into this JAC instance. Each one is appended as an
+            additional A2A ``Skill`` entry — the generic skill always
+            remains as a base advertisement so peers have a stable
+            baseline regardless of local skill configuration.
 
     Returns:
         ``AgentCard`` TypedDict ready for fasta2a's ``FastA2A``
@@ -66,6 +76,14 @@ def build_agent_card(
         if profile_name
         else "JAC guest agent. Read-only coworker for the project this JAC instance is hosting."
     )
+
+    # Skill list = base generic offering + one entry per loaded community
+    # skill. Sort loaded ones by name so card output is deterministic;
+    # peers (and our tests) appreciate that.
+    skills_list: list[Skill] = [_generic_skill(profile_name)]
+    if loaded_skills:
+        for name_key in sorted(loaded_skills):
+            skills_list.append(_loaded_skill_to_a2a(loaded_skills[name_key]))
 
     # TypedDict keys are snake_case (the FIELD names); pydantic dumps with
     # camelCase on the wire via alias_generator=to_camel. Use snake_case here
@@ -83,7 +101,7 @@ def build_agent_card(
             push_notifications=False,
             state_transition_history=False,
         ),
-        "skills": [_generic_skill(profile_name)],
+        "skills": skills_list,
         "default_input_modes": ["application/json", "text/plain"],
         "default_output_modes": ["application/json", "text/plain"],
     }
@@ -101,7 +119,7 @@ def build_agent_card(
 
 
 def _generic_skill(profile_name: str | None) -> Skill:
-    """Single generic skill — Phase 4.1 will replace this with community skills."""
+    """Base generic skill — always present so peers have a stable baseline."""
     label = profile_name or "default"
     return {
         "id": _GENERIC_SKILL_ID,
@@ -118,6 +136,27 @@ def _generic_skill(profile_name: str | None) -> Skill:
             "Find every place that calls `process_payment`.",
             "Summarize the structure of `src/`.",
         ],
+        "input_modes": ["application/json", "text/plain"],
+        "output_modes": ["application/json", "text/plain"],
+    }
+
+
+def _loaded_skill_to_a2a(skill: LoadedSkill) -> Skill:
+    """Project a JAC :class:`LoadedSkill` into the A2A ``Skill`` shape.
+
+    The skill ``id`` is namespaced (``jac-skill-<name>``) so it can't
+    collide with the generic skill id. ``tags`` carries the source
+    (project/user/package) so peers can spot host-specific overrides;
+    ``examples`` lists the required tools, which is the closest the
+    community format has to "what kinds of asks does this fit."
+    """
+    fm = skill.frontmatter
+    return {
+        "id": f"jac-skill-{fm.name}",
+        "name": fm.name,
+        "description": fm.description.strip(),
+        "tags": [skill.source, *fm.tools_required],
+        "examples": list(fm.tools_required),
         "input_modes": ["application/json", "text/plain"],
         "output_modes": ["application/json", "text/plain"],
     }
