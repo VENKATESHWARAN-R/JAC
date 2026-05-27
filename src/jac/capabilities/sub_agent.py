@@ -1,15 +1,21 @@
-"""Sub-agent capability — exposes ``spawn_sub_agent`` / ``spawn_sub_agents``.
+"""Sub-agent capabilities — exposes the spawn + bidirectional tools.
 
-Thin wrapper around the two spawn tools in :mod:`jac.runtime.sub_agent`.
-The real implementation, models, and tier cascade live there; this file
-exists to plug the tools into a standard Pydantic AI ``AbstractCapability``
-and make them approval-gated.
+Thin wrappers around the implementations in :mod:`jac.runtime.sub_agent`.
+This file exists to plug the tools into standard Pydantic AI
+``AbstractCapability`` classes and apply the right approval posture.
 
 **Depth cap = 1 (D40) is structurally enforced** by the
 ``SubAgentCapability`` factory in :mod:`jac.runtime.sub_agent`: the
-capabilities passed to a spawned sub-agent never include this module.
-Sub-agents therefore cannot call either spawn tool — they literally
-aren't in the sub-agent toolset.
+capabilities passed to a spawned sub-agent never include
+``SubAgentToolCapability`` or ``RespondToSubAgentCapability``. Sub-agents
+therefore cannot recurse, even via the bidirectional channel.
+
+**Bidirectional posture (D41).** ``respond_to_sub_agent`` and
+``ask_main_agent`` are *not* approval-gated. The user already approved
+the parent ``spawn_sub_agent`` call; adding a prompt for every reply
+inside that approved conversation would be noise. Visibility is provided
+by the renderer markers ``[sub-agent → main]`` / ``[main → sub-agent]``
+emitted on the event bus.
 """
 
 from __future__ import annotations
@@ -19,7 +25,12 @@ from typing import Any
 
 from pydantic_ai.capabilities import AbstractCapability
 
-from jac.runtime.sub_agent import spawn_sub_agent, spawn_sub_agents
+from jac.runtime.sub_agent import (
+    ask_main_agent,
+    respond_to_sub_agent,
+    spawn_sub_agent,
+    spawn_sub_agents,
+)
 from jac.tools import jac_function_toolset
 
 
@@ -34,3 +45,26 @@ class SubAgentToolCapability(AbstractCapability[Any]):
     def get_toolset(self) -> Any:
         toolset = jac_function_toolset(spawn_sub_agent, spawn_sub_agents)
         return toolset.approval_required(_always_require)
+
+
+@dataclass
+class RespondToSubAgentCapability(AbstractCapability[Any]):
+    """Main-agent side of bidirectional comms (D41). Registers
+    ``respond_to_sub_agent`` without approval — the parent spawn was
+    already approved. Attached only when ``cost.sub_agent_bidirectional``
+    is enabled (the wiring decision lives in :mod:`jac.runtime.gru`)."""
+
+    def get_toolset(self) -> Any:
+        return jac_function_toolset(respond_to_sub_agent)
+
+
+@dataclass
+class AskMainAgentCapability(AbstractCapability[Any]):
+    """Sub-agent side of bidirectional comms (D41). Registers
+    ``ask_main_agent`` without approval — the round-trip cap and the
+    renderer markers, not HITL, are the safety mechanisms here. Attached
+    only when ``cost.sub_agent_bidirectional`` is enabled AND a channel
+    is bound for the spawn (see :func:`jac.runtime.gru.sub_agent_capabilities`)."""
+
+    def get_toolset(self) -> Any:
+        return jac_function_toolset(ask_main_agent)

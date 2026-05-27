@@ -26,7 +26,11 @@ from jac.capabilities.history import make_history_capability
 from jac.capabilities.memory import MemoryCapability
 from jac.capabilities.search import SearchCapability
 from jac.capabilities.shell import ShellCapability
-from jac.capabilities.sub_agent import SubAgentToolCapability
+from jac.capabilities.sub_agent import (
+    AskMainAgentCapability,
+    RespondToSubAgentCapability,
+    SubAgentToolCapability,
+)
 from jac.capabilities.web import WebCapability
 from jac.config import get_settings
 from jac.errors import JacConfigError
@@ -57,9 +61,17 @@ def _default_tool_capabilities(
             structurally by leaving the spawn tool out of sub-agent
             toolsets.
     """
+    base_prompt = load_prompt("gru_system").strip()
+    if include_spawn and get_settings().cost.sub_agent_bidirectional:
+        # Append the bidirectional-specific guidance so the model knows
+        # how to recognise a sub-agent question and call respond_to_sub_agent.
+        # The tool is gated by the same flag below; we never tell the model
+        # about a tool it doesn't have.
+        base_prompt = base_prompt + "\n\n" + load_prompt("gru_bidirectional").strip()
+
     caps: list[Any] = [
         Instrumentation(),
-        make_context_capability(load_prompt("gru_system").strip()),
+        make_context_capability(base_prompt),
         FilesystemCapability(),
         SearchCapability(),
         ShellCapability(),
@@ -69,10 +81,20 @@ def _default_tool_capabilities(
     ]
     if include_spawn:
         caps.append(SubAgentToolCapability())
+        # D41: respond_to_sub_agent is the main-agent reply to a paused
+        # sub-agent question. Only attached when the flag is on — the
+        # tool is meaningless without the matching ask_main_agent on the
+        # sub-agent side.
+        if get_settings().cost.sub_agent_bidirectional:
+            caps.append(RespondToSubAgentCapability())
     return caps
 
 
-def sub_agent_capabilities(allowed_tools: list[str] | None = None) -> list[Any]:
+def sub_agent_capabilities(
+    allowed_tools: list[str] | None = None,
+    *,
+    channel: Any = None,
+) -> list[Any]:
     """Capability list a spawned sub-agent receives.
 
     Mirrors :func:`_default_tool_capabilities` minus
@@ -81,9 +103,17 @@ def sub_agent_capabilities(allowed_tools: list[str] | None = None) -> list[Any]:
     unnecessary overhead). The ``allowed_tools`` arg is reserved for
     future filtering at the toolset level — Phase B accepts the param
     for API stability but doesn't yet filter.
+
+    Args:
+        allowed_tools: reserved; honored in a follow-up that filters toolsets.
+        channel: D41 bidirectional comms channel. When provided AND the
+            ``cost.sub_agent_bidirectional`` flag is on, attaches
+            :class:`AskMainAgentCapability` so the sub-agent can call
+            ``ask_main_agent``. The channel itself is threaded to the tool
+            via a contextvar — this argument's presence is the toggle.
     """
     _ = allowed_tools  # reserved; honored in a follow-up that filters toolsets
-    return [
+    caps: list[Any] = [
         Instrumentation(),
         make_context_capability(load_prompt("gru_system").strip()),
         FilesystemCapability(),
@@ -92,6 +122,13 @@ def sub_agent_capabilities(allowed_tools: list[str] | None = None) -> list[Any]:
         MemoryCapability(),
         WebCapability(),
     ]
+    # D41: ask_main_agent only goes into the sub-agent's toolset when
+    # both the flag is on AND the spawn was started via the bidirectional
+    # path (which provides the channel). Either condition off → tool stays
+    # out, and the sub-agent literally cannot ask.
+    if channel is not None and get_settings().cost.sub_agent_bidirectional:
+        caps.append(AskMainAgentCapability())
+    return caps
 
 
 def build_gru(

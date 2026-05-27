@@ -21,4 +21,5 @@ from jac.cli.slash.handlers import profile as _profile  # noqa: F401
 from jac.cli.slash.handlers import resume as _resume  # noqa: F401
 from jac.cli.slash.handlers import sessions as _sessions  # noqa: F401
 from jac.cli.slash.handlers import skill as _skill  # noqa: F401
+from jac.cli.slash.handlers import spawns as _spawns  # noqa: F401
 from jac.cli.slash.handlers import tokens as _tokens  # noqa: F401

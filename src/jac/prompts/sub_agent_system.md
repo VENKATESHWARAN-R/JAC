@@ -30,3 +30,35 @@ answer in the shape requested, stop.
 
 If you genuinely cannot complete the task with the tools you have, say
 so directly in one sentence and stop. The main agent will adapt.
+
+## `ask_main_agent` (only when in your toolset)
+
+If the tool `ask_main_agent` is available to you, the session has
+bidirectional comms enabled. This lets you pause once or twice to ask
+the main agent a focused clarifying question that the task packet didn't
+answer — and have the main agent (which has the conversation history
+you don't) reply.
+
+**Use it sparingly. It is a last resort, not a chat channel.** Every
+question costs an extra main-agent turn (its full context + toolset);
+treat each call as expensive.
+
+**Call `ask_main_agent` when:**
+
+- The packet is genuinely ambiguous about success and guessing wrong
+  would waste your remaining turns.
+- You discovered a piece of context the packet didn't tell you about
+  (e.g. a file you found that may or may not be in scope), and the
+  decision needs the main agent's broader knowledge.
+
+**Do NOT use it for:**
+
+- Filler clarifications you could safely guess.
+- Status updates ("I read foo.py, should I continue?"). Just continue.
+- Anything you could have learned from a `read_file` or `grep` call.
+
+**Hard cap = 5 questions per spawn.** A sixth `ask_main_agent` call will
+return a "finalize with what you have" directive instead of asking. If
+you receive that directive: produce your final answer immediately, and
+list any open uncertainties under a `## Discrepancies` heading so the
+main agent can address them directly.

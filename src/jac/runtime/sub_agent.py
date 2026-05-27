@@ -25,7 +25,10 @@ The tool itself (``spawn_sub_agent``) lives at module bottom.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+import contextlib
+import contextvars
+import secrets
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 import logfire
@@ -33,8 +36,17 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Instrumentation
 
+from jac.config import get_settings
 from jac.errors import JacConfigError
 from jac.profiles import Profile
+from jac.runtime.events import (
+    EventBus,
+    JacEventT,
+    SubAgentAnswer,
+    SubAgentCompleted,
+    SubAgentQuestion,
+    SubAgentSpawned,
+)
 from jac.tools import jac_tool
 
 # ---------- models ----------
@@ -220,6 +232,133 @@ def get_sub_agent_capability() -> SubAgentCapability | None:
     return _capability
 
 
+# --- event bus indirection (D41 renderer hooks) ---
+#
+# The bus belongs to the REPL session; the runtime can't import upward
+# to grab it without a cycle. Same pattern as ``set_sub_agent_usage_recorder``:
+# REPL installs at session start, runtime emits through this hook.
+_event_bus: EventBus | None = None
+
+
+def set_sub_agent_event_bus(bus: EventBus | None) -> None:
+    """Install (or clear) the bus used to emit ``SubAgent*`` lifecycle
+    events for the renderer. ``None`` silences emission — useful in
+    headless / test contexts where no consumer is wired."""
+    global _event_bus
+    _event_bus = bus
+
+
+async def _emit_sub_agent_event(event: JacEventT) -> None:
+    """Fire-and-forget emission. Silent when no bus is installed."""
+    if _event_bus is not None:
+        await _event_bus.emit(event)
+
+
+# ---------- bidirectional comms channel (D41) ----------
+
+
+_BIDIRECTIONAL_ROUND_TRIP_CAP = 5
+"""Hard ceiling on questions a single sub-agent may ask the main agent.
+
+A sixth ``ask_main_agent`` call returns :data:`_BIDIRECTIONAL_FINALIZE_DIRECTIVE`
+directly instead of putting the question on the queue — the sub-agent
+always gets a coherent reply, even when it tries to over-converse."""
+
+_BIDIRECTIONAL_WARN_AT = 3
+"""Logfire warning fires when round_trips reaches this count, ahead of cap."""
+
+_BIDIRECTIONAL_FINALIZE_DIRECTIVE = (
+    "This conversation has reached its round-trip cap "
+    f"({_BIDIRECTIONAL_ROUND_TRIP_CAP} questions). Do not ask further "
+    "questions — the next ask will return this same message. Finalize "
+    "your response now with what you have learned. If you still have open "
+    "uncertainties, list them as 'discrepancies' or 'open questions' in "
+    "your final output so the main agent can address them directly."
+)
+
+
+@dataclass
+class SubAgentChannel:
+    """Per-spawn comms channel for bidirectional ``ask_main_agent`` flow.
+
+    Lives in :data:`_pending_channels` keyed by :attr:`spawn_id` for as
+    long as the worker task is parked waiting for an answer. Removed
+    when the worker completes (success, error, or cancellation).
+    """
+
+    spawn_id: str
+    """8-char hex id surfaced to the main agent so it can route replies."""
+
+    question_q: asyncio.Queue[str] = field(default_factory=asyncio.Queue)
+    """Sub-agent → main agent: the sub-agent's pending question."""
+
+    answer_q: asyncio.Queue[str] = field(default_factory=asyncio.Queue)
+    """Main agent → sub-agent: the main agent's reply."""
+
+    round_trips: int = 0
+    """Count of completed (or in-flight) round-trips. Incremented in
+    ``ask_main_agent`` *before* the question is queued; the cap check
+    fires before increment so a phantom 6th call never queues."""
+
+    cap: int = _BIDIRECTIONAL_ROUND_TRIP_CAP
+    """Per-instance copy so tests can override without monkey-patching the
+    module constant."""
+
+    worker_task: asyncio.Task[SubAgentResult] | None = None
+    """The :func:`_run_sub_agent` invocation, run as a background task so
+    the spawn tool can race completion vs the first question arrival."""
+
+    resolved: _ResolvedTier | None = None
+    """Captured at construction so result rendering after a question yield
+    can show the same header as the non-bidirectional path."""
+
+    objective: str = ""
+    """First 200 chars of the packet's objective — surfaced in `/spawns`
+    so the user can identify a parked worker without scrolling back."""
+
+
+_pending_channels: dict[str, SubAgentChannel] = {}
+"""Active sub-agent conversations keyed by spawn_id. Survives across
+main-agent turns — populated by ``spawn_sub_agent`` (bidirectional path),
+read by ``respond_to_sub_agent``, popped when the worker task ends."""
+
+
+# Threaded into the worker task's context so the ``ask_main_agent`` tool
+# can locate its channel without a closure (capability factories stay
+# plain functions). asyncio.Task copies the current context on creation
+# and ``set()`` mutates only the copy — no leakage back to the parent.
+_current_sub_agent_channel: contextvars.ContextVar[SubAgentChannel | None] = contextvars.ContextVar(
+    "_current_sub_agent_channel", default=None
+)
+
+
+def _current_channel_for_ask() -> SubAgentChannel | None:
+    """Lookup hook for :func:`ask_main_agent`. Exposed for tests."""
+    return _current_sub_agent_channel.get()
+
+
+def _bind_channel_for_worker(
+    channel: SubAgentChannel,
+) -> contextvars.Token[SubAgentChannel | None]:
+    """Bind the channel into the current task's context. Returns the token
+    so the caller can reset on teardown. Called from the worker side."""
+    return _current_sub_agent_channel.set(channel)
+
+
+def _get_pending_channel(spawn_id: str) -> SubAgentChannel | None:
+    """Test-friendly accessor. Production code uses the dict directly."""
+    return _pending_channels.get(spawn_id)
+
+
+def _reset_pending_channels() -> None:
+    """Cancel every parked worker and clear the registry. Test fixture
+    hook + safety net for REPL shutdown."""
+    for channel in list(_pending_channels.values()):
+        if channel.worker_task and not channel.worker_task.done():
+            channel.worker_task.cancel()
+    _pending_channels.clear()
+
+
 # ---------- packet → prompt rendering ----------
 
 
@@ -255,9 +394,26 @@ async def _run_sub_agent(
     cap: SubAgentCapability,
     packet: SubAgentTaskPacket,
     resolved: _ResolvedTier,
+    channel: SubAgentChannel | None = None,
 ) -> SubAgentResult:
-    """Build and run a sub-agent. Internal — wrapped by ``spawn_sub_agent``."""
-    capabilities = list(cap.capability_factory(packet.allowed_tools))
+    """Build and run a sub-agent. Internal — wrapped by ``spawn_sub_agent``.
+
+    ``channel`` is the bidirectional comms channel for D41. When provided,
+    it's passed to the capability factory so ``AskMainAgentCapability``
+    can be attached with the right per-spawn queues. Factories that don't
+    accept ``channel`` (e.g. tests) are called positionally and never see
+    the new kwarg.
+    """
+    if channel is not None:
+        capabilities = list(cap.capability_factory(packet.allowed_tools, channel=channel))
+        # Bind the channel into this task's context so the ask_main_agent
+        # tool — which runs synchronously inside Agent.run() below — can
+        # find it via contextvars without a closure. Scoped to this task,
+        # not the parent's context (asyncio.Task copies on creation; set()
+        # mutates only the copy).
+        _bind_channel_for_worker(channel)
+    else:
+        capabilities = list(cap.capability_factory(packet.allowed_tools))
     # Always attach Instrumentation so spans nest under the spawn span.
     capabilities.insert(0, Instrumentation())
 
@@ -279,6 +435,7 @@ async def _run_sub_agent(
         objective=truncated_objective,
         max_turns=packet.max_turns,
         allowed_tools=packet.allowed_tools or "<default>",
+        bidirectional=channel is not None,
     ) as span:
         try:
             run_result = await sub_agent.run(
@@ -287,6 +444,8 @@ async def _run_sub_agent(
             )
         except Exception as exc:
             span.set_attribute("exit_status", "error")
+            if channel is not None:
+                span.set_attribute("ask_main_agent_count", channel.round_trips)
             span.record_exception(exc)
             return SubAgentResult(
                 output=f"Sub-agent failed: {exc}",
@@ -296,7 +455,11 @@ async def _run_sub_agent(
                 exit_status="error",
             )
 
-        turns = int(getattr(run_result.usage(), "requests", 0))
+        # ``AgentRunResult.usage`` is a property in current pydantic-ai
+        # (it used to be a method; the deprecation warning bites the moment
+        # we call it). Read once, reuse twice.
+        usage = run_result.usage
+        turns = int(getattr(usage, "requests", 0))
         # max_turns check is informational here — pydantic-ai's own
         # usage_limits will enforce hard caps in a follow-up. For now we
         # surface the status when the sub-agent burned the budget.
@@ -304,7 +467,6 @@ async def _run_sub_agent(
 
         # Forward token usage to the main session's tracker so spawn
         # cost rolls up into session_total (per the dashboard).
-        usage = run_result.usage()
         from jac.runtime.sub_agent_usage import record_sub_agent_usage
 
         await record_sub_agent_usage(
@@ -315,6 +477,8 @@ async def _run_sub_agent(
 
         span.set_attribute("turns_used", turns)
         span.set_attribute("exit_status", exit_status)
+        if channel is not None:
+            span.set_attribute("ask_main_agent_count", channel.round_trips)
 
         return SubAgentResult(
             output=str(run_result.output),
@@ -323,6 +487,141 @@ async def _run_sub_agent(
             resolved_model=resolved.model,
             exit_status=exit_status,
         )
+
+
+def _render_final_result(result: SubAgentResult, resolved: _ResolvedTier) -> str:
+    """Compose the tagged header + sub-agent output. Shared by the
+    sequential, bidirectional, and respond paths so the main agent always
+    sees the same shape regardless of which tool returned the result."""
+    cascade_note = f", {resolved.cascade_note}" if resolved.cascaded else ""
+    header = (
+        f"[sub-agent tier={result.resolved_tier} model={result.resolved_model} "
+        f"turns={result.turns_used} exit={result.exit_status}{cascade_note}]"
+    )
+    return f"{header}\n\n{result.output}"
+
+
+def _render_question(spawn_id: str, question: str) -> str:
+    """Compose the tool-return string surfaced to the main agent when a
+    sub-agent yields a question. The ``spawn_id`` token in the body is
+    the routing key the main agent must echo back via ``respond_to_sub_agent``.
+    """
+    return (
+        f"[sub-agent → main: question pending] spawn_id={spawn_id}\n\n"
+        f"{question}\n\n"
+        f"Reply with `respond_to_sub_agent(reason=..., spawn_id={spawn_id!r}, "
+        f"answer=...)`. You may call other tools first if you need to look "
+        f"something up before answering."
+    )
+
+
+async def _await_completion_or_question(channel: SubAgentChannel) -> str:
+    """Race the sub-agent worker finishing vs the next question landing.
+
+    Returns the rendered tool-result string the main agent should see:
+    either the final tagged header + output (worker completed), or a
+    ``[sub-agent → main: question pending]`` block (worker parked on
+    answer_q.get()). Pops the channel from :data:`_pending_channels`
+    only when the worker completes — questions keep the channel alive
+    so :func:`respond_to_sub_agent` can find it on the next main turn.
+    """
+    assert channel.worker_task is not None
+    assert channel.resolved is not None
+
+    question_task: asyncio.Task[str] = asyncio.create_task(channel.question_q.get())
+    done, _pending = await asyncio.wait(
+        [channel.worker_task, question_task],
+        return_when=asyncio.FIRST_COMPLETED,
+    )
+
+    # Cancel whichever wasn't the winner. Worker stays alive when the
+    # question won; it'll be awaited on the next round-trip or cleaned
+    # up by :func:`_reset_pending_channels` at session shutdown.
+    if question_task not in done:
+        question_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await question_task
+
+    if channel.worker_task in done:
+        # Worker completed first; pop the channel and surface the result.
+        _pending_channels.pop(channel.spawn_id, None)
+        try:
+            result = channel.worker_task.result()
+        except Exception as exc:
+            # _run_sub_agent normally catches its own exceptions, but
+            # cancellation / out-of-band errors still bubble.
+            await _emit_sub_agent_event(
+                SubAgentCompleted(
+                    spawn_id=channel.spawn_id,
+                    exit_status="error",
+                    turns_used=0,
+                    ask_main_agent_count=channel.round_trips,
+                )
+            )
+            return _render_final_result(
+                SubAgentResult(
+                    output=f"Sub-agent failed: {exc}",
+                    turns_used=0,
+                    resolved_tier=channel.resolved.resolved,
+                    resolved_model=channel.resolved.model,
+                    exit_status="error",
+                ),
+                channel.resolved,
+            )
+        await _emit_sub_agent_event(
+            SubAgentCompleted(
+                spawn_id=channel.spawn_id,
+                exit_status=result.exit_status,
+                turns_used=result.turns_used,
+                ask_main_agent_count=channel.round_trips,
+            )
+        )
+        return _render_final_result(result, channel.resolved)
+
+    # Question won the race. Channel stays in the registry; main agent
+    # will reply via respond_to_sub_agent.
+    question = question_task.result()
+    return _render_question(channel.spawn_id, question)
+
+
+async def _spawn_bidirectional(
+    cap: SubAgentCapability,
+    packet: SubAgentTaskPacket,
+    resolved: _ResolvedTier,
+) -> str:
+    """Bidirectional path for ``spawn_sub_agent``. Wraps the sub-agent
+    in a background task so the spawn tool can return mid-run when the
+    sub-agent asks a question."""
+    spawn_id = secrets.token_hex(4)
+    channel = SubAgentChannel(
+        spawn_id=spawn_id,
+        resolved=resolved,
+        objective=packet.objective[:200],
+    )
+    _pending_channels[spawn_id] = channel
+    channel.worker_task = asyncio.create_task(_run_sub_agent(cap, packet, resolved, channel))
+
+    # Tell the renderer a worker is now running. Sequential spawns get
+    # visibility via the existing ToolCallStarted line; bidirectional
+    # spawns need their own marker because they may park mid-run.
+    await _emit_sub_agent_event(
+        SubAgentSpawned(
+            spawn_id=spawn_id,
+            tier=resolved.resolved,
+            model=resolved.model,
+            objective=packet.objective[:200],
+        )
+    )
+
+    try:
+        return await _await_completion_or_question(channel)
+    except (asyncio.CancelledError, BaseException):
+        # Main agent's run was cancelled while we were parked. Tear down
+        # the worker so it doesn't outlive the session.
+        if channel.worker_task and not channel.worker_task.done():
+            channel.worker_task.cancel()
+        _pending_channels.pop(spawn_id, None)
+        raise
 
 
 @jac_tool(summarizable=True)
@@ -353,6 +652,10 @@ async def spawn_sub_agent(
         The sub-agent's final response, prefixed with a one-line
         ``[sub-agent tier=X model=Y turns=N exit=ok]`` header so you
         can see the resolved tier without re-reading the approval.
+        When ``cost.sub_agent_bidirectional`` is enabled and the
+        sub-agent pauses to ask a question, this tool instead returns
+        a ``[sub-agent → main: question pending]`` block with the
+        ``spawn_id`` to echo back via ``respond_to_sub_agent``.
 
     **Approval-required.** Every call surfaces a HITL prompt.
     **Depth cap = 1.** A sub-agent's own toolset excludes this tool —
@@ -369,13 +672,137 @@ async def spawn_sub_agent(
     resolved = resolve_tier(cap.profile, tier)
     packet = SubAgentTaskPacket.model_validate(task_packet)
 
+    if get_settings().cost.sub_agent_bidirectional:
+        return await _spawn_bidirectional(cap, packet, resolved)
+
     result = await _run_sub_agent(cap, packet, resolved)
-    cascade_note = f", {resolved.cascade_note}" if resolved.cascaded else ""
-    header = (
-        f"[sub-agent tier={result.resolved_tier} model={result.resolved_model} "
-        f"turns={result.turns_used} exit={result.exit_status}{cascade_note}]"
+    return _render_final_result(result, resolved)
+
+
+# ---------- bidirectional tools (D41) ----------
+
+
+@jac_tool(summarizable=False)
+async def ask_main_agent(
+    reason: str,
+    question: str,
+    context: str = "",
+) -> str:
+    """Pause this sub-agent and ask the main agent **one** focused question.
+
+    Use this as a *last resort* when:
+
+    - The task packet is genuinely ambiguous about what success looks like
+      and guessing wrong would waste your remaining turns, OR
+    - You discovered a piece of context the packet didn't tell you about
+      and the main agent has the conversation history needed to decide.
+
+    Do NOT use this as a general chat channel. Every round-trip costs an
+    extra main-agent turn (its full context + toolset), so a sub-agent
+    that asks five questions costs roughly as much as five extra main-agent
+    turns. The hard cap is **5 questions per spawn**; a sixth call returns
+    a "finalize with what you have" directive instead of asking.
+
+    Args:
+        reason: One-sentence justification.
+        question: The question for the main agent. Keep it specific and
+            answerable in one or two sentences.
+        context: Optional extra context the main agent needs to answer.
+
+    Returns:
+        The main agent's reply, wrapped in ``[main → sub-agent: ...]``
+        markers. If the round-trip cap has been reached, returns the
+        finalize directive instead — produce your final answer and list
+        any open uncertainties as discrepancies.
+    """
+    _ = reason  # visible in the audit log; tool body doesn't reason over it
+
+    channel = _current_channel_for_ask()
+    if channel is None:
+        raise JacConfigError(
+            "ask_main_agent is not available — bidirectional comms is "
+            "disabled or this tool was called outside a sub-agent context. "
+            "Set `cost.sub_agent_bidirectional: true` in config to enable."
+        )
+
+    if channel.round_trips >= channel.cap:
+        logfire.warning(
+            "ask_main_agent.cap_reached",
+            spawn_id=channel.spawn_id,
+            round_trips=channel.round_trips,
+            cap=channel.cap,
+        )
+        return f"[main → sub-agent: {_BIDIRECTIONAL_FINALIZE_DIRECTIVE}]"
+
+    channel.round_trips += 1
+    if channel.round_trips == _BIDIRECTIONAL_WARN_AT:
+        logfire.warning(
+            "ask_main_agent.warn_threshold",
+            spawn_id=channel.spawn_id,
+            round_trips=channel.round_trips,
+            cap=channel.cap,
+        )
+
+    payload = question if not context else f"{question}\n\nAdditional context:\n{context}"
+    # Renderer hook: the question is about to land on the main agent's
+    # tool result. Emit BEFORE put() so scroll-back order is intuitive.
+    await _emit_sub_agent_event(
+        SubAgentQuestion(
+            spawn_id=channel.spawn_id,
+            question=payload,
+            round_trip=channel.round_trips,
+        )
     )
-    return f"{header}\n\n{result.output}"
+    await channel.question_q.put(payload)
+    answer = await channel.answer_q.get()
+    return f"[main → sub-agent: {answer}]"
+
+
+@jac_tool(summarizable=False)
+async def respond_to_sub_agent(
+    reason: str,
+    spawn_id: str,
+    answer: str,
+) -> str:
+    """Reply to a paused sub-agent's pending question.
+
+    Pair to :func:`ask_main_agent`. Call this when ``spawn_sub_agent``
+    returned a ``[sub-agent → main: question pending] spawn_id=...`` block.
+    Pass the ``spawn_id`` from that block plus your answer; the sub-agent
+    resumes and you'll get either its final result or its next question
+    back from this tool.
+
+    Args:
+        reason: One-sentence justification.
+        spawn_id: The id from the question block (8 hex chars).
+        answer: Your reply. Keep it focused — the sub-agent only asked
+            one question.
+
+    Returns:
+        Either the sub-agent's final tagged result (worker completed),
+        or another ``[sub-agent → main: question pending]`` block if it
+        has a follow-up question.
+    """
+    _ = reason
+    channel = _pending_channels.get(spawn_id)
+    if channel is None:
+        return (
+            f"[error: no pending sub-agent with spawn_id={spawn_id!r}; it may have "
+            f"already finished or never existed. Active spawn_ids: "
+            f"{sorted(_pending_channels)!r}]"
+        )
+    if channel.worker_task is None or channel.worker_task.done():
+        _pending_channels.pop(spawn_id, None)
+        return (
+            f"[error: sub-agent {spawn_id!r} already finished while you were "
+            f"composing your reply; your answer was not delivered]"
+        )
+
+    # Renderer hook before delivery so the user sees the answer in
+    # scroll-back before whatever the sub-agent does with it.
+    await _emit_sub_agent_event(SubAgentAnswer(spawn_id=spawn_id, answer=answer))
+    await channel.answer_q.put(answer)
+    return await _await_completion_or_question(channel)
 
 
 # ---------- parallel spawn (Phase E) ----------

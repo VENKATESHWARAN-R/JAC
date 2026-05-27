@@ -133,11 +133,14 @@ Large outputs from opted-in tools (today: `run_shell`, `web_search`, `fetch_url`
 ```yaml
 cost:
   tool_result_threshold_tokens: 8000
-  no_summarize_tools: []   # force-off list (overrides decorator opt-in)
-  summarize_tools: []      # force-on list (overrides decorator default)
+  no_summarize_tools: []         # force-off list (overrides decorator opt-in)
+  summarize_tools: []            # force-on list (overrides decorator default)
+  sub_agent_bidirectional: false # D41: opt-in ask_main_agent / respond_to_sub_agent
 ```
 
 Summarization is skipped (raw passthrough) when no `small` tier is configured, the small model isn't strictly cheaper than the current tier, or the tool didn't opt in. Pricing lookup uses `providers.yaml`.
+
+`sub_agent_bidirectional` is the D41 feature flag — leave off unless you understand the per-question cost. See [Cost controls → Bidirectional comms](cost-controls.md) for the full semantics, including the 5-round-trip cap and the "finalize with what you have" directive on the 6th ask.
 
 ## A2A block (per profile)
 

@@ -96,6 +96,17 @@ The next lever past the post-processor is **delegating context-heavy work to a s
 
 **Hooks (Phase C, queued).** The packet accepts a `hooks: list[HookSpec]` field today but the runner is a stub — Phase C lands the post-flight validators (`ruff_check`, `pytest_run`, etc.) plus the "all-pass → return verbatim, no extra LLM turn" optimization.
 
+### Bidirectional comms (opt-in, D41)
+
+Off by default. Flip `cost.sub_agent_bidirectional: true` in your config to enable. When on:
+
+- The sub-agent gets `ask_main_agent(reason, question, context)` — it can pause once or twice mid-run to ask the main agent a focused clarifying question.
+- The main agent gets `respond_to_sub_agent(reason, spawn_id, answer)` — its reply tool. Not approval-gated; you already approved the parent spawn.
+- Hard cap = **5 round-trips per spawn**. The 6th `ask_main_agent` call doesn't error — it returns a "finalize with what you have, list any open uncertainties as discrepancies" directive directly to the sub-agent. The spawn always produces a coherent final answer, even if the conversation runs long.
+- Visibility: the question lands in the main agent's tool result as a `[sub-agent → main: question pending] spawn_id=...` block; the answer comes back wrapped in `[main → sub-agent: ...]`. You see both as standard tool calls in the scroll-back.
+
+**Cost note.** Every round-trip costs an extra main-agent turn (full context + toolset). A sub-agent asking five questions costs roughly as much as five extra main-agent turns. Worth it for genuinely ambiguous tasks; usually a sign the task packet should have been more specific.
+
 ### When to spawn vs. when not to
 
 | Spawn | Don't spawn |

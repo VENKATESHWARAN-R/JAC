@@ -185,6 +185,21 @@ def _format_budget_segment(pct: int | None) -> str:
     return f'  <style fg="ansicyan">bud:</style><style fg="{color}">{pct}%</style>'
 
 
+def _format_spawns_segment() -> str:
+    """Show ``spawns:N`` when any bidirectional sub-agent is parked
+    (D41). Hidden when nothing is in flight so the toolbar stays quiet
+    in the common case.
+
+    Imports the channel registry lazily to avoid pulling the sub-agent
+    runtime into the statusbar import graph at module load time."""
+    from jac.runtime.sub_agent import _pending_channels
+
+    count = len(_pending_channels)
+    if count == 0:
+        return ""
+    return f'  <style fg="ansicyan">spawns:</style><style fg="ansiyellow">{count}</style>'
+
+
 def _format_model_segment(state: StatusState) -> str:
     short = escape(short_model(state.model_id)) if state.model_id else "?"
     tier = tier_for_model(state.profile, state.model_id)
@@ -217,6 +232,7 @@ def format_toolbar(state: StatusState) -> HTML:
         "  ",
         _format_ctx_segment(used, budget),
         _format_budget_segment(state.budget_pct),
+        _format_spawns_segment(),
         "  ",
         f'<style fg="ansicyan">session:</style>'
         f'<style fg="ansibrightblack">{escape(state.session_id) or "?"}</style>',

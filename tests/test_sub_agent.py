@@ -17,6 +17,7 @@ Covers:
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Iterator
 from pathlib import Path
@@ -29,12 +30,20 @@ from jac.profiles import Profile
 from jac.runtime import sub_agent as sa
 from jac.runtime.events import EventBus
 from jac.runtime.sub_agent import (
+    _BIDIRECTIONAL_FINALIZE_DIRECTIVE,
+    _BIDIRECTIONAL_ROUND_TRIP_CAP,
     SubAgentCapability,
+    SubAgentChannel,
     SubAgentSpawnSpec,
     SubAgentTaskPacket,
+    _pending_channels,
     _render_packet,
+    _reset_pending_channels,
+    ask_main_agent,
     resolve_tier,
+    respond_to_sub_agent,
     set_sub_agent_capability,
+    set_sub_agent_event_bus,
     spawn_sub_agent,
     spawn_sub_agents,
 )
@@ -63,10 +72,14 @@ def _isolated_sub_agent_state(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]
     set_sub_agent_capability(None)
     reset_sub_agent_stats()
     set_sub_agent_usage_recorder(None)
+    set_sub_agent_event_bus(None)
+    _reset_pending_channels()
     yield
     set_sub_agent_capability(None)
     reset_sub_agent_stats()
     set_sub_agent_usage_recorder(None)
+    set_sub_agent_event_bus(None)
+    _reset_pending_channels()
 
 
 def _profile(**tiers: list[str]) -> Profile:
@@ -258,7 +271,9 @@ async def test_spawn_runs_sub_agent_and_returns_tagged_output(
     class _FakeRunResult:
         output = "the answer"
 
+        @property
         def usage(self) -> _FakeUsage:
+
             return _FakeUsage()
 
     async def fake_run(self: Any, prompt: str, **_kwargs: Any) -> _FakeRunResult:
@@ -302,7 +317,9 @@ async def test_spawn_with_tier_cascade_notes_in_header(
     class _R:
         output = "ok"
 
+        @property
         def usage(self) -> _U:
+
             return _U()
 
     async def fake_run(self: Any, prompt: str, **_kwargs: Any) -> _R:
@@ -368,7 +385,9 @@ async def test_recorder_is_invoked_for_each_spawn(
     class _R:
         output = "ok"
 
+        @property
         def usage(self) -> _U:
+
             return _U()
 
     async def fake_run(self: Any, prompt: str, **_kwargs: Any) -> _R:
@@ -508,7 +527,9 @@ async def test_spawn_sub_agents_gather_happy_path(
         def __init__(self, text: str) -> None:
             self.output = text
 
+        @property
         def usage(self) -> _U:
+
             return _U()
 
     async def fake_run(self: Any, prompt: str, **_kwargs: Any) -> _R:
@@ -578,7 +599,9 @@ async def test_spawn_sub_agents_partial_failure_does_not_kill_batch(
     class _R:
         output = "fine"
 
+        @property
         def usage(self) -> _U:
+
             return _U()
 
     async def fake_run(self: Any, prompt: str, **_kwargs: Any) -> _R:
@@ -630,7 +653,9 @@ async def test_spawn_sub_agents_per_spawn_tier_cascade(
     class _R:
         output = "ok"
 
+        @property
         def usage(self) -> _U:
+
             return _U()
 
     async def fake_run(self: Any, prompt: str, **_kwargs: Any) -> _R:
@@ -674,7 +699,9 @@ async def test_spawn_sub_agents_unresolvable_tier_surfaces_per_spawn(
     class _R:
         output = "ok"
 
+        @property
         def usage(self) -> _U:
+
             return _U()
 
     async def fake_run(self: Any, prompt: str, **_kwargs: Any) -> _R:
@@ -742,7 +769,9 @@ async def test_spawn_sub_agents_each_spawn_writes_jsonl_row(
     class _R:
         output = "ok"
 
+        @property
         def usage(self) -> _U:
+
             return _U()
 
     async def fake_run(self: Any, prompt: str, **_kwargs: Any) -> _R:
@@ -770,6 +799,707 @@ async def test_spawn_sub_agents_each_spawn_writes_jsonl_row(
     # Tracker counters reflect both spawns' tokens.
     assert tracker.counters.input_tokens == 400
     assert tracker.counters.output_tokens == 100
+
+
+# ---------- bidirectional comms (D41, Phase E.2) ----------
+
+
+@pytest.fixture
+def _bidirectional_on(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Flip ``cost.sub_agent_bidirectional`` on via env var and reset the
+    settings cache so :func:`get_settings` picks it up. Pairs with the
+    autouse fixture above (which already clears _pending_channels)."""
+    from jac.config import reset_settings_cache
+
+    monkeypatch.setenv("JAC_COST__SUB_AGENT_BIDIRECTIONAL", "true")
+    reset_settings_cache()
+    yield
+    reset_settings_cache()
+
+
+def test_bidirectional_capability_wiring_flag_off() -> None:
+    """With the flag off the main agent doesn't get respond_to_sub_agent
+    and a sub-agent (even with a channel) doesn't get ask_main_agent.
+    Critical: this guarantees the v1 default-off ship is truly off."""
+    from jac.capabilities.sub_agent import (
+        AskMainAgentCapability,
+        RespondToSubAgentCapability,
+        SubAgentToolCapability,
+    )
+    from jac.runtime.gru import _default_tool_capabilities, sub_agent_capabilities
+
+    main_caps = _default_tool_capabilities()
+    assert any(isinstance(c, SubAgentToolCapability) for c in main_caps)
+    assert not any(isinstance(c, RespondToSubAgentCapability) for c in main_caps)
+
+    ch = SubAgentChannel(spawn_id="x")
+    sub_caps = sub_agent_capabilities(channel=ch)
+    assert not any(isinstance(c, AskMainAgentCapability) for c in sub_caps)
+
+
+def test_bidirectional_capability_wiring_flag_on(_bidirectional_on: None) -> None:
+    """With the flag on the main agent gets respond_to_sub_agent AND a
+    sub-agent gets ask_main_agent — *if* a channel is bound. Without a
+    channel even the flag-on sub-agent stays mute (no channel → no tool)."""
+    from jac.capabilities.sub_agent import (
+        AskMainAgentCapability,
+        RespondToSubAgentCapability,
+        SubAgentToolCapability,
+    )
+    from jac.runtime.gru import _default_tool_capabilities, sub_agent_capabilities
+
+    main_caps = _default_tool_capabilities()
+    assert any(isinstance(c, RespondToSubAgentCapability) for c in main_caps)
+
+    sub_caps_no_channel = sub_agent_capabilities()
+    assert not any(isinstance(c, AskMainAgentCapability) for c in sub_caps_no_channel)
+
+    ch = SubAgentChannel(spawn_id="x")
+    sub_caps_with_channel = sub_agent_capabilities(channel=ch)
+    assert any(isinstance(c, AskMainAgentCapability) for c in sub_caps_with_channel)
+
+    # Depth cap holds regardless of the flag: a sub-agent NEVER sees
+    # the spawn or respond tools.
+    for cap in sub_caps_with_channel:
+        assert not isinstance(cap, (SubAgentToolCapability, RespondToSubAgentCapability))
+
+
+def test_ask_main_agent_is_jac_tool_not_summarizable() -> None:
+    """ask_main_agent returns a short string — summarization would
+    only add cost without saving tokens."""
+    assert is_jac_tool(ask_main_agent)
+    assert not is_summarizable(ask_main_agent)
+
+
+def test_respond_to_sub_agent_is_jac_tool_not_summarizable() -> None:
+    assert is_jac_tool(respond_to_sub_agent)
+    assert not is_summarizable(respond_to_sub_agent)
+
+
+async def test_ask_main_agent_fails_fast_when_no_channel_bound() -> None:
+    """Called outside a sub-agent context (no contextvar set) the tool
+    must surface a structured error — never silently 'succeed' with
+    nothing on the receiving end."""
+    with pytest.raises(JacConfigError, match="not available"):
+        await ask_main_agent(reason="r", question="q")
+
+
+async def test_bidirectional_happy_path_single_round_trip(
+    _bidirectional_on: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end: main → spawn → sub-agent asks → main responds → sub-agent
+    finalizes → final result returns from respond_to_sub_agent."""
+    p = _profile(medium=["anthropic:claude-sonnet-4-6"])
+
+    def factory(_allowed: Any, *, channel: Any = None) -> list[Any]:
+        # Factory accepts the channel kwarg so the bidirectional path's
+        # call site is exercised. Empty caps so the mocked Agent.run is
+        # hermetic.
+        _ = channel
+        return []
+
+    set_sub_agent_capability(
+        SubAgentCapability(profile=p, base_prompt="BASE", capability_factory=factory)
+    )
+
+    # The fake sub-agent calls ask_main_agent once, then returns "done".
+    async def fake_run(self: Any, prompt: str, **_kwargs: Any) -> Any:
+        answer = await ask_main_agent(reason="t", question="what's the schema?")
+
+        class _U:
+            requests = 2
+            input_tokens = 100
+            output_tokens = 20
+
+        class _R:
+            output = f"done; main said: {answer}"
+
+            @property
+            def usage(self) -> _U:
+
+                return _U()
+
+        return _R()
+
+    monkeypatch.setattr("pydantic_ai.Agent.run", fake_run)
+
+    # First main-agent turn → calls spawn_sub_agent → gets the question
+    first_result = await spawn_sub_agent(
+        reason="delegate",
+        task_summary="x",
+        tier="medium",
+        task_packet={"objective": "do thing"},
+    )
+    assert "[sub-agent → main: question pending]" in first_result
+    assert "what's the schema?" in first_result
+    # spawn_id is a hex token — pull it out of the result.
+    import re
+
+    match = re.search(r"spawn_id=([0-9a-f]+)", first_result)
+    assert match is not None
+    spawn_id = match.group(1)
+    assert spawn_id in _pending_channels
+
+    # Second main-agent turn → calls respond_to_sub_agent → gets final
+    second_result = await respond_to_sub_agent(
+        reason="reply", spawn_id=spawn_id, answer="users.id is a UUID"
+    )
+    assert "[sub-agent tier=medium model=anthropic:claude-sonnet-4-6" in second_result
+    assert "exit=ok" in second_result
+    assert "users.id is a UUID" in second_result
+    # Channel cleaned up after worker completion.
+    assert spawn_id not in _pending_channels
+
+
+async def test_bidirectional_multi_round_trip(
+    _bidirectional_on: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two questions in one spawn. Each respond_to_sub_agent surfaces the
+    next question (or the final result), confirming the race helper
+    handles repeated round-trips correctly."""
+    p = _profile(medium=["anthropic:claude-sonnet-4-6"])
+    set_sub_agent_capability(
+        SubAgentCapability(
+            profile=p,
+            base_prompt="BASE",
+            capability_factory=lambda _a, *, channel=None: [],
+        )
+    )
+
+    async def fake_run(self: Any, prompt: str, **_kwargs: Any) -> Any:
+        a1 = await ask_main_agent(reason="t", question="Q1")
+        a2 = await ask_main_agent(reason="t", question="Q2")
+
+        class _U:
+            requests = 3
+            input_tokens = 100
+            output_tokens = 20
+
+        class _R:
+            output = f"got: {a1!r} {a2!r}"
+
+            @property
+            def usage(self) -> _U:
+
+                return _U()
+
+        return _R()
+
+    monkeypatch.setattr("pydantic_ai.Agent.run", fake_run)
+
+    first = await spawn_sub_agent(
+        reason="r", task_summary="s", tier="medium", task_packet={"objective": "x"}
+    )
+    assert "Q1" in first
+    spawn_id = first.split("spawn_id=")[1].split("\n")[0].strip()
+
+    second = await respond_to_sub_agent(reason="r", spawn_id=spawn_id, answer="A1")
+    # Should be ANOTHER question, not the final.
+    assert "[sub-agent → main: question pending]" in second
+    assert "Q2" in second
+
+    third = await respond_to_sub_agent(reason="r", spawn_id=spawn_id, answer="A2")
+    assert "[sub-agent tier=medium" in third  # final result tag
+    assert "A1" in third and "A2" in third
+
+
+async def test_bidirectional_round_trip_cap_returns_finalize_directive(
+    _bidirectional_on: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The 6th ask_main_agent call must NOT raise and must NOT put a
+    question on the queue. It returns the finalize directive directly so
+    the sub-agent can produce a coherent final answer."""
+    p = _profile(medium=["anthropic:claude-sonnet-4-6"])
+    set_sub_agent_capability(
+        SubAgentCapability(
+            profile=p,
+            base_prompt="BASE",
+            capability_factory=lambda _a, *, channel=None: [],
+        )
+    )
+
+    asks_made: list[str] = []
+    answers_received: list[str] = []
+
+    async def fake_run(self: Any, prompt: str, **_kwargs: Any) -> Any:
+        # Ask one MORE than the cap. The (cap+1)th call should return the
+        # finalize directive instead of waiting on a phantom answer.
+        for i in range(_BIDIRECTIONAL_ROUND_TRIP_CAP + 1):
+            q = f"Q{i + 1}"
+            asks_made.append(q)
+            a = await ask_main_agent(reason="t", question=q)
+            answers_received.append(a)
+
+        class _U:
+            requests = _BIDIRECTIONAL_ROUND_TRIP_CAP + 2
+            input_tokens = 100
+            output_tokens = 20
+
+        class _R:
+            output = "finalized"
+
+            @property
+            def usage(self) -> _U:
+
+                return _U()
+
+        return _R()
+
+    monkeypatch.setattr("pydantic_ai.Agent.run", fake_run)
+
+    first = await spawn_sub_agent(
+        reason="r", task_summary="s", tier="medium", task_packet={"objective": "x"}
+    )
+    spawn_id = first.split("spawn_id=")[1].split("\n")[0].strip()
+
+    # Answer questions 1..CAP. Each answer comes back via
+    # respond_to_sub_agent, which returns either the next question or
+    # the final result.
+    current = first
+    for i in range(_BIDIRECTIONAL_ROUND_TRIP_CAP):
+        assert f"Q{i + 1}" in current
+        current = await respond_to_sub_agent(reason="r", spawn_id=spawn_id, answer=f"A{i + 1}")
+
+    # After CAP answers, the sub-agent's (CAP+1)th ask short-circuits to
+    # the finalize directive and the sub-agent immediately returns. We
+    # therefore land on the final result, NOT another question.
+    assert "[sub-agent tier=medium" in current
+    assert "exit=ok" in current
+    assert "finalized" in current
+    # The sub-agent saw the finalize directive as the (CAP+1)th answer.
+    assert len(answers_received) == _BIDIRECTIONAL_ROUND_TRIP_CAP + 1
+    assert _BIDIRECTIONAL_FINALIZE_DIRECTIVE in answers_received[-1]
+    # And the user's first CAP answers were delivered intact.
+    for i in range(_BIDIRECTIONAL_ROUND_TRIP_CAP):
+        assert f"A{i + 1}" in answers_received[i]
+
+
+async def test_respond_to_unknown_spawn_id_returns_error(
+    _bidirectional_on: None,
+) -> None:
+    """Calling respond with a spawn_id that never existed shouldn't crash
+    the main agent — it should return a structured error string so the
+    model can self-correct."""
+    out = await respond_to_sub_agent(reason="r", spawn_id="deadbeef", answer="hi")
+    assert out.startswith("[error: no pending sub-agent")
+    assert "deadbeef" in out
+
+
+async def test_respond_to_already_finished_spawn_returns_error(
+    _bidirectional_on: None,
+) -> None:
+    """If a channel exists but its worker_task is already done (race
+    between completion and the main agent composing a reply), respond
+    cleans up and surfaces an error."""
+
+    # Build a channel whose worker_task is already complete.
+    async def _done() -> Any:
+        return None
+
+    task: asyncio.Task[Any] = asyncio.create_task(_done())
+    await task
+
+    channel = SubAgentChannel(spawn_id="abc12345", worker_task=task)
+    _pending_channels["abc12345"] = channel
+
+    out = await respond_to_sub_agent(reason="r", spawn_id="abc12345", answer="too late")
+    assert out.startswith("[error: sub-agent")
+    assert "already finished" in out
+    # Cleaned up.
+    assert "abc12345" not in _pending_channels
+
+
+async def test_bidirectional_cancellation_cleans_up_channel(
+    _bidirectional_on: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If the main agent's run is cancelled while a sub-agent is parked
+    on answer_q, the worker must be cancelled and the channel popped —
+    no leaks across sessions."""
+    p = _profile(medium=["anthropic:claude-sonnet-4-6"])
+    set_sub_agent_capability(
+        SubAgentCapability(
+            profile=p,
+            base_prompt="BASE",
+            capability_factory=lambda _a, *, channel=None: [],
+        )
+    )
+
+    # A sub-agent that asks once and then never finishes (parked on the
+    # answer queue).
+    async def fake_run(self: Any, prompt: str, **_kwargs: Any) -> Any:
+        await ask_main_agent(reason="t", question="hang here")
+        raise AssertionError("unreachable — we cancel before the answer comes")
+
+    monkeypatch.setattr("pydantic_ai.Agent.run", fake_run)
+
+    spawn_task = asyncio.create_task(
+        spawn_sub_agent(reason="r", task_summary="s", tier="medium", task_packet={"objective": "x"})
+    )
+    # Let the spawn run far enough to surface the question (which is the
+    # point at which the channel is registered AND the spawn returns).
+    first = await spawn_task
+    assert "[sub-agent → main: question pending]" in first
+    spawn_id = first.split("spawn_id=")[1].split("\n")[0].strip()
+    assert spawn_id in _pending_channels
+
+    # Now simulate session shutdown — _reset_pending_channels is what the
+    # REPL is expected to call on /exit.
+    _reset_pending_channels()
+    assert spawn_id not in _pending_channels
+
+
+async def test_channel_round_trips_counter_increments_under_cap(
+    _bidirectional_on: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pin the counter behaviour: each ask_main_agent under the cap
+    increments round_trips; the counter never increments past cap (the
+    short-circuit branch returns early)."""
+    p = _profile(medium=["anthropic:claude-sonnet-4-6"])
+    set_sub_agent_capability(
+        SubAgentCapability(
+            profile=p,
+            base_prompt="BASE",
+            capability_factory=lambda _a, *, channel=None: [],
+        )
+    )
+
+    observed_round_trips: list[int] = []
+
+    async def fake_run(self: Any, prompt: str, **_kwargs: Any) -> Any:
+        from jac.runtime.sub_agent import _current_channel_for_ask
+
+        for _ in range(_BIDIRECTIONAL_ROUND_TRIP_CAP + 2):
+            ch = _current_channel_for_ask()
+            assert ch is not None
+            observed_round_trips.append(ch.round_trips)
+            await ask_main_agent(reason="t", question="q")
+
+        class _U:
+            requests = 1
+            input_tokens = 10
+            output_tokens = 5
+
+        class _R:
+            output = "ok"
+
+            @property
+            def usage(self) -> _U:
+
+                return _U()
+
+        return _R()
+
+    monkeypatch.setattr("pydantic_ai.Agent.run", fake_run)
+
+    first = await spawn_sub_agent(
+        reason="r", task_summary="s", tier="medium", task_packet={"objective": "x"}
+    )
+    spawn_id = first.split("spawn_id=")[1].split("\n")[0].strip()
+    # Drive CAP responses; we only care about observed_round_trips, not
+    # the returned strings (those are exercised in the other tests).
+    _ = first
+    for i in range(_BIDIRECTIONAL_ROUND_TRIP_CAP):
+        await respond_to_sub_agent(reason="r", spawn_id=spawn_id, answer=f"A{i}")
+
+    # observed[0] = 0 (before first ask); observed[1] = 1; …
+    # observed[CAP] should be CAP (final ask is the short-circuit; the
+    # counter doesn't increment past cap because the early-return branch
+    # bumps neither).
+    assert observed_round_trips[0] == 0
+    assert observed_round_trips[_BIDIRECTIONAL_ROUND_TRIP_CAP] == _BIDIRECTIONAL_ROUND_TRIP_CAP
+    # After cap, no further answers are taken from the queue; the next
+    # observation is whatever was there last (still == cap), the final
+    # ask doesn't bump it either.
+    assert observed_round_trips[_BIDIRECTIONAL_ROUND_TRIP_CAP + 1] == _BIDIRECTIONAL_ROUND_TRIP_CAP
+
+
+def test_bidirectional_addendum_prompt_appended_only_when_flag_on(
+    _bidirectional_on: None,
+) -> None:
+    """The gru_bidirectional.md addendum must only be visible to the model
+    when the flag is on — we never describe tools the agent doesn't have."""
+    from jac.capabilities.context import ContextCapability
+    from jac.runtime.gru import _default_tool_capabilities
+
+    caps = _default_tool_capabilities()
+    ctx = next(c for c in caps if isinstance(c, ContextCapability))
+    body = getattr(ctx, "base_prompt", "")
+    assert "respond_to_sub_agent" in body
+
+
+def test_bidirectional_addendum_absent_when_flag_off() -> None:
+    """Negative case for the prompt-injection test above. Flag off →
+    no mention of the bidirectional tools in the system prompt."""
+    from jac.capabilities.context import ContextCapability
+    from jac.runtime.gru import _default_tool_capabilities
+
+    caps = _default_tool_capabilities()
+    ctx = next(c for c in caps if isinstance(c, ContextCapability))
+    body = getattr(ctx, "base_prompt", "")
+    assert "respond_to_sub_agent" not in body
+
+
+# ---------- renderer event emission (D41 UX polish) ----------
+
+
+async def test_bidirectional_emits_lifecycle_events_in_order(
+    _bidirectional_on: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pin the contract: SubAgentSpawned → SubAgentQuestion → SubAgentAnswer
+    → SubAgentCompleted lands on the bus in that order across a single
+    round-trip. The renderer relies on this order to draw the panels."""
+    from jac.runtime.events import (
+        EventBus,
+        SubAgentAnswer,
+        SubAgentCompleted,
+        SubAgentQuestion,
+        SubAgentSpawned,
+    )
+
+    bus = EventBus()
+    set_sub_agent_event_bus(bus)
+
+    p = _profile(medium=["anthropic:claude-sonnet-4-6"])
+    set_sub_agent_capability(
+        SubAgentCapability(
+            profile=p,
+            base_prompt="BASE",
+            capability_factory=lambda _a, *, channel=None: [],
+        )
+    )
+
+    async def fake_run(self: Any, prompt: str, **_kwargs: Any) -> Any:
+        await ask_main_agent(reason="t", question="what schema?")
+
+        class _U:
+            requests = 1
+            input_tokens = 100
+            output_tokens = 20
+
+        class _R:
+            output = "done"
+
+            @property
+            def usage(self) -> _U:
+
+                return _U()
+
+        return _R()
+
+    monkeypatch.setattr("pydantic_ai.Agent.run", fake_run)
+
+    first = await spawn_sub_agent(
+        reason="r", task_summary="s", tier="medium", task_packet={"objective": "x"}
+    )
+    spawn_id = first.split("spawn_id=")[1].split("\n")[0].strip()
+    await respond_to_sub_agent(reason="r", spawn_id=spawn_id, answer="UUID")
+
+    # Drain the bus and assert order.
+    collected: list[Any] = []
+    while not bus._queue.empty():  # type: ignore[attr-defined]
+        collected.append(bus._queue.get_nowait())  # type: ignore[attr-defined]
+
+    types_in_order = [type(e).__name__ for e in collected]
+    assert types_in_order == [
+        "SubAgentSpawned",
+        "SubAgentQuestion",
+        "SubAgentAnswer",
+        "SubAgentCompleted",
+    ]
+
+    spawned = collected[0]
+    assert isinstance(spawned, SubAgentSpawned)
+    assert spawned.spawn_id == spawn_id
+    assert spawned.tier == "medium"
+    assert spawned.model == "anthropic:claude-sonnet-4-6"
+    assert spawned.objective == "x"
+
+    question_event = collected[1]
+    assert isinstance(question_event, SubAgentQuestion)
+    assert question_event.spawn_id == spawn_id
+    assert question_event.question == "what schema?"
+    assert question_event.round_trip == 1
+
+    answer_event = collected[2]
+    assert isinstance(answer_event, SubAgentAnswer)
+    assert answer_event.spawn_id == spawn_id
+    assert answer_event.answer == "UUID"
+
+    completed = collected[3]
+    assert isinstance(completed, SubAgentCompleted)
+    assert completed.spawn_id == spawn_id
+    assert completed.exit_status == "ok"
+    assert completed.ask_main_agent_count == 1
+
+
+async def test_sequential_spawn_emits_no_sub_agent_events(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the flag is off (default), the sequential path runs to
+    completion without going through ``_spawn_bidirectional`` — no
+    SubAgent* events should land on the bus. The existing ToolCallStarted
+    line still provides visibility."""
+    from jac.runtime.events import EventBus
+
+    bus = EventBus()
+    set_sub_agent_event_bus(bus)
+
+    p = _profile(medium=["anthropic:claude-sonnet-4-6"])
+    set_sub_agent_capability(
+        SubAgentCapability(profile=p, base_prompt="BASE", capability_factory=lambda _a: [])
+    )
+
+    class _U:
+        requests = 1
+        input_tokens = 10
+        output_tokens = 5
+
+    class _R:
+        output = "ok"
+
+        @property
+        def usage(self) -> _U:
+
+            return _U()
+
+    async def fake_run(self: Any, prompt: str, **_kwargs: Any) -> _R:
+        return _R()
+
+    monkeypatch.setattr("pydantic_ai.Agent.run", fake_run)
+
+    await spawn_sub_agent(
+        reason="r", task_summary="s", tier="medium", task_packet={"objective": "x"}
+    )
+    assert bus._queue.empty()  # type: ignore[attr-defined]
+
+
+async def test_bidirectional_emits_completed_on_error_path(
+    _bidirectional_on: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An error inside the worker still emits SubAgentCompleted (with
+    exit_status='error') so the renderer can draw a closing line."""
+    from jac.runtime.events import EventBus, SubAgentCompleted
+
+    bus = EventBus()
+    set_sub_agent_event_bus(bus)
+
+    p = _profile(medium=["anthropic:claude-sonnet-4-6"])
+    set_sub_agent_capability(
+        SubAgentCapability(
+            profile=p,
+            base_prompt="BASE",
+            capability_factory=lambda _a, *, channel=None: [],
+        )
+    )
+
+    async def boom(self: Any, prompt: str, **_kwargs: Any) -> Any:
+        raise RuntimeError("model unreachable")
+
+    monkeypatch.setattr("pydantic_ai.Agent.run", boom)
+
+    result = await spawn_sub_agent(
+        reason="r", task_summary="s", tier="medium", task_packet={"objective": "x"}
+    )
+    assert "exit=error" in result
+
+    # Drain; SubAgentCompleted with exit_status='error' must be present.
+    events: list[Any] = []
+    while not bus._queue.empty():  # type: ignore[attr-defined]
+        events.append(bus._queue.get_nowait())  # type: ignore[attr-defined]
+    completed = [e for e in events if isinstance(e, SubAgentCompleted)]
+    assert len(completed) == 1
+    assert completed[0].exit_status == "error"
+
+
+# ---------- /spawns slash command ----------
+
+
+def test_spawns_slash_empty_state() -> None:
+    """`/spawns` with no active channels shows a clear empty-state line."""
+    from io import StringIO
+
+    from rich.console import Console
+
+    from jac.cli.slash import SlashContext, dispatch
+    from jac.runtime.session import Session
+
+    buf = StringIO()
+    console = Console(file=buf, force_terminal=False, width=160)
+    ctx = SlashContext(
+        console=console,
+        session=Session(session_id="s1", message_history=[]),
+        profile_name=None,
+        profile=None,
+        model_id="x",
+    )
+    dispatch("/spawns", ctx)
+    assert "no active sub-agents" in buf.getvalue()
+
+
+def test_spawns_slash_lists_active_channels() -> None:
+    """Populate _pending_channels directly and verify /spawns renders a
+    row per channel with spawn_id, tier/model, round-trips, objective."""
+    from io import StringIO
+
+    from rich.console import Console
+
+    from jac.cli.slash import SlashContext, dispatch
+    from jac.runtime.session import Session
+    from jac.runtime.sub_agent import _ResolvedTier
+
+    resolved = _ResolvedTier(
+        requested="medium",
+        resolved="medium",
+        model="anthropic:claude-sonnet-4-6",
+        cascaded=False,
+    )
+    _pending_channels["aabbccdd"] = SubAgentChannel(
+        spawn_id="aabbccdd",
+        resolved=resolved,
+        objective="summarize the auth module",
+    )
+    _pending_channels["aabbccdd"].round_trips = 2
+
+    buf = StringIO()
+    console = Console(file=buf, force_terminal=False, width=160)
+    ctx = SlashContext(
+        console=console,
+        session=Session(session_id="s1", message_history=[]),
+        profile_name=None,
+        profile=None,
+        model_id="x",
+    )
+    dispatch("/spawns", ctx)
+
+    out = buf.getvalue()
+    assert "active sub-agents" in out
+    assert "aabbccdd" in out
+    assert "medium" in out
+    # round-trips column shows N/cap
+    assert f"2/{_BIDIRECTIONAL_ROUND_TRIP_CAP}" in out
+    assert "summarize the auth module" in out
+
+
+def test_statusbar_spawns_segment_hidden_when_empty() -> None:
+    from jac.cli.statusbar import _format_spawns_segment
+
+    assert _format_spawns_segment() == ""
+
+
+def test_statusbar_spawns_segment_visible_when_parked() -> None:
+    from jac.cli.statusbar import _format_spawns_segment
+
+    _pending_channels["abc12345"] = SubAgentChannel(spawn_id="abc12345")
+    segment = _format_spawns_segment()
+    assert "spawns:" in segment
+    assert "1" in segment
 
 
 # Silence the "imported but unused" warning when the module-level access

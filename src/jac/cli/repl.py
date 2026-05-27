@@ -68,7 +68,11 @@ from jac.runtime.events import (
 from jac.runtime.gru import build_gru, sub_agent_capabilities
 from jac.runtime.hooks import make_hooks
 from jac.runtime.session import Session
-from jac.runtime.sub_agent import SubAgentCapability, set_sub_agent_capability
+from jac.runtime.sub_agent import (
+    SubAgentCapability,
+    set_sub_agent_capability,
+    set_sub_agent_event_bus,
+)
 from jac.runtime.sub_agent_usage import (
     reset_sub_agent_stats,
     set_sub_agent_usage_recorder,
@@ -390,6 +394,10 @@ async def _repl_loop(
         await usage_tracker.add_sub_agent(in_tokens, out_tokens, tier)
 
     set_sub_agent_usage_recorder(_record_sub_agent)
+    # Renderer hook for the D41 bidirectional flow: lifecycle events
+    # (SubAgentSpawned / Question / Answer / Completed) flow through the
+    # same bus the rest of the renderer already consumes.
+    set_sub_agent_event_bus(bus)
 
     # Status bar — the toolbar callable reads from this on every render.
     # We keep the same reference across the session and mutate fields in

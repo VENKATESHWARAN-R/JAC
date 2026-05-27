@@ -391,6 +391,52 @@ class A2AOutboundCompleted(JacEvent):
 
 
 @dataclass(frozen=True, slots=True)
+class SubAgentSpawned(JacEvent):
+    """A sub-agent worker started. Bidirectional path only — sequential
+    spawns rely on the existing ``ToolCallStarted`` line for visibility."""
+
+    spawn_id: str
+    tier: str
+    model: str
+    objective: str
+
+
+@dataclass(frozen=True, slots=True)
+class SubAgentQuestion(JacEvent):
+    """A parked sub-agent asked the main agent a question (D41).
+
+    Emitted at the moment the question lands on the channel's queue —
+    before the main agent has read the tool result, so the user sees the
+    question text in the scroll-back even if Gru's text reply is terse."""
+
+    spawn_id: str
+    question: str
+    round_trip: int
+
+
+@dataclass(frozen=True, slots=True)
+class SubAgentAnswer(JacEvent):
+    """The main agent replied to a sub-agent's question. Emitted from
+    ``respond_to_sub_agent`` *before* the answer is delivered to the
+    sub-agent so the scroll-back order is question → answer → next event."""
+
+    spawn_id: str
+    answer: str
+
+
+@dataclass(frozen=True, slots=True)
+class SubAgentCompleted(JacEvent):
+    """A bidirectional sub-agent worker reached its end (success, error,
+    or cap-then-finalize). Emitted after the final tagged result is
+    rendered so the user gets a clean per-spawn epilogue."""
+
+    spawn_id: str
+    exit_status: str
+    turns_used: int
+    ask_main_agent_count: int
+
+
+@dataclass(frozen=True, slots=True)
 class RunCompleted(JacEvent):
     """Terminal: ``agent.run()`` completed normally. Carries the final output."""
 
@@ -428,6 +474,10 @@ type JacEventT = (
     | A2AOutboundCall
     | A2AOutboundCompleted
     | A2AOutboundTokenMinted
+    | SubAgentSpawned
+    | SubAgentQuestion
+    | SubAgentAnswer
+    | SubAgentCompleted
     | RunCompleted
     | RunFailed
 )

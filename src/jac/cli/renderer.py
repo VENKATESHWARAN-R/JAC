@@ -48,6 +48,10 @@ from jac.runtime.events import (
     ProcessStarted,
     RunCompleted,
     RunFailed,
+    SubAgentAnswer,
+    SubAgentCompleted,
+    SubAgentQuestion,
+    SubAgentSpawned,
     ToolCallCompleted,
     ToolCallFailed,
     ToolCallStarted,
@@ -267,6 +271,62 @@ class CliRenderer:
             self.console.print(
                 f"[cyan][a2a token][/cyan] [dim]minted access token for "
                 f"[bold]{target}[/bold] (expires in {event.expires_in_s}s)[/dim]",
+                highlight=False,
+            )
+        elif isinstance(event, SubAgentSpawned):
+            # Bidirectional worker is running. Sequential spawns get
+            # visibility via the ToolCallStarted line above; this panel
+            # exists because bidirectional workers may park mid-run and
+            # the user needs to see the spawn_id to follow the conversation.
+            status.stop()
+            self.console.print(
+                Panel(
+                    f"[bold]objective:[/bold] {event.objective}",
+                    title=(
+                        f"[blue]▶ sub-agent[/blue] [bold]{event.spawn_id}[/bold] "
+                        f"[dim]· tier={event.tier} · {event.model}[/dim]"
+                    ),
+                    title_align="left",
+                    border_style="blue",
+                    padding=(0, 1),
+                )
+            )
+            status.start()
+        elif isinstance(event, SubAgentQuestion):
+            status.stop()
+            self.console.print(
+                Panel(
+                    event.question,
+                    title=(
+                        f"[yellow]⏸ sub-agent → main[/yellow] "
+                        f"[bold]{event.spawn_id}[/bold] "
+                        f"[dim]· round-trip {event.round_trip}[/dim]"
+                    ),
+                    title_align="left",
+                    border_style="yellow",
+                    padding=(0, 1),
+                )
+            )
+            status.start()
+        elif isinstance(event, SubAgentAnswer):
+            status.stop()
+            self.console.print(
+                Panel(
+                    event.answer,
+                    title=(f"[cyan]↩ main → sub-agent[/cyan] [bold]{event.spawn_id}[/bold]"),
+                    title_align="left",
+                    border_style="cyan",
+                    padding=(0, 1),
+                )
+            )
+            status.start()
+        elif isinstance(event, SubAgentCompleted):
+            exit_color = "green" if event.exit_status == "ok" else "red"
+            self.console.print(
+                f"[{exit_color}]✓ sub-agent[/{exit_color}] "
+                f"[bold]{event.spawn_id}[/bold] [dim]done · "
+                f"turns={event.turns_used} · exit={event.exit_status} · "
+                f"asks={event.ask_main_agent_count}[/dim]",
                 highlight=False,
             )
         elif isinstance(event, RunCompleted):

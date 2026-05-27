@@ -18,7 +18,7 @@ For deeper context:
 ## Agent Start Here
 
 - **Roadmap was reframed on 2026-05-26 around the cost-efficiency thesis.** Old Phase 3 (Skills with `mode: minion`), Phase 5 (Minion runtime), and Phase 6 (MCP) were archived to [`progress-archive-2026-05.md`](progress-archive-2026-05.md). Read [`architecture.md`](architecture.md) §0 and [`design/cost-efficient-orchestration.md`](design/cost-efficient-orchestration.md) before touching anything in Phases A–G.
-- **Current active work:** **Phase E.2 — Bidirectional comms (D41)**. E.1 (parallel spawn via `spawn_sub_agents`) landed this session; the highest-risk piece — `ask_main_agent` behind a feature flag — is the next slice. Phase C (deterministic hooks) was dropped — the complexity doesn't earn its keep given that `success_criteria` in the task packet and a post-return `run_shell` call already cover the verification use case without any framework machinery.
+- **Current active work:** **Phase E.2 — Bidirectional comms (D41)**. Implementation + tests landed on `phase-e-bidirectional-comms` (channel + `ask_main_agent` + `respond_to_sub_agent` + 5-round-trip cap with graceful finalize directive on the 6th ask + flag-gated capability wiring + flag-gated prompt addendum). Only manual UX validation with the flag flipped on remains before merge. E.1 (parallel spawn via `spawn_sub_agents`) was the prior slice. Phase C (deterministic hooks) was dropped — the complexity doesn't earn its keep given that `success_criteria` in the task packet and a post-return `run_shell` call already cover the verification use case without any framework machinery.
 - **Released:** v0.3.0 (Phases A + B, 2026-05-27) · v0.4.0 (Phase D skill loader, 2026-05-27).
 - **Terminology change:** "Minion" is retired. New name: **sub-agent**. If you touch old "minion" references in unrelated changes, rename in the same commit.
 - **A2A is feature-complete** for its v1 scope. Phase 4.e (OIDC/GCP) was demoted to Phase G; not urgent.
@@ -151,13 +151,18 @@ For deeper context:
 - [x] `gru_system.md` — new "When to call `spawn_sub_agents` (parallel)" section right after the single-spawn section
 - [x] Tests (10 new in `tests/test_sub_agent.py`): is_jac_tool + summarizable, structural depth cap, fail-fast no capability, reject empty list, gather happy path preserves order, partial failure doesn't kill batch, per-spawn cascade, unresolvable tier per-spawn surface, JSONL row per spawn
 
-### E.2 Bidirectional comms (D41) ⏸
+### E.2 Bidirectional comms (D41) 🚧
 
-- [ ] `settings.cost.sub_agent_bidirectional` flag (default `false`)
-- [ ] `ask_main_agent(reason, question, context)` tool registered in sub-agent toolset only when flag is on
-- [ ] 5-round-trip cap per spawn; Logfire warning at 3
-- [ ] Renderer markers `[sub-agent → main]` / `[main → sub-agent]`
-- [ ] Validation: ship the flag off; flip on after manual testing demonstrates no UX regressions
+- [x] `settings.cost.sub_agent_bidirectional` flag (default `false`), defaults.yaml entry
+- [x] `ask_main_agent(reason, question, context)` tool — registered in sub-agent toolset only when flag is on AND a channel is bound. Reads its channel via a contextvar so capability factories stay plain functions.
+- [x] `respond_to_sub_agent(reason, spawn_id, answer)` tool — registered on the main agent only when flag is on; **not** approval-gated (the parent spawn was already approved).
+- [x] `SubAgentChannel` (per-spawn queues + round_trip counter) + `_pending_channels` registry keyed by 8-hex `spawn_id`. Cleaned up on completion AND on session-end via `_reset_pending_channels`.
+- [x] 5-round-trip cap; **6th ask returns a graceful "finalize with what you have" directive** instead of erroring (per user refinement) — sub-agent always produces a coherent final answer.
+- [x] Logfire: span attrs `bidirectional`, `ask_main_agent_count`; warning at 3 (`warn_threshold`) and at cap (`cap_reached`).
+- [x] Renderer markers + Rich panels: dedicated `SubAgentSpawned` / `SubAgentQuestion` / `SubAgentAnswer` / `SubAgentCompleted` events on the bus, painted as Rich panels (blue spawn start with objective, yellow question, cyan answer, single-line green/red completed). `/spawns` slash command lists every parked channel. Status bar shows `spawns:N` segment when anything is in flight.
+- [x] Conditional prompt addendum `gru_bidirectional.md` appended to `gru_system.md` only when flag is on (we never describe tools the agent doesn't have). New section in `sub_agent_system.md` covering `ask_main_agent` use, the cap, and the finalize directive.
+- [x] Tests (21 new, all 48 sub-agent tests + 476 total green): capability wiring both flags, jac_tool surface, no-channel fail-fast, happy-path single round-trip, multi round-trip, cap → finalize directive, unknown / already-finished spawn_id error rendering, cancellation cleanup, round_trip counter behaviour, prompt addendum present/absent, lifecycle event order (Spawned → Question → Answer → Completed), sequential path emits no SubAgent* events, error path still emits Completed, `/spawns` empty + populated state, status bar segment visibility.
+- [ ] Validation: flag stays off in v1 ship; flip on after manual testing demonstrates no UX regressions.
 
 ### E.3 Polish (post-bidirectional)
 

@@ -151,6 +151,21 @@ class CostSettings(BaseModel):
     """Prompt sent to the small-tier model. Receives ``tool_name``,
     ``original_tokens``, ``output`` via ``str.format``."""
 
+    sub_agent_bidirectional: bool = False
+    """Bidirectional sub-agent ↔ main-agent comms (D41).
+
+    When ``True``, spawned sub-agents get an ``ask_main_agent`` tool and
+    the main agent gets ``respond_to_sub_agent``. The sub-agent can pause
+    mid-run, ask one focused clarifying question, and resume on the main
+    agent's reply. Hard cap is **5 round-trips per spawn**; a sixth call
+    returns a graceful "finalize with what you have" directive to the
+    sub-agent rather than raising — so the spawn always produces a
+    coherent final answer even if the conversation runs long.
+
+    Default ``False`` because every round-trip costs an extra main-agent
+    turn (full context, full toolset). Flip on once the UX has been
+    validated for your workflow."""
+
 
 class Settings(BaseSettings):
     """Top-level JAC configuration.
