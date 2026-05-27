@@ -1,6 +1,6 @@
 # JAC — Implementation Progress
 
-> **Just Another Companion/CLI** · **Updated:** 2026-05-26 · keep this in sync as work lands.
+> **Just Another Companion/CLI** · **Updated:** 2026-05-27 · keep this in sync as work lands.
 
 This file is the **live progress dashboard**: what is shipped, what is active, what should happen next. Short enough for an agent to read at the start of every task.
 
@@ -20,6 +20,7 @@ For deeper context:
 - **Roadmap was reframed on 2026-05-26 around the cost-efficiency thesis.** Old Phase 3 (Skills with `mode: minion`), Phase 5 (Minion runtime), and Phase 6 (MCP) were archived to [`progress-archive-2026-05.md`](progress-archive-2026-05.md). Read [`architecture.md`](architecture.md) §0 and [`design/cost-efficient-orchestration.md`](design/cost-efficient-orchestration.md) before touching anything in Phases A–G.
 - **Current active work:** Phase A — Context-cost foundation. A.1 (tool-result post-processor) and A.3 (`/tokens` breakdown) ✅ landed 2026-05-27. **Remaining: A.2 — prompt-cache audit of `build_instructions` + capability `get_instructions`.** Anthropic returns cache stats in `RunUsage`; `/tokens` now surfaces them, so A.2 progress is measurable.
 - **Nearest follow-up after A:** Phase B — `spawn_sub_agent` tool.
+- **Phase D — Skill loader: ✅ landed 2026-05-27** on the `phase-d-skill-loader` branch (developed independently). Loader + capability + `/skill list|use|reload` slash + 3 reference skills + A2A AgentCard integration all in.
 - **Terminology change:** "Minion" is retired. New name: **sub-agent**. If you touch old "minion" references in unrelated changes, rename in the same commit.
 - **A2A is feature-complete** for its v1 scope. Phase 4.e (OIDC/GCP) was demoted to Phase G; not urgent.
 - **Do not build yet without grooming:** v2 YOLO/sandboxing, CodeMode, stuck-loop, Night Shift.
@@ -41,7 +42,7 @@ For deeper context:
 | **Phase A — Context-cost foundation** | 🚧 Active | A.1 ✅ landed (post-processor + opt-in decorator + pricing gate + disk cache). A.3 ✅ landed (`/tokens` summarize + cache lines, REPL passes cache tokens). A.2 prompt-cache audit still TODO. |
 | Phase B — Sub-agent tool | ⏸ Next | `spawn_sub_agent` (D35), task packet (D36), tier-HITL (D39), depth cap = 1 (D40) |
 | Phase C — Deterministic hooks | ⏸ Queued | Per-spawn callables (D37); retry budget 3 |
-| Phase D — Skill loader | ⏸ Queued | Anthropic community format, no `mode: minion` (D21 revised) |
+| **Phase D — Skill loader** | ✅ Complete | Loader walks project/user/package; 2 KB prompt cap with name-only fallback; `load_skill` tool; `/skill list|use|reload`; 3 reference skills (`code-review`, `summarize-large-files`, `verify-change`); A2A AgentCard publishes loaded skills as `jac-skill-<name>` entries. |
 | Phase E — Parallel + bidirectional | ⏸ Future | Parallel spawn + D41 bidirectional comms feature flag |
 | Phase F — Plan Mode | ⏸ Future | Pulled forward from v2 (D23 promoted) |
 | Phase G — A2A 4.e + MCP + tests | ⏸ Future | OIDC/GCP A2A auth; MCP loader; broader test coverage |
@@ -130,19 +131,21 @@ For deeper context:
 
 ---
 
-## Queued — Phase D: Skill loader ⏸
+## Landed — Phase D: Skill loader ✅
 
-**Goal:** Anthropic community-format skills as loadable prompts. Skills are *advice the main agent reads when relevant*, not a runtime mode. Design: [`design/cost-efficient-orchestration.md`](design/cost-efficient-orchestration.md) §6.
+**Goal:** Anthropic community-format skills as loadable prompts. Skills are *advice the main agent reads when relevant*, not a runtime mode. Design: [`design/cost-efficient-orchestration.md`](design/cost-efficient-orchestration.md) §6. Landed 2026-05-27 on `phase-d-skill-loader`.
 
-- [ ] Frontmatter Pydantic model: `name`, `description`, optional `tools_required`
-- [ ] Loader walks `~/.jac/skills/` and `<repo>/.agents/skills/`; project shadows user
-- [ ] `SkillsCapability.get_instructions()` — publishes `name + description` for every skill; total ≤ 2 KB cap, truncates with a note if exceeded
-- [ ] `load_skill(reason, name)` tool — returns skill body as a user message in the next turn
-- [ ] `/skill use NAME` slash for explicit invocation
-- [ ] `/skill list` slash — shows installed skills + trigger conditions
-- [ ] Ship reference skills in `src/jac/data/skills/`: `code-review`, `summarize-large-files`, `verify-change`
-- [ ] AgentCard integration: loaded skills auto-appear in A2A's `skills:` list (was Phase 4.1 in old roadmap)
-- [ ] User-guide page: `docs/user-guide/skills.md`
+- [x] `SkillFrontmatter` Pydantic model: `name`, `description`, optional `tools_required` (informational only — never gates loading)
+- [x] Loader walks **three** locations — project > user > **package** — with the package source carrying shipped reference skills. **Every source contributes**: only same-name collisions trigger shadowing, and shadowed entries are kept in the catalog (`SkillCatalog.shadowed`) so they're visible via `/skill list`, not silently dropped. Mismatched name/folder, empty body, invalid YAML, bad name regex all log + skip cleanly.
+- [x] `SkillsCapability.get_instructions()` — publishes `name + description` for every active skill; re-rendered per request so `/skill reload` shows up without a Gru rebuild. 2 KB cap with name-only fallback when exceeded.
+- [x] `load_skill(reason, name)` tool — returns skill body as the tool's string result (becomes a tool message in history). Unknown-name errors enumerate the available skills so the model can self-correct.
+- [x] `/skill use NAME` — injects the body via a new `InjectUserText` slash result; REPL runs a real turn with the body as input.
+- [x] `/skill list` — Rich tables: **active** (name / source colour-coded / description / required tools) plus, when any exist, **shadowed** (name / source / shadowed-by / path) so overrides aren't invisible.
+- [x] `/skill reload` — re-scans on demand; reports added / removed / unchanged counts.
+- [x] Reference skills in `src/jac/data/skills/`: `code-review`, `summarize-large-files`, `verify-change`. Each references JAC-specific patterns (`spawn_sub_agent`, hooks, `just check`).
+- [x] AgentCard integration: loaded skills appended to A2A `skills:` list as `id: jac-skill-<name>`; generic skill remains as base advertisement. `skills_getter` on `A2ACapability` is a callable so `/skill reload` between server restarts is reflected on the next `/a2a serve`.
+- [x] User-guide page: `docs/user-guide/skills.md` + nav entry in `zensical.toml`.
+- [x] Tests (32 new in `tests/test_skills.py` + 5 new in `tests/test_a2a_card.py`): frontmatter validation, two-way + three-way shadowing (both surfaced via `SkillCatalog.shadowed`), distinct-name coexistence across all three sources, 2 KB cap behaviour, tool happy / unknown / no-skills-loaded, reload diff, slash list/use/reload + shadowed table, AgentCard publication.
 
 ---
 

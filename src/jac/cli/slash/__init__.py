@@ -25,6 +25,7 @@ from jac.cli.slash.registry import (
 from jac.cli.slash.result import (
     Exit,
     Handled,
+    InjectUserText,
     RebuildGru,
     SlashResult,
     StartA2AServer,
@@ -36,6 +37,7 @@ __all__ = [
     "SLASH_COMMANDS",
     "Exit",
     "Handled",
+    "InjectUserText",
     "RebuildGru",
     "SlashCommand",
     "SlashContext",

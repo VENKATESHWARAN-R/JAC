@@ -10,9 +10,12 @@ Asserts:
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from fasta2a.schema import agent_card_ta
 
 from jac.capabilities.a2a.card import build_agent_card, card_to_summary
+from jac.capabilities.skills import LoadedSkill, SkillFrontmatter
 
 
 def test_card_name_includes_profile():
@@ -88,3 +91,89 @@ def test_summary_pulls_human_relevant_fields():
 def test_summary_marks_unsafe_no_auth():
     card = build_agent_card(profile_name="x", base_url="http://127.0.0.1:8001", unsafe=True)
     assert card_to_summary(card)["auth"] == "none"
+
+
+# ---------- loaded-skills publication (Phase D / D21) ----------------
+
+
+def _fake_skill(name: str, *, source: str = "package", tools_required=None) -> LoadedSkill:
+    return LoadedSkill(
+        frontmatter=SkillFrontmatter(
+            name=name,
+            description=f"do {name} things",
+            tools_required=list(tools_required or []),
+        ),
+        body=f"# {name}\n\nbody",
+        source=source,  # type: ignore[arg-type]
+        path=Path(f"/fake/{name}/SKILL.md"),
+    )
+
+
+def test_loaded_skills_appended_to_card():
+    """Each loaded skill becomes an additional A2A Skill entry; generic stays."""
+    loaded = {
+        "code-review": _fake_skill("code-review", source="package"),
+        "verify-change": _fake_skill("verify-change", source="user"),
+    }
+    card = build_agent_card(
+        profile_name="x",
+        base_url="http://127.0.0.1:8001",
+        unsafe=False,
+        loaded_skills=loaded,
+    )
+    skill_ids = {s["id"] for s in card["skills"]}
+    assert "jac-coding-assistant" in skill_ids  # generic always present
+    assert "jac-skill-code-review" in skill_ids
+    assert "jac-skill-verify-change" in skill_ids
+
+
+def test_loaded_skill_tags_carry_source():
+    loaded = {"alpha": _fake_skill("alpha", source="project", tools_required=["read_file"])}
+    card = build_agent_card(
+        profile_name="x",
+        base_url="http://127.0.0.1:8001",
+        unsafe=False,
+        loaded_skills=loaded,
+    )
+    alpha = next(s for s in card["skills"] if s["id"] == "jac-skill-alpha")
+    assert "project" in alpha["tags"]
+    assert "read_file" in alpha["tags"]
+    assert alpha["examples"] == ["read_file"]
+
+
+def test_no_loaded_skills_is_equivalent_to_no_arg():
+    """Passing an empty dict must behave the same as omitting the param."""
+    a = build_agent_card(profile_name="x", base_url="http://127.0.0.1:8001", unsafe=False)
+    b = build_agent_card(
+        profile_name="x", base_url="http://127.0.0.1:8001", unsafe=False, loaded_skills={}
+    )
+    assert [s["id"] for s in a["skills"]] == [s["id"] for s in b["skills"]]
+
+
+def test_loaded_skills_are_sorted_deterministically():
+    loaded = {
+        "zeta": _fake_skill("zeta"),
+        "alpha": _fake_skill("alpha"),
+        "mu": _fake_skill("mu"),
+    }
+    card = build_agent_card(
+        profile_name="x",
+        base_url="http://127.0.0.1:8001",
+        unsafe=False,
+        loaded_skills=loaded,
+    )
+    # First entry is the generic skill; the rest are sorted by name.
+    skill_names = [s["id"] for s in card["skills"][1:]]
+    assert skill_names == ["jac-skill-alpha", "jac-skill-mu", "jac-skill-zeta"]
+
+
+def test_card_with_loaded_skills_still_validates():
+    loaded = {"alpha": _fake_skill("alpha", tools_required=["x", "y"])}
+    card = build_agent_card(
+        profile_name="x",
+        base_url="http://127.0.0.1:8001",
+        unsafe=False,
+        loaded_skills=loaded,
+    )
+    payload = agent_card_ta.dump_json(card, by_alias=True)
+    agent_card_ta.validate_json(payload)  # raises on schema drift

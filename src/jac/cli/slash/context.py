@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from rich.console import Console
 
 from jac.capabilities.a2a import A2ACapability
+from jac.capabilities.skills import SkillsCapability
 from jac.profiles import Profile
 from jac.runtime.session import Session
 from jac.runtime.usage import UsageTracker
@@ -54,3 +55,8 @@ class SlashContext:
     """A2A subsystem capability (D24, Phase 4). ``/a2a serve|stop|status|token``
     read and mutate its state. ``None`` in tests that don't exercise the
     A2A surface and in non-REPL contexts."""
+
+    skills: SkillsCapability | None = None
+    """Skill loader capability (D21, Phase D). ``/skill list|use|reload``
+    read from it; ``/skill reload`` mutates its in-memory catalog. ``None``
+    in tests that don't exercise the skills surface."""

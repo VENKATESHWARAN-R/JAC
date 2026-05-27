@@ -35,10 +35,12 @@ from jac.capabilities.clarify import make_clarify_capability
 from jac.capabilities.history import estimate_text_tokens, estimate_tokens
 from jac.capabilities.plan import make_plan_capability
 from jac.capabilities.process import make_process_capability
+from jac.capabilities.skills import make_skills_capability
 from jac.cli._a2a_banner import print_server_started_banner
 from jac.cli.renderer import CliRenderer
 from jac.cli.slash import (
     Exit,
+    InjectUserText,
     RebuildGru,
     SlashContext,
     StartA2AServer,
@@ -290,6 +292,14 @@ async def _repl_loop(
             model=None,  # filled after settings.model resolves below
             profile_name=profile_name,
         )
+        # Skill loader (Phase D / D21). Discovers community-format skills
+        # from project / user / package directories at construction. The
+        # REPL holds a reference so /skill list|use|reload can read +
+        # mutate the catalog without a Gru rebuild.
+        skills_capability = make_skills_capability()
+        # Lambda so /skill reload mid-session is reflected when a future
+        # /a2a serve restarts the guest server's AgentCard.
+        a2a_capability.skills_getter = lambda: skills_capability.skills
         gru = build_gru(
             model_override=model_override,
             extra_capabilities=[
@@ -299,6 +309,7 @@ async def _repl_loop(
                 process_capability,
                 clarify_capability,
                 a2a_capability,
+                skills_capability,
             ],
             bus=bus,
             summarizer_model=_resolve_summarizer_model(profile_name),
@@ -385,6 +396,7 @@ async def _repl_loop(
         process_capability,
         clarify_capability,
         a2a_capability,
+        skills_capability,
     ]
     user_prompt = HTML("<ansiyellow><b>» </b></ansiyellow>")
     try:
@@ -411,6 +423,7 @@ async def _repl_loop(
                     model_id=model_id,
                     usage_tracker=usage_tracker,
                     a2a=a2a_capability,
+                    skills=skills_capability,
                 )
                 try:
                     result = dispatch(text, ctx)
@@ -483,6 +496,24 @@ async def _repl_loop(
                     await _handle_start_a2a(a2a_capability, result)
                 elif isinstance(result, StopA2AServer):
                     await _handle_stop_a2a(a2a_capability)
+                elif isinstance(result, InjectUserText):
+                    # Fall through into the normal turn flow with the
+                    # synthesized text — budget checks + persistence apply
+                    # the same way a real user prompt would.
+                    text = result.text
+                    if await _refuse_if_over_budget(bus, message_history, text):
+                        continue
+                    if await _refuse_if_over_token_budget(bus, usage_tracker):
+                        continue
+                    message_history = await _run_turn(
+                        gru, bus, text, message_history, usage_tracker
+                    )
+                    status.message_history = message_history
+                    status.budget_pct = usage_tracker.status_pct()
+                    try:
+                        session.save(message_history)
+                    except OSError as exc:
+                        console.print(f"[yellow]warning:[/yellow] session save failed: {exc}")
                 continue
 
             if await _refuse_if_over_budget(bus, message_history, text):

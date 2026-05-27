@@ -25,8 +25,9 @@ is a real use case for cross-repo coworking).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models import Model
@@ -39,6 +40,9 @@ from jac.profiles import A2APeerConfig
 from jac.runtime.events import A2AServerStopped, EventBus
 from jac.runtime.usage import UsageTracker
 from jac.tools import jac_function_toolset
+
+if TYPE_CHECKING:
+    from jac.capabilities.skills import LoadedSkill
 
 __all__ = [
     "A2ACapability",
@@ -101,6 +105,15 @@ class A2ACapability(AbstractCapability[Any]):
     ``project_total`` but NOT ``session_total`` (D24). ``None`` in
     headless mode and in tests — inbound usage still lands in
     ``inbound.jsonl``'s ``tokens_used`` field either way."""
+
+    skills_getter: Callable[[], dict[str, LoadedSkill]] | None = None
+    """Live accessor for the loaded community-format skills (Phase D / D21).
+
+    Read at :meth:`start_server` time to enrich the AgentCard. A callable
+    (not a snapshot dict) so ``/skill reload`` between server restarts
+    is reflected on the next ``/a2a serve``. ``None`` when no skills
+    capability is wired (headless servers, tests) — the card falls back
+    to the generic skill only."""
 
     server: A2AServer | None = field(default=None, init=False, repr=False)
     _strategy_cache: dict[int, AuthStrategy] = field(default_factory=dict, init=False, repr=False)
@@ -237,12 +250,14 @@ class A2ACapability(AbstractCapability[Any]):
             )
 
         guest_agent = build_guest_gru(model=self.model)
+        loaded_skills = self.skills_getter() if self.skills_getter is not None else None
         server = A2AServer(
             guest_agent=guest_agent,
             bus=self.bus,
             profile_name=self.profile_name,
             retention_days=self.retention_days,
             usage_tracker=self.usage_tracker,
+            loaded_skills=loaded_skills,
         )
         info = await server.start(host=host, port=port, unsafe=unsafe)
         self.server = server

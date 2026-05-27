@@ -80,4 +80,27 @@ class StopA2AServer:
     """
 
 
-SlashResult = Handled | Exit | SwitchSession | RebuildGru | StartA2AServer | StopA2AServer
+@dataclass(frozen=True)
+class InjectUserText:
+    """REPL should run an agent turn as if the user had typed ``text``.
+
+    Returned by slash commands that want to push synthesized content into
+    the conversation — today only ``/skill use NAME``, which injects the
+    body of a loaded skill so the model can act on its guidance without
+    the user re-pasting it.
+
+    The injected text is **not** echoed as a prompt line; the REPL
+    proceeds straight to a turn. Budget and compaction pre-flight checks
+    still apply, so a skill body that pushes context over the refuse
+    threshold gets blocked the same way a user paste would.
+
+    Attributes:
+        text: Verbatim string to feed to the agent as the next user message.
+    """
+
+    text: str
+
+
+SlashResult = (
+    Handled | Exit | SwitchSession | RebuildGru | StartA2AServer | StopA2AServer | InjectUserText
+)
