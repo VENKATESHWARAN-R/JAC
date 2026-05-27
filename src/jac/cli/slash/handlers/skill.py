@@ -22,11 +22,14 @@ and returns ``Handled`` rather than crashing.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from rich.table import Table
 
 from jac.cli.slash.context import SlashContext
 from jac.cli.slash.registry import register
 from jac.cli.slash.result import Handled, InjectUserText, SlashResult
+from jac.workspace import paths
 
 _USAGE = "/skill {list | use NAME | reload}"
 
@@ -121,7 +124,7 @@ def _handle_list(ctx: SlashContext, rest: str) -> SlashResult:
                 skill.name,
                 _source_styled(skill.source),
                 winner,
-                str(skill.path),
+                _display_skill_path(skill.path),
             )
         ctx.console.print(shadow_table)
     return Handled()
@@ -200,3 +203,31 @@ _SOURCE_STYLES: dict[str, str] = {
 
 def _source_styled(source: str) -> str:
     return _SOURCE_STYLES.get(source, source)
+
+
+def _display_skill_path(path: Path) -> str:
+    """Canonical location string for ``/skill list`` tables.
+
+    Absolute paths fold badly in narrow terminals (Rich splits mid-path,
+    so assertions like ``.jac/skills/foo/SKILL.md`` fail even though the
+    row is present). Map known skill roots to the same paths we document
+    for operators: ``~/.jac/skills/…``, ``.agents/skills/…``, etc.
+    """
+    resolved = path.resolve()
+    try:
+        rel = resolved.relative_to(paths.USER_SKILLS_DIR.resolve())
+        return f"~/.jac/skills/{rel.as_posix()}"
+    except ValueError:
+        pass
+    if paths.is_in_project_repo():
+        try:
+            rel = resolved.relative_to(paths.project_skills_dir().resolve())
+            return f".agents/skills/{rel.as_posix()}"
+        except ValueError:
+            pass
+    try:
+        rel = resolved.relative_to(paths.package_skills_dir().resolve())
+        return f"<package>/skills/{rel.as_posix()}"
+    except ValueError:
+        pass
+    return str(path)

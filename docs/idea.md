@@ -102,9 +102,9 @@ Full phase checklist: [`progress.md`](progress.md). Locked decisions: [`architec
 
 ## v2 — explicitly deferred
 
-- YOLO mode with native sandboxing (Monty + `sandbox-exec` / `bwrap`)
-- CodeMode integration (`pydantic-ai-harness`)
-- Stuck-loop detection
+- YOLO mode with native sandboxing via direct `pydantic-monty` (D43) — NOT Docker, NOT CodeMode wrapper
+- Stuck-loop detection (watch Harness PR #186)
 - Night Shift / cron-triggered headless runs
 - User-tier predict-calibrate memory extraction (the `~/.jac/memory.md` file exists; automatic extraction is v2)
-- Browser / API / SDK surfaces
+- **ACP — editor surface (D45, condition-gated)** — `ACPCapability` implementing the [Agent Client Protocol](https://agentclientprotocol.com) so VS Code / Zed / JetBrains can reach JAC through a standard editor-agent protocol instead of bespoke extensions. Ships when ACP remote transport stabilises and a major editor ships an ACP client.
+- Other browser / native SDK surfaces (post-ACP)

@@ -73,3 +73,14 @@ indent-style = "space"
 [tool.ty.environment]
 root = ["./src"]
 python-version = "3.13"
+
+# ---------------------------------------------------------------------------
+# pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+filterwarnings = [
+    # uvicorn's WebSocket stack still imports websockets.legacy (websockets>=14).
+    # Harmless for our HTTP-only A2A smoke test; drop when uvicorn migrates.
+    "ignore:websockets\\.legacy is deprecated:DeprecationWarning",
+    "ignore:websockets\\.server\\.WebSocketServerProtocol is deprecated:DeprecationWarning",
+]

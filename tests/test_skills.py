@@ -379,8 +379,8 @@ def test_slash_skill_list_surfaces_shadowed(isolated_skills: Path) -> None:
     assert "shadowed" in output.lower()
     # The active project version + the shadowed user version both appear.
     assert "project one" in output
-    # Path of the shadowed entry shows up in the shadow table.
-    assert ".jac/skills/shared/SKILL.md" in output
+    # Canonical user-skill path (not the absolute tmp dir) shows in the shadow table.
+    assert "~/.jac/skills/shared/SKILL.md" in output
 
 
 def test_slash_skill_use_returns_inject(isolated_skills: Path) -> None:

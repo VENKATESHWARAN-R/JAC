@@ -134,12 +134,109 @@ These are flagged under `architecture.md` §5 "Still open":
 1. **Sub-agent file system semantics** — Phase B grooming sub-item. Current lean: same toolset as main, same filesystem view, HITL per-tool. File writes still go through approval the same way the main agent's do.
 2. **Logfire UX for nested traces** — depth cap of 1 (D40) bounds the chain in v1. Richer nested rendering is a future concern.
 
+## ACP — Editor surface (v2, condition-gated, D45)
+
+### What ACP is
+
+[Agent Client Protocol](https://agentclientprotocol.com) is a standardisation layer for editor ↔ coding agent communication — the same role LSP plays for language tooling. One spec; any compliant agent works with any compliant editor without bespoke per-pair integrations. Maintained by Sergey Ignatov (JetBrains) under an RFD (Requests for Dialog) governance process with dedicated Working Groups. Spec is OpenAPI format. Python, TypeScript, Java, Kotlin, and Rust SDKs exist.
+
+Wire: **JSON-RPC over stdio** for local agents (agent runs as an editor subprocess); **HTTP or WebSocket** for remote agents (explicitly marked WIP as of 2026-05-27). An **ACP Registry** handles agent discovery and installation.
+
+### Where ACP sits in the protocol landscape
+
+JAC is building across three complementary agent protocols, each covering a different relationship:
+
+```
+         [Editor — VS Code / Zed / JetBrains]
+                        ↕ ACP (D45)
+                    [JAC / Gru]
+               ↕ MCP (Phase F)    ↕ A2A (Phase 4, complete)
+           [External tools]      [Other agents / peers]
+```
+
+- **MCP** (Phase F, D28): agent → tool. External tool servers plug their capabilities *into* JAC.
+- **A2A** (complete, D24): agent ↔ agent. JAC talks to peer agents and receives inbound tasks from them.
+- **ACP** (v2, D45): editor → agent. Editors reach JAC through a standardised protocol instead of a bespoke CLI or extension.
+
+These three do not overlap. Shipping ACP completes the triangle. The protocols are also composable: ACP documents "MCP-over-ACP" as a transport, so an editor using ACP to reach JAC automatically gains access to JAC's MCP tools through the same connection.
+
+### Why ACP fits JAC better than alternatives
+
+| Approach | Why it doesn't work |
+|---|---|
+| Bespoke VS Code extension | Custom code per editor; breaks the moment Zed or JetBrains users appear |
+| Expose JAC as MCP server | MCP is tool-centric (request/response); lacks sessions, streaming turns, HITL approvals, diffs — wrong shape for a coding agent |
+| Expose JAC via A2A | A2A is agent-to-agent (structured task delegation); no concept of a human editor session in the loop |
+| ACP | Designed exactly for editor → coding agent; has sessions, turns, tool call surfacing, slash commands, terminals, diffs |
+
+### Protocol features that map directly to JAC
+
+| ACP concept | JAC equivalent | Notes |
+|---|---|---|
+| Session create / resume / list / fork / close | D3 session filesystem, `--resume`, `jac sessions` | Near-identical semantics — the filesystem layout maps cleanly |
+| Prompt turn (multi-turn conversation) | Pydantic AI agent loop, history persistence | Already the core of Gru |
+| Tool calls surfaced to client | D2 HITL approval flow | Today: terminal prompt. Under ACP: editor approval UI — same event, different renderer |
+| Slash commands | `/plan`, `/tokens`, `/skill`, `/model`, `/mcp`, etc. | Already a first-class JAC concept |
+| Terminals | `run_shell` / `ProcessCapability` (D16) | Direct mapping |
+| Filesystem content blocks + diffs | `read_file`, `edit_file`, `grep` | Diffs are exactly what JAC produces from edit operations |
+| Authentication | Keyring / bearer-token (D13) | ACP has an auth lifecycle; slots into existing secrets model |
+| Agent discovery | A2A AgentCard (D24) + future ACP Registry entry | ACP Registry is the editor-facing equivalent of the A2A AgentCard |
+| Usage / context status | D25 budget tracking, `/tokens` | ACP's "usage/context status" is the same data we already expose |
+| Session configuration | Profile system (D22), layered config (D9) | Profile → tier selection would be exposed as session config options |
+
+The HITL approval flow is the most transformative mapping. Under the CLI today, a user sees a blocking terminal prompt. Under ACP, that same event becomes an editor-native approval widget — "click to allow JAC to write this file" — the UX Claude Code users know. That one mapping turns the extension from a chat panel into a real coding agent.
+
+### Implementation design sketch
+
+The pattern mirrors `A2ACapability` — a single `ACPCapability` that wraps the Python ACP SDK and adapts JAC's event bus to the ACP session/turn model.
+
+```
+Editor (ACP client, generic)
+         ↕  ACP protocol  (JSON-RPC stdio locally; HTTP/WS remotely)
+ACPCapability (JAC-side server wrapper)
+         ↕  JAC event bus (Hooks, asyncio.Queue)
+Gru (unchanged agent loop)
+```
+
+Key points:
+
+- `ACPCapability` registers with JAC's capability system identically to `A2ACapability`. The existing agent loop, tools, HITL flow, and event bus change nothing.
+- Sessions map to D3 — ACP session IDs become session folder names; `--resume` is ACP session resume.
+- Tool call events from the HITL queue become ACP `tool_call` messages to the client; the client's approval response resolves the `asyncio.Future` the same way the CLI renderer does today.
+- Slash commands are registered as ACP slash commands — the same handlers run.
+- Diffs from file-edit operations are wrapped in ACP's diff content block type.
+- The VS Code extension, Zed extension, and JetBrains plugin are all **generic ACP clients**, not JAC-specific. We write the server side once; editor-side adapters are thin and potentially community-maintained.
+
+### Conditions for shipping (all must be met)
+
+1. **ACP remote transport stabilises.** The HTTP/WebSocket path (needed for cloud-hosted JAC or "JAC started outside the editor") is explicitly WIP. Wait for a stable release before building our server side around it. The stdio path is stable today but limits use to local agent-as-subprocess.
+2. **At least one major editor ships an ACP client.** The LSP analogy only pays off if editors adopt the client side. Watch for VS Code's extension marketplace or Zed's extension API getting an official ACP client. If JetBrains (Sergey Ignatov's employer) ships one, that's the trigger — JetBrains has real distribution. Either signal is sufficient.
+3. **Phases E–G complete.** ACP is a new surface on top of the core agent. Ship core quality first; surfaces after.
+
+Until all three conditions are met, this stays v2 but *named and tracked* — not buried in "Browser / API / SDK surfaces".
+
+### Concerns and open questions
+
+- **Remote WIP.** The stdio path is functionally stable but means the editor must launch JAC as a subprocess. For users who run JAC as a long-lived background process (or cloud-hosted), the HTTP/WS path must land upstream first.
+- **Adoption risk.** ACP is newer than MCP and A2A. If editors don't ship ACP clients, the server side has no audience. The JetBrains maintainership is the main positive signal; watch their IDE releases.
+- **ACP vs MCP for editor tools.** There's a grey area where some editor integrations could also use MCP. ACP is richer (sessions, turns, HITL, diffs) and the right choice for "JAC as your coding agent"; MCP is right for "JAC exposes individual tools". These don't conflict.
+- **Spec changes.** ACP is pre-1.0. The Python SDK API may shift before stabilisation. Build only after the transport working group finalises the remote spec.
+
+### References
+
+- Spec + docs: [agentclientprotocol.com](https://agentclientprotocol.com)
+- Intro: [agentclientprotocol.com/get-started/introduction](https://agentclientprotocol.com/get-started/introduction)
+- `llms.txt` (full spec index): [agentclientprotocol.com/llms.txt](https://agentclientprotocol.com/llms.txt)
+- Locked decision: D45 in `architecture.md` §5
+
+---
+
 ## v2 ⏸
 
-Updated 2026-05-27 with the Monty isolation decision (D43) and the Harness reuse list above:
+Updated 2026-05-27 with Monty isolation (D43), Harness reuse list, and ACP editor surface (D45):
 
-- YOLO mode + **sandboxing via direct `pydantic-monty` (D43)** — embedded Rust interpreter; microsecond cold start; zero-grant default (no fs/net/env until we register external functions). NOT `sandbox-exec` / `bwrap` (OS-specific, leaks host details), NOT Docker (network call + cold-start seconds + external dep), NOT `CodeExecutionToolset` from `pydantic-ai-harness` (wraps Monty but imposes a "write code, don't call tools" model that conflicts with JAC's per-tool HITL UX). Implementation sketch: `MontyShellCapability` that opt-in routes `run_shell` (and later mutating filesystem tools) through `pydantic_monty.Monty` with our existing toolset registered as external functions. Git-Clean Guard still required before YOLO entry. Uses `ModeCapability`'s `approval_override` knob from Phase G.
+- **YOLO mode + sandboxing via direct `pydantic-monty` (D43)** — embedded Rust interpreter; microsecond cold start; zero-grant default (no fs/net/env until we register external functions). NOT `sandbox-exec` / `bwrap` (OS-specific, leaks host details), NOT Docker (network call + cold-start seconds + external dep), NOT `CodeExecutionToolset` from `pydantic-ai-harness` (wraps Monty but imposes a "write code, don't call tools" model that conflicts with JAC's per-tool HITL UX). Implementation sketch: `MontyShellCapability` that opt-in routes `run_shell` (and later mutating filesystem tools) through `pydantic_monty.Monty` with our existing toolset registered as external functions. Git-Clean Guard still required before YOLO entry. Uses `ModeCapability`'s `approval_override` knob from Phase G.
+- **ACP — editor surface (D45)** — `ACPCapability` wrapping the Python ACP SDK; sessions, turns, HITL approvals, slash commands, diffs exposed over ACP. VS Code / Zed / JetBrains extensions become generic ACP clients, not JAC-specific. **Condition-gated:** ACP remote transport must stabilise AND at least one major editor ships an ACP client. Full design: "ACP — Editor surface" section above.
 - Stuck-loop detection (defer decision pending Harness #186).
 - Night Shift / cron scheduling.
-- User-tier memory + predict-calibrate extraction.
-- Browser / API / SDK surfaces.
+- User-tier memory + predict-calibrate extraction (the `~/.jac/memory.md` file exists; automatic extraction deferred).

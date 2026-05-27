@@ -47,7 +47,7 @@ For deeper context:
 | Phase G — Plan Mode | ⏸ Future | Pulled forward from v2 (D23 promoted); demoted from old Phase F to follow MCP |
 | Phase H — A2A 4.e + broader tests | ⏸ Future | OIDC/GCP A2A auth; broader test coverage; eval-loop work tracked under Phase 7 |
 | v0.2 source restructuring | ✅ Complete | released as v0.2.0 |
-| v2 | ⏸ Future | YOLO + **direct `pydantic-monty` sandbox** (D43) + Stuck-loop + Night Shift + user-tier predict-calibrate memory |
+| v2 | ⏸ Future | YOLO + **direct `pydantic-monty` sandbox** (D43) + **ACP editor surface** (D45, condition-gated) + Stuck-loop + Night Shift + user-tier memory |
 
 ---
 
@@ -196,7 +196,8 @@ For deeper context:
 - [ ] Stuck-loop detection
 - [ ] Night Shift / cron scheduling
 - [ ] User-tier memory + predict-calibrate extraction (the `~/.jac/memory.md` file exists; automatic extraction deferred)
-- [ ] Browser / API / SDK surfaces
+- [ ] **ACP — editor surface (D45, condition-gated)** — `ACPCapability` wrapping the Python [ACP SDK](https://agentclientprotocol.com); sessions (maps to D3), prompt turns, HITL approvals surfaced as ACP tool-call events, slash commands, terminals, diffs. VS Code / Zed / JetBrains extensions become generic ACP clients — we write the server once. **Two conditions before building:** (1) ACP remote HTTP/WebSocket transport stabilises (currently WIP); (2) at least one major editor ships an ACP client. Full design: [`progress-roadmap.md`](progress-roadmap.md) "ACP — Editor surface" section.
+- [ ] Other browser / native SDK surfaces (post-ACP, if needed)
 
 ---
 

@@ -155,10 +155,11 @@ Phases in dependency order:
 What's still genuinely v2:
 
 - YOLO mode + sandboxing via direct `pydantic-monty` (D43) + Git-Clean Guard. **Decided 2026-05-27:** adopt the Monty library directly (Rust-written minimal Python interpreter; microsecond cold start; zero-grant default), NOT Docker, NOT `sandbox-exec` / `bwrap`, NOT `pydantic-ai-harness`'s `CodeExecutionToolset` wrapper (which forces a "write code instead of call tools" model that conflicts with JAC's per-tool HITL UX).
+- **ACP — editor surface (D45, condition-gated).** `ACPCapability` wrapping the Python [ACP SDK](https://agentclientprotocol.com). ACP is the LSP analogue for coding agents — one spec, any compliant editor. VS Code / Zed / JetBrains extensions become generic ACP clients; JAC writes the server once. **Two conditions before building:** (1) ACP remote HTTP/WebSocket transport stabilises (currently WIP); (2) at least one major editor ships an ACP client. Full design in [`docs/progress-roadmap.md`](docs/progress-roadmap.md) "ACP — Editor surface" section and locked in D45.
 - Stuck-loop detection — low value in HITL; mandatory only for YOLO. (Watch Harness PR #186.)
 - Night Shift / cron-triggered headless runs.
 - User-tier predict-calibrate memory extraction (the `~/.jac/memory.md` *file* already exists per Phase 2a.1; what's deferred is *automatic extraction*).
-- Browser / API / SDK surfaces.
+- Other browser / native SDK surfaces (post-ACP).
 
 **Harness alignment policy:** several JAC capabilities overlap with `pydantic-ai-harness` PRs (sub-agents #178, skills #183, compaction #191, post-processor #185, budgets #182, etc.). Today they're PR-tracked in Harness, shipped in JAC. **We keep ours** because they're tightly coupled to JAC's HITL / `/tokens` UX and instrumentation; we revisit migration only when a Harness PR lands a clean stable API. **We don't reinvent** infrastructure with no UX (`pydantic-monty` for sandboxing; pydantic-ai's `ApprovalRequiredToolset`/`deferred_tool_calls`/`Instrumentation`/`ProcessHistory`). Full reuse-vs-build table: [`docs/progress-roadmap.md`](docs/progress-roadmap.md) "Harness alignment" section.
 
