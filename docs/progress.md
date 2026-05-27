@@ -18,9 +18,8 @@ For deeper context:
 ## Agent Start Here
 
 - **Roadmap was reframed on 2026-05-26 around the cost-efficiency thesis.** Old Phase 3 (Skills with `mode: minion`), Phase 5 (Minion runtime), and Phase 6 (MCP) were archived to [`progress-archive-2026-05.md`](progress-archive-2026-05.md). Read [`architecture.md`](architecture.md) §0 and [`design/cost-efficient-orchestration.md`](design/cost-efficient-orchestration.md) before touching anything in Phases A–G.
-- **Current active work:** Phases A + B both ✅ **complete and tagged v0.3.0** (2026-05-27). Next up: **Phase C — Deterministic hooks** (post-flight validators for sub-agents). Read `design/cost-efficient-orchestration.md` §5; the `HookSpec` / `HookResult` Pydantic models already exist in `jac.runtime.sub_agent` so the surface is locked.
-- **Nearest follow-up after A:** Phase B — `spawn_sub_agent` tool.
-- **Phase D — Skill loader: ✅ landed 2026-05-27** on the `phase-d-skill-loader` branch (developed independently). Loader + capability + `/skill list|use|reload` slash + 3 reference skills + A2A AgentCard integration all in.
+- **Current active work:** **Phase C — Deterministic hooks** (post-flight validators for sub-agents). Read `design/cost-efficient-orchestration.md` §5; the `HookSpec` / `HookResult` Pydantic models already exist in `jac.runtime.sub_agent` so the surface is locked.
+- **Released:** v0.3.0 (Phases A + B, 2026-05-27) · v0.4.0 (Phase D skill loader, 2026-05-27).
 - **Terminology change:** "Minion" is retired. New name: **sub-agent**. If you touch old "minion" references in unrelated changes, rename in the same commit.
 - **A2A is feature-complete** for its v1 scope. Phase 4.e (OIDC/GCP) was demoted to Phase G; not urgent.
 - **Do not build yet without grooming:** v2 YOLO/sandboxing, CodeMode, stuck-loop, Night Shift.
@@ -42,7 +41,7 @@ For deeper context:
 | **Phase A — Context-cost foundation** | ✅ Complete (v0.3.0) | A.1 post-processor + A.2 prompt-cache fix + A.3 `/tokens` breakdown all landed 2026-05-27. Biggest single-session cost win shipped. |
 | Phase B — Sub-agent tool | ✅ Complete (v0.3.0) | `spawn_sub_agent`, packet model, tier cascade (small→medium→large, never down), depth cap = 1 structural, HITL via existing approval flow, UsageTracker.add_sub_agent + JSONL `kind=sub_agent:<tier>`, `/tokens` line. Hooks shape locked, runner stubbed (Phase C). |
 | Phase C — Deterministic hooks | ⏸ Queued | Per-spawn callables (D37); retry budget 3 |
-| **Phase D — Skill loader** | ✅ Complete | Loader walks project/user/package; 2 KB prompt cap with name-only fallback; `load_skill` tool; `/skill list|use|reload`; 3 reference skills (`code-review`, `summarize-large-files`, `verify-change`); A2A AgentCard publishes loaded skills as `jac-skill-<name>` entries. |
+| **Phase D — Skill loader** | ✅ Complete (v0.4.0) | Loader walks project/user/package; 2 KB prompt cap with name-only fallback; `load_skill` tool; `/skill list|use|reload`; 3 reference skills (`code-review`, `summarize-large-files`, `verify-change`); A2A AgentCard publishes loaded skills as `jac-skill-<name>` entries. |
 | Phase E — Parallel + bidirectional | ⏸ Future | Parallel spawn + D41 bidirectional comms feature flag |
 | Phase F — Plan Mode | ⏸ Future | Pulled forward from v2 (D23 promoted) |
 | Phase G — A2A 4.e + MCP + tests | ⏸ Future | OIDC/GCP A2A auth; MCP loader; broader test coverage |

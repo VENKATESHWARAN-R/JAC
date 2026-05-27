@@ -9,7 +9,42 @@ All notable changes to JAC are documented here. Format follows
 ### In flight
 
 - Phase 4 A2A PR4–PR5 (guest token budgets, richer `/a2a status`, retention timer, OIDC/GCP ID token auth strategies)
-- Phase 3 Skills (community Anthropic format — D21)
+- Phase C — Deterministic post-flight hooks for sub-agents (D37)
+
+## [0.4.0] - 2026-05-27
+
+**v0.4.0** — Phase D: community-format skill loader (D21). Pre-1.0 API.
+
+### Added
+
+- **`SkillsCapability`** — discovers `SKILL.md` files from project (`<repo>/.agents/skills/`), user (`~/.jac/skills/`), and shipped package reference skills; project shadows user shadows package on name collision (shadowed entries visible in `/skill list`)
+- **`load_skill(reason, name)`** — on-demand playbook load; skill names + descriptions advertised in the system prompt (2 KB cap with name-only fallback for cache-friendly prompts)
+- **`/skill list|use|reload`** — list active and shadowed skills, inject a skill body as the next user turn, or rescan disk without restarting Gru
+- **Three reference skills:** `code-review`, `summarize-large-files`, `verify-change` under `src/jac/data/skills/`
+- **A2A AgentCard** — each loaded community skill published as an additional `jac-skill-<name>` entry alongside the generic coding-assistant skill
+- User guide: [`user-guide/skills.md`](user-guide/skills.md)
+
+### Architecture decisions
+
+- D21 — Community Anthropic skill format (advice only; no `mode: minion`, no hard gating on `tools_required`)
+
+## [0.3.0] - 2026-05-27
+
+**v0.3.0** — Phase A (context-cost foundation) + Phase B (sub-agent tool). Pre-1.0 API.
+
+### Added
+
+- **Phase A — Context-cost foundation:** tool result post-processor (D38) for `@jac_tool(summarizable=True)` tools (`run_shell`, `web_search`, `fetch_url`) above threshold via profile `small` tier when strictly cheaper; originals on disk under `.agents/cache/tool-results/`; prompt-cache stability fix (day-granularity session datetime, not per-second); `/tokens` `cache:` and `summarize:` lines
+- **Phase B — Sub-agent tool:** `spawn_sub_agent(reason, task_summary, tier, task_packet)` with tier cascade (small→medium→large, never down), depth cap = 1 (structural), HITL approval, token rollup into session total, `/tokens` `sub_agents:` line; `HookSpec` / `HookResult` models locked for Phase C
+- User guide: [`user-guide/cost-controls.md`](user-guide/cost-controls.md)
+
+### Changed
+
+- `run_shell` no longer hard-truncates at 10 KB — large output handled by the summarizer when configured
+
+### Architecture decisions
+
+- D38 — Tool result post-processor · D39 — Sub-agent spawn tier selection · D37 surface locked (hook runner deferred to Phase C)
 
 ## [0.2.0] - 2026-05-24
 
@@ -95,7 +130,9 @@ First **alpha** release (Phase 1 + Phase 1.5). Pre-1.0 API; expect breaking chan
 - Python 3.13+
 - Provider API keys (via `jac init` / `jac keys` / env)
 
-[Unreleased]: https://github.com/VENKATESHWARAN-R/JAC/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/VENKATESHWARAN-R/JAC/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/VENKATESHWARAN-R/JAC/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/VENKATESHWARAN-R/JAC/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/VENKATESHWARAN-R/JAC/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/VENKATESHWARAN-R/JAC/compare/v0.1.0...v0.1.2
 [0.1.0]: https://github.com/VENKATESHWARAN-R/JAC/releases/tag/v0.1.0
