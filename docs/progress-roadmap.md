@@ -34,15 +34,9 @@ Key constraints baked into the design:
 
 See `design/cost-efficient-orchestration.md` §4 for the full schema (task packet, result, capability, prompt template) and §10.2 for the tier cascade rule.
 
-## Phase C — Deterministic hooks
+## ~~Phase C — Deterministic hooks~~ (Dropped)
 
-Hooks are pure callables (Python or shell) returning `(ok, output)`. Attached per-spawn via the task packet. Retry budget = 3 (hard-coded in v1, per D37).
-
-**The cost win:** all hooks passing means the sub-agent's response returns *verbatim* — no extra LLM turn just to ask "did the tests pass?" That's the whole point.
-
-**The fix loop:** any hook fails → the failure output becomes the next user message into the *same* sub-agent. Sub-agent retries. Up to 3 times total. After that, `SubAgentResult(ok=False, output="hooks exhausted: <hook>: <last_output>")` returns to the main agent, which decides what to do.
-
-**Hard invariant:** hooks must not call LLMs. A hook that calls an LLM = sub-agent inside sub-agent = abandoned design.
+Dropped. The complexity didn't earn its keep. JAC runs in any environment, so baked-in hooks (`ruff_check`, `pytest_run`, `ty_check`) were the wrong design. On-the-fly commands passed per-invocation are equivalent to just including verification steps in `success_criteria` and having the main agent run `run_shell` after the sub-agent returns. No framework machinery needed.
 
 ## Phase D — Skill loader
 
@@ -56,7 +50,7 @@ Ships 2–3 reference skills: `code-review`, `summarize-large-files`, `verify-ch
 
 ## Phase E — Parallel + bidirectional comms
 
-Polish on top of B–D. Two pieces, both gated:
+Polish on top of B + D. Two pieces, both gated:
 
 - **Parallel spawn**: `spawn_sub_agents([packet1, packet2, ...])`. Single tool, list of packets. Batched HITL approval. `asyncio.gather` with HITL serialization.
 - **Bidirectional comms (D41) — feature flag, default OFF.** Sub-agent can call `ask_main_agent(reason, question, context)`; main agent answers; sub-agent resumes. Round-trip cap of 5 per spawn. Renderer paints `[sub-agent → main]` markers. Ships with the flag disabled in `settings.cost.sub_agent_bidirectional` until UX is validated.
@@ -82,8 +76,7 @@ Lower priority but still planned.
 These are flagged under `architecture.md` §5 "Still open":
 
 1. **Sub-agent file system semantics** — Phase B grooming sub-item. Current lean: same toolset as main, same filesystem view, HITL per-tool. File writes still go through approval the same way the main agent's do.
-2. **Hook scope beyond per-spawn** — skill-declared default hooks and project-global hook config are deferred to Phase D+. Keep per-spawn only in v1.
-3. **Logfire UX for nested traces** — depth cap of 1 (D40) bounds the chain in v1. Richer nested rendering is a future concern.
+2. **Logfire UX for nested traces** — depth cap of 1 (D40) bounds the chain in v1. Richer nested rendering is a future concern.
 
 ## v2 ⏸
 

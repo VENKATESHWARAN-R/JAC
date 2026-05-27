@@ -18,7 +18,7 @@ For deeper context:
 ## Agent Start Here
 
 - **Roadmap was reframed on 2026-05-26 around the cost-efficiency thesis.** Old Phase 3 (Skills with `mode: minion`), Phase 5 (Minion runtime), and Phase 6 (MCP) were archived to [`progress-archive-2026-05.md`](progress-archive-2026-05.md). Read [`architecture.md`](architecture.md) §0 and [`design/cost-efficient-orchestration.md`](design/cost-efficient-orchestration.md) before touching anything in Phases A–G.
-- **Current active work:** **Phase C — Deterministic hooks** (post-flight validators for sub-agents). Read `design/cost-efficient-orchestration.md` §5; the `HookSpec` / `HookResult` Pydantic models already exist in `jac.runtime.sub_agent` so the surface is locked.
+- **Current active work:** **Phase E — Parallel sub-agents**. Phase C (deterministic hooks) was dropped — the complexity doesn't earn its keep given that `success_criteria` in the task packet and a post-return `run_shell` call already cover the verification use case without any framework machinery.
 - **Released:** v0.3.0 (Phases A + B, 2026-05-27) · v0.4.0 (Phase D skill loader, 2026-05-27).
 - **Terminology change:** "Minion" is retired. New name: **sub-agent**. If you touch old "minion" references in unrelated changes, rename in the same commit.
 - **A2A is feature-complete** for its v1 scope. Phase 4.e (OIDC/GCP) was demoted to Phase G; not urgent.
@@ -40,9 +40,9 @@ For deeper context:
 | Phase 4 — A2A | ✅ Complete (v1 scope) | inbound + outbound + file transfer + demo peer + hotfixes. Phase 4.e (OIDC/GCP) demoted to Phase G. |
 | **Phase A — Context-cost foundation** | ✅ Complete (v0.3.0) | A.1 post-processor + A.2 prompt-cache fix + A.3 `/tokens` breakdown all landed 2026-05-27. Biggest single-session cost win shipped. |
 | Phase B — Sub-agent tool | ✅ Complete (v0.3.0) | `spawn_sub_agent`, packet model, tier cascade (small→medium→large, never down), depth cap = 1 structural, HITL via existing approval flow, UsageTracker.add_sub_agent + JSONL `kind=sub_agent:<tier>`, `/tokens` line. Hooks shape locked, runner stubbed (Phase C). |
-| Phase C — Deterministic hooks | ⏸ Queued | Per-spawn callables (D37); retry budget 3 |
+| Phase C — Deterministic hooks | 🚫 Dropped | Complexity didn't earn its keep; `success_criteria` + post-return `run_shell` covers the use case |
 | **Phase D — Skill loader** | ✅ Complete (v0.4.0) | Loader walks project/user/package; 2 KB prompt cap with name-only fallback; `load_skill` tool; `/skill list|use|reload`; 3 reference skills (`code-review`, `summarize-large-files`, `verify-change`); A2A AgentCard publishes loaded skills as `jac-skill-<name>` entries. |
-| Phase E — Parallel + bidirectional | ⏸ Future | Parallel spawn + D41 bidirectional comms feature flag |
+| **Phase E — Parallel + bidirectional** | ⏸ Next | Parallel spawn + D41 bidirectional comms feature flag |
 | Phase F — Plan Mode | ⏸ Future | Pulled forward from v2 (D23 promoted) |
 | Phase G — A2A 4.e + MCP + tests | ⏸ Future | OIDC/GCP A2A auth; MCP loader; broader test coverage |
 | v0.2 source restructuring | ✅ Complete | released as v0.2.0 |
@@ -113,20 +113,6 @@ For deeper context:
 - [x] `gru_system.md` updated — new "When to call `spawn_sub_agent`" section (spawn criteria, tier guidance, packet schema, depth cap explanation).
 - [ ] Counter-tier deny flow via D26's `denied_with_feedback("retry tier=large")` (D42) — **deferred to Phase E** (multi-spawn polish phase).
 - [ ] Reference example `examples/sub-agent-summarize/` — **deferred** (not blocking; the test suite + cost-controls.md cover the surface).
-
----
-
-## Queued — Phase C: Deterministic hooks ⏸
-
-**Goal:** post-flight validators that skip the next LLM turn when everything's already correct. Design: [`design/cost-efficient-orchestration.md`](design/cost-efficient-orchestration.md) §5.
-
-- [ ] `Hook` Protocol: `name`, `kind ∈ {python, shell}`, `target`; returns `HookResult(ok, output)`
-- [ ] Built-in hooks: `ruff_check`, `pytest_run`, `ty_check` (in `jac.hooks.*`)
-- [ ] `run_hook()` runner: python = import + call; shell = subprocess with 8KB stdout/stderr cap
-- [ ] Retry budget = 3 hard-coded (D37) — failure routes back to *same* sub-agent's loop with `"hook X failed:\n<output>\n\nFix and respond again."`
-- [ ] `hook_failures` count surfaced in `SubAgentResult` + Logfire span
-- [ ] Tests: all-pass returns verbatim with no extra turn; one-fail retries; budget exhaustion returns `hooks_exhausted`
-- [ ] Reference example extending Phase B's: add a `pytest` hook so the sub-agent writes test code, hook verifies it passes, no extra LLM turn
 
 ---
 

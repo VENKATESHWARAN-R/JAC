@@ -18,8 +18,6 @@ Key invariants enforced here:
   Never cascade down (would silently exceed budget).
 - **Approval-gated** — every spawn surfaces a HITL prompt with the
   resolved tier, tool allowlist, and packet details (D39).
-- **Hook stubs** — Phase B accepts an empty hooks list. The real
-  post-flight validator implementation lands in Phase C.
 
 The tool itself (``spawn_sub_agent``) lives at module bottom.
 """
@@ -53,31 +51,7 @@ _TIER_CASCADE: dict[str, list[str]] = {
 """Cascade order: requested tier first, then strictly *larger* tiers as
 fallback. Never cascades downward — that would silently exceed budget."""
 
-ExitStatus = Literal["ok", "max_turns", "hooks_exhausted", "error"]
-
-
-class HookSpec(BaseModel):
-    """Post-flight validator spec (Phase C target).
-
-    Phase B accepts an empty list. The real runner lands in Phase C
-    along with built-in ``ruff_check`` / ``pytest_run`` / ``ty_check``
-    hooks. The shape is locked here so the tool surface doesn't change
-    between phases.
-    """
-
-    name: str
-    kind: Literal["python", "shell"]
-    target: str
-    """For ``kind=python``: dotted module path of the callable.
-    For ``kind=shell``: the command to execute."""
-
-
-class HookResult(BaseModel):
-    """Outcome of one hook invocation (Phase C target — stubbed for B)."""
-
-    name: str
-    ok: bool
-    output: str = ""
+ExitStatus = Literal["ok", "max_turns", "error"]
 
 
 class SubAgentTaskPacket(BaseModel):
@@ -111,9 +85,6 @@ class SubAgentTaskPacket(BaseModel):
     """Tool name allowlist. ``None`` means "all default sub-agent tools"
     (which is the main toolset minus ``spawn_sub_agent``)."""
 
-    hooks: list[HookSpec] = Field(default_factory=list)
-    """Post-flight validators (Phase C). Empty in B."""
-
     max_turns: int = 10
     """Hard cap on the sub-agent's model-call count. Prevents runaway
     loops; returns ``exit_status=max_turns`` when hit."""
@@ -138,9 +109,6 @@ class SubAgentResult(BaseModel):
 
     resolved_model: str
     """The model id actually used."""
-
-    hook_failures: int = 0
-    """Count of failing hook runs (Phase C). Always 0 in B."""
 
     exit_status: ExitStatus = "ok"
 
@@ -291,7 +259,6 @@ async def _run_sub_agent(
         objective=truncated_objective,
         max_turns=packet.max_turns,
         allowed_tools=packet.allowed_tools or "<default>",
-        hook_count=len(packet.hooks),
     ) as span:
         try:
             run_result = await sub_agent.run(
@@ -328,14 +295,12 @@ async def _run_sub_agent(
 
         span.set_attribute("turns_used", turns)
         span.set_attribute("exit_status", exit_status)
-        span.set_attribute("hook_failures", 0)
 
         return SubAgentResult(
             output=str(run_result.output),
             turns_used=turns,
             resolved_tier=resolved.resolved,
             resolved_model=resolved.model,
-            hook_failures=0,
             exit_status=exit_status,
         )
 
@@ -362,7 +327,7 @@ async def spawn_sub_agent(
             up if the active profile lacks the requested tier.
         task_packet: Fields matching :class:`SubAgentTaskPacket`:
             objective, success_criteria, relevant_paths, forbidden_actions,
-            expected_output, allowed_tools, hooks, max_turns.
+            expected_output, allowed_tools, max_turns.
 
     Returns:
         The sub-agent's final response, prefixed with a one-line

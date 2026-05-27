@@ -16,7 +16,7 @@ JAC's product thesis is that the LLM is the brain and everything around it — w
 | L2. **Tier-aware selection** | Profiles map small/medium/large to ordered model lists (D22). Sub-agent spawn picks a tier (D39). Main agent stays on its profile tier. | Partial (D22 shipped); extended in B |
 | L3. **Tool result post-processor** | Above threshold + cheap tier available → route raw output through small model, return summary + disk path (D38). | A |
 | L4. **Cache-friendly prompt assembly** | Order system prompt → tools → memory → history so the prompt-cache breakpoint sits at the stable/changing boundary. | A |
-| L5. **Deterministic post-flight hooks** | Validators (typecheck, lint, tests) run after a sub-agent finishes. Pass → return verbatim, no extra turn. Fail → loop the failure back into the sub-agent (D37). | C |
+| ~~L5. Deterministic post-flight hooks~~ | ~~Dropped.~~ Complexity didn't earn its keep — `success_criteria` in the task packet plus a post-return `run_shell` call from the main agent covers the use case without framework machinery. | — |
 
 ## 3. Phase A — Context-cost foundation
 
@@ -145,19 +145,6 @@ Approve sub-agent spawn?
 ### B.2 Task packet (D36)
 
 ```python
-class Hook(BaseModel):
-    """A deterministic post-flight check (D37)."""
-    name: str                            # for logs + failure messages
-    kind: Literal["python", "shell"]
-    target: str | Callable[..., HookResult]
-    # python: dotted path to callable returning HookResult
-    # shell:  command string; exit 0 = ok
-
-class HookResult(BaseModel):
-    ok: bool
-    output: str                          # routed to sub-agent on failure
-
-
 class SubAgentTaskPacket(BaseModel):
     objective: str
     success_criteria: str
@@ -167,7 +154,6 @@ class SubAgentTaskPacket(BaseModel):
                                          # use `result_type` on the sub-agent
                                          # (out-of-band) — keep packet simple
     allowed_tools: list[str] | None = None  # None = inherit main minus spawn
-    hooks: list[Hook] = []
     max_turns: int = 10
 
 
@@ -177,7 +163,6 @@ class SubAgentResult(BaseModel):
     turns_used: int
     tokens_in: int
     tokens_out: int
-    hook_failures: int                   # 0 if hooks all passed
     cached_artifacts: list[str] = []     # disk paths to large outputs
 ```
 
@@ -218,63 +203,10 @@ Sub-agent span nests under the spawning tool-call span. `parent_run_id` chain is
 | --- | --- |
 | max_turns hit without final answer | `ok=False`, `output="sub-agent did not converge in N turns"` |
 | Sub-agent tool call raised | `ok=False`, `output="<tool> raised: <exc>"` |
-| Hooks exhausted retry budget | `ok=False`, `output="hook failures persisted: <hook_name>: <last_output>"` |
 | User denied spawn approval | Standard `denied_with_feedback` flow (D26) |
 | Sub-agent budget exceeded | `ok=False`, `output="sub-agent exceeded its turn budget"` |
 
-## 5. Phase C — Deterministic hooks (D37)
-
-### C.1 Hook chain semantics
-
-```
-sub_agent.final_response()
-  ↓
-for hook in packet.hooks:
-    result = await run_hook(hook)
-    if not result.ok:
-        retries_left -= 1
-        if retries_left < 0:
-            return SubAgentResult(ok=False, output=f"hooks exhausted: {hook.name}: {result.output}", ...)
-        # Feed failure as next user message into the SAME sub-agent
-        await sub_agent.continue_loop(
-            user_message=f"hook {hook.name!r} failed:\n{result.output}\n\nFix and respond again."
-        )
-        # Loop back to "final_response" once the sub-agent fixes
-        break
-else:
-    # All hooks passed
-    return SubAgentResult(ok=True, output=sub_agent.final_response(), hook_failures=0, ...)
-```
-
-**Retry budget: 3** (hard-coded in v1, per D37). If a packet's hooks fail 3 times across attempts, return failure to the main agent — don't pay for a fourth try.
-
-### C.2 Hook examples
-
-```python
-# Python callable
-{
-  "name": "ruff-check",
-  "kind": "python",
-  "target": "jac.hooks.ruff.ruff_check",  # returns HookResult
-}
-
-# Shell command
-{
-  "name": "pytest",
-  "kind": "shell",
-  "target": "uv run pytest -x --tb=short tests/test_changes.py",
-}
-```
-
-`run_hook(shell)` captures stdout+stderr (cap 8 KB), returns `ok=(returncode==0)`.
-
-### C.3 Hooks must not call an LLM
-
-This is the invariant. The whole point is to avoid the extra LLM turn. A hook that calls an LLM = sub-agent inside sub-agent = abandoned design.
-
-Enforcement: documentation + code-review discipline. No structural check (would be brittle).
-
-## 6. Phase D — Skill loader
+## 5. Phase D — Skill loader
 
 Skills are **loadable prompts / playbooks** — the main agent reads them when relevant. They are *not* a runtime mode (no `mode: minion`).
 
@@ -325,9 +257,9 @@ Ship 2–3 in `src/jac/data/skills/`:
 - `summarize-large-files` — when to spawn small-tier sub-agent for big files
 - `verify-change` — typecheck + test recipe + hook suggestions
 
-## 7. Phase E — Parallel sub-agents + HITL multiplexing
+## 6. Phase E — Parallel sub-agents + HITL multiplexing
 
-**Deferred until B + C + D are settled.** Outline:
+**Deferred until B + D are settled.** Outline:
 
 - `spawn_sub_agents([packet1, packet2, ...])` — single tool, takes a list.
 - HITL: all approvals batched into one prompt (`Approve N sub-agent spawns? [a]ll [d]eny [r]eview each`).
@@ -335,17 +267,17 @@ Ship 2–3 in `src/jac/data/skills/`:
 - HITL approvals from *within* sub-agents bubble up serially to the same prompt-toolkit input (only one approval prompt visible at a time).
 - Logfire: parallel branches under the same parent span.
 
-## 8. Phase F — Plan Mode (forward from v2)
+## 7. Phase F — Plan Mode (forward from v2)
 
 Originally v2 (D23). Pulled forward because plans are more valuable now that the agent has the option to delegate. A plan step like "explore A/B/C and decide" is a natural sub-agent boundary. Implementation per D23: structural toolset swap (read-only + `write_plan`); the bundled `plan`→`tasks` rename moves with it. Builds the `ModeCapability` base, which YOLO mode will reuse when it lands.
 
-## 9. Phase G — A2A 4.e + MCP + quality
+## 8. Phase G — A2A 4.e + MCP + quality
 
 Lower priority but still planned. See `progress.md` for the live list.
 
-## 10. ⚠️ Risk areas (proceed with care)
+## 9. ⚠️ Risk areas (proceed with care)
 
-### 10.1 Bidirectional sub-agent ↔ main-agent comms (D41)
+### 9.1 Bidirectional sub-agent ↔ main-agent comms (D41)
 
 **Specced, but ship cautiously. Default-off behind a feature flag in v1.**
 
@@ -363,29 +295,27 @@ The mechanism: a sub-agent can call `ask_main_agent(reason, question, context)`.
 
 **v1 implementation gate:** the tool isn't registered into the sub-agent toolset unless `settings.cost.sub_agent_bidirectional = true`. Default `false`. Flip when UX has been validated.
 
-### 10.2 Tier cascading
+### 9.2 Tier cascading
 
 If a profile has only `medium` configured and someone spawns with `tier="small"`, the cascade picks `medium` and the HITL line shows `tier: small (resolved to medium — no small tier in profile)`. Don't silently use a more expensive tier without telling the user. Same logic for `medium → large`.
 
-### 10.3 Cache invalidation footguns
+### 9.3 Cache invalidation footguns
 
 Anything that goes into the system prompt becomes part of the cached prefix. If we accidentally include a timestamp, session-id, or other per-turn-changing value in the prefix, every turn is a cache miss. Phase A.2 audit is *the* defense.
 
-## 11. Implementation order (firm)
+## 10. Implementation order (firm)
 
 1. **Phase A.1** (post-processor) + **A.3** (`/tokens`) — biggest immediate cost win, no model behavior changes.
 2. **Phase A.2** (cache-friendly assembly audit) — must precede sub-agent work because sub-agent system prompts go through the same plumbing.
 3. **Phase B** (sub-agent tool) — sequential only, no bidirectional, no parallel.
-4. **Phase C** (hooks) — small surface, big leverage once B exists.
-5. **Phase D** (skill loader) — gives the main agent the playbooks it needs to use B + C well.
-6. **Phase E** (parallel + bidirectional flag-flip after validation).
-7. **Phase F** (Plan Mode).
-8. **Phase G** (A2A 4.e, MCP, broader tests).
+4. **Phase D** (skill loader) — gives the main agent the playbooks it needs to use sub-agents well.
+5. **Phase E** (parallel + bidirectional flag-flip after validation).
+6. **Phase F** (Plan Mode).
+7. **Phase G** (A2A 4.e, MCP, broader tests).
 
-## 12. Three open questions tracked elsewhere
+## 11. Open questions tracked elsewhere
 
-The three gaps I called out in design discussion are tracked under `architecture.md §5 "Still open"`:
+The gaps I called out in design discussion are tracked under `architecture.md §5 "Still open"`:
 
 1. **Sub-agent file system semantics** — confirmed lean: same toolset, same filesystem view, HITL per-tool (Phase B grooming).
-2. **Hook scope beyond per-spawn** — skill-declared default hooks and project-global config are deferred to Phase D+.
-3. **Logfire UX for nested traces** — depth cap of 1 (D40) is the v1 answer; richer nested rendering is a future concern.
+2. **Logfire UX for nested traces** — depth cap of 1 (D40) is the v1 answer; richer nested rendering is a future concern.
