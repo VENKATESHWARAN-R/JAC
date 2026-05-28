@@ -8,8 +8,37 @@ All notable changes to JAC are documented here. Format follows
 
 ### In flight
 
-- Phase 4 A2A PR4–PR5 (guest token budgets, richer `/a2a status`, retention timer, OIDC/GCP ID token auth strategies)
-- Phase C — Deterministic post-flight hooks for sub-agents (D37)
+- Phase F — MCP loader (D28)
+- Phase G — Plan Mode (D23)
+- Phase H — A2A 4.e (OIDC/GCP auth)
+
+## [0.5.0] - 2026-05-28
+
+**v0.5.0** — Phase E: parallel sub-agents + bidirectional comms. Pre-1.0 API.
+
+### Added
+
+- **`spawn_sub_agents(reason, task_summary, spawns)`** — fan out N independent delegations under a single HITL approval; results gathered in parallel; per-spawn tier cascade + depth cap enforced per worker (Phase E.1)
+- **Bidirectional sub-agent ↔ main-agent comms (D41)** — sub-agents get `ask_main_agent(reason, question, context)` to pause mid-run and ask one focused clarifying question; the main agent answers with `respond_to_sub_agent(reason, spawn_id, answer)`; hard cap of 5 round-trips per spawn (6th ask returns a graceful "finalize with what you have" directive, not an error). **On by default** since this release — set `cost.sub_agent_bidirectional: false` to opt out.
+- **Human-readable spawn IDs** — `minion-1`, `minion-2`, … (session-scoped monotonic counter, resets on REPL teardown) replacing the opaque 8-hex IDs (Phase E.2.2)
+- **"Who's asking" on approval panels** — approval panel title shows `approval needed · Gru` or `approval needed · minion-N` so you can tell at a glance which agent is requesting permission during parallel or bidirectional runs (Phase E.2.2)
+- **Sub-agent HITL / skills / A2A parity** — destructive tool calls inside a sub-agent (`write_file`, `edit_file`, `delete_file`, `run_shell`, `remember`) now route through the same approval handler as the main agent; skills and A2A capabilities are shared instances so `/skill reload` is visible to sub-agents (Phase E.2.1)
+- **Per-spawn lifecycle events in parallel path** — each worker emits `SubAgentSpawned` at start (blue `▶ minion-N` panel) and `SubAgentCompleted` on finish (green `✓ minion-N done · turns=N`) so you see progress without waiting for the full gather (Phase E.3b)
+- **Parallel-spawn approval panel** — `spawn_sub_agents` renders a per-spawn summary table (index / label / tier / one-line objective) inside the approval prompt instead of a truncated JSON dump (Phase E.3a)
+- **`/spawns`** slash command — lists all parked bidirectional sub-agents with their spawn IDs and pending questions; status bar shows `spawns:N` when anything is in flight
+- **Config-change policy** in `CLAUDE.md` — two-path rule for future contributors: default-value flips need no migration (layered fall-through handles it); schema-shape changes add an idempotent migration alongside `migrate_old_profiles`
+
+### Changed
+
+- `_maybe_migrate_old_profiles` (init.py) renamed to `_run_pending_migrations` with the D22 helper as its single current entry — provides an obvious home for future schema migrations
+
+### Architecture decisions
+
+- D41 — Bidirectional sub-agent comms channel (ask/respond tools, round-trip cap, graceful finalize directive)
+
+**487 tests passing** at release commit.
+
+Full changelog: [docs/changelog.md](https://github.com/VENKATESHWARAN-R/JAC/blob/v0.5.0/docs/changelog.md#050---2026-05-28)
 
 ## [0.4.0] - 2026-05-27
 
