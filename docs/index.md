@@ -22,6 +22,7 @@ It runs on your machine — your keys, your files, your context.
 | **Review locked design decisions** | [Architecture](architecture.md) |
 | **Read the cost-efficiency thesis** | [Cost-efficient orchestration](design/cost-efficient-orchestration.md) |
 | **See what's shipped vs queued** | [Progress](progress.md) |
+| **End-to-end tour of one release** | [Version snapshot — v0.5.0](snapshots/v0.5.0.md) |
 
 ## Design & maintenance
 

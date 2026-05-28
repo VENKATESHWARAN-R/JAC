@@ -28,6 +28,10 @@ nav = [
         { "Examples" = "user-guide/examples.md" },
         { "A2A operator" = "user-guide/a2a-operator.md" },
     ] },
+    { "Version snapshots" = [
+        { "v0.5.0" = "snapshots/v0.5.0.md" },
+        { "Template" = "snapshots/template.md" },
+    ] },
     { "Developer" = [
         { "Contributing" = "developer/contributing.md" },
         { "Module strategy" = "developer/module-strategy.md" },
