@@ -84,24 +84,34 @@ Every summarization emits a Logfire span (`tool_summarize`) with `tool_name`, `o
 
 ## Sub-agents (delegation)
 
-The next lever past the post-processor is **delegating context-heavy work to a sub-agent**. Gru calls `spawn_sub_agent(reason, task_summary, tier, task_packet)`; a fresh agent runs in its own isolated loop with its own message history and returns a short final answer. The 50k–200k tokens of intermediate file reads / shell output / web fetches stay over there — Gru's context never sees them.
+The next lever past the post-processor is **delegating context-heavy work to a sub-agent**. A fresh agent runs in its own isolated loop with its own message history and returns a short final answer. The 50k–200k tokens of intermediate file reads / shell output / web fetches stay over there — Gru's context never sees them.
 
-**Cost model.** The sub-agent's tokens roll into your session totals via `UsageTracker.add_sub_agent` — same budget envelope as the main loop, just attributed differently. `/tokens` shows a `sub_agents:` line with per-tier breakdown so you can see what delegation actually cost.
+### Sequential spawn
 
-**Tier cascade.** The main agent asks for `"small"` / `"medium"` / `"large"`. If your profile lacks the requested tier, JAC cascades **up** (small → medium → large) — never down, since that would silently exceed budget. The cascade is shown in the approval prompt and again in the result header.
+`spawn_sub_agent(reason, task_summary, tier, task_packet)` — one delegation, blocks until done.
 
-**Depth cap = 1.** Sub-agents do not get the `spawn_sub_agent` tool in their own toolset. Enforced structurally — the recursion is impossible, not just disallowed.
+### Parallel spawn (Phase E.1)
+
+`spawn_sub_agents(reason, task_summary, spawns)` — fan out N independent delegations under a single HITL approval. Results are gathered concurrently. The approval panel shows a per-spawn summary table (index / label / tier / one-line objective). Each worker emits lifecycle events as it runs — you see a blue **▶ minion-N** panel when a spawn starts and a green **✓ minion-N done · turns=N** line when it finishes, so you never wait blind for the full gather to land.
+
+**Spawn IDs.** Every sub-agent gets a human-readable session-scoped ID: `minion-1`, `minion-2`, … resetting to `minion-1` on REPL teardown. Approval panels show `approval needed · minion-N` so you can tell at a glance which agent is requesting permission during parallel runs.
+
+**Cost model.** All sub-agent tokens roll into your session totals via `UsageTracker.add_sub_agent` — same budget envelope, just attributed differently. `/tokens` shows a `sub_agents:` line with per-tier breakdown.
+
+**Tier cascade.** The main agent asks for `"small"` / `"medium"` / `"large"`. If your profile lacks the requested tier, JAC cascades **up** (small → medium → large) — never down. The cascade is shown in the approval prompt and the result header.
+
+**Depth cap = 1.** Sub-agents do not get the `spawn_sub_agent` or `spawn_sub_agents` tools. Enforced structurally — recursion is impossible, not just disallowed.
 
 **Always HITL-approved.** Every spawn surfaces a prompt with the resolved tier, the cascade note (if any), the packet, and the tool allowlist. Approve / deny with feedback / counter-tier.
 
 ### Bidirectional comms (D41)
 
-On by default since v0.4.x. Set `cost.sub_agent_bidirectional: false` in your config to turn it off — sub-agents will then finalize with whatever they have rather than pause to ask. When on (the default):
+On by default since v0.5.0. Set `cost.sub_agent_bidirectional: false` to turn it off — sub-agents will then finalize with whatever they have rather than pause to ask. When on (the default):
 
-- The sub-agent gets `ask_main_agent(reason, question, context)` — it can pause once or twice mid-run to ask the main agent a focused clarifying question.
+- The sub-agent gets `ask_main_agent(reason, question, context)` — it can pause mid-run to ask the main agent a focused clarifying question.
 - The main agent gets `respond_to_sub_agent(reason, spawn_id, answer)` — its reply tool. Not approval-gated; you already approved the parent spawn.
-- Hard cap = **5 round-trips per spawn**. The 6th `ask_main_agent` call doesn't error — it returns a "finalize with what you have, list any open uncertainties as discrepancies" directive directly to the sub-agent. The spawn always produces a coherent final answer, even if the conversation runs long.
-- Visibility: the question lands in the main agent's tool result as a `[sub-agent → main: question pending] spawn_id=...` block; the answer comes back wrapped in `[main → sub-agent: ...]`. You see both as standard tool calls in the scroll-back.
+- Hard cap = **5 round-trips per spawn**. The 6th `ask_main_agent` call doesn't error — it returns a "finalize with what you have, list any open uncertainties as discrepancies" directive directly to the sub-agent. The spawn always produces a coherent final answer.
+- **Visibility:** the question lands in the main agent's context as a yellow panel; your answer comes back as a cyan panel. Both appear as standard tool calls in the scroll-back. The `/spawns` slash command lists all currently-parked bidirectional sub-agents. The status bar shows a `spawns:N` segment whenever any are in flight.
 
 **Cost note.** Every round-trip costs an extra main-agent turn (full context + toolset). A sub-agent asking five questions costs roughly as much as five extra main-agent turns. Worth it for genuinely ambiguous tasks; usually a sign the task packet should have been more specific.
 

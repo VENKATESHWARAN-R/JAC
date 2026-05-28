@@ -18,8 +18,8 @@ For deeper context:
 ## Agent Start Here
 
 - **Roadmap was reframed on 2026-05-26 around the cost-efficiency thesis.** Old Phase 3 (Skills with `mode: minion`), Phase 5 (Minion runtime), and Phase 6 (MCP) were archived to [`progress-archive-2026-05.md`](progress-archive-2026-05.md). Read [`architecture.md`](architecture.md) §0 and [`design/cost-efficient-orchestration.md`](design/cost-efficient-orchestration.md) before touching anything in Phases A–G.
-- **Current active work:** **Phase E.2 + E.2.1 + E.2.2 on `phase-e-bidirectional-comms`**. E.2 D41 bidirectional comms (channel + `ask_main_agent` + `respond_to_sub_agent` + 5-round-trip cap with graceful finalize directive on the 6th ask + flag-gated capability wiring + flag-gated prompt addendum), E.2.1 sub-agent HITL/skills/A2A parity with main agent, and E.2.2 human-readable `minion-N` spawn IDs + "who's asking" on approval panels. E.1 (parallel spawn via `spawn_sub_agents`) was the prior slice. Phase C (deterministic hooks) was dropped — `success_criteria` in the task packet and a post-return `run_shell` call already cover the verification use case without framework machinery.
-- **Released:** v0.3.0 (Phases A + B, 2026-05-27) · v0.4.0 (Phase D skill loader, 2026-05-27).
+- **Current active work:** **Phase F — MCP loader (D28).** Phase E is fully shipped in v0.5.0. Next up: MCP loader, the ecosystem surface most users try first (promoted from old Phase G after 2026-05-27 review).
+- **Released:** v0.3.0 (Phases A + B, 2026-05-27) · v0.4.0 (Phase D skill loader, 2026-05-27) · v0.5.0 (Phase E parallel + bidirectional, 2026-05-28).
 - **Terminology change:** "Minion" is retired. New name: **sub-agent**. If you touch old "minion" references in unrelated changes, rename in the same commit.
 - **A2A is feature-complete** for its v1 scope. Phase 4.e (OIDC/GCP) was demoted to Phase G; not urgent.
 - **Do not build yet without grooming:** v2 YOLO/sandboxing, CodeMode, stuck-loop, Night Shift.
@@ -42,7 +42,7 @@ For deeper context:
 | Phase B — Sub-agent tool | ✅ Complete (v0.3.0) | `spawn_sub_agent`, packet model, tier cascade (small→medium→large, never down), depth cap = 1 structural, HITL via existing approval flow, UsageTracker.add_sub_agent + JSONL `kind=sub_agent:<tier>`, `/tokens` line. Hooks shape locked, runner stubbed (Phase C). |
 | Phase C — Deterministic hooks | 🚫 Dropped | Complexity didn't earn its keep; `success_criteria` + post-return `run_shell` covers the use case |
 | **Phase D — Skill loader** | ✅ Complete (v0.4.0) | Loader walks project/user/package; 2 KB prompt cap with name-only fallback; `load_skill` tool; `/skill list|use|reload`; 3 reference skills (`code-review`, `summarize-large-files`, `verify-change`); A2A AgentCard publishes loaded skills as `jac-skill-<name>` entries. |
-| **Phase E — Parallel + bidirectional** | 🚧 In progress | E.1 parallel `spawn_sub_agents` shipped; E.2 D41 bidirectional comms + E.2.1 sub-agent HITL/skills/A2A parity + E.2.2 `minion-N` IDs + approval-panel "who's asking" + E.3a/b parallel approval panel + per-spawn lifecycle events landed behind feature flag |
+| **Phase E — Parallel + bidirectional** | ✅ Complete (v0.5.0) | `spawn_sub_agents` parallel fan-out; D41 bidirectional channel (on by default); `minion-N` spawn IDs; sub-agent HITL/skills/A2A parity; parallel approval table; per-spawn lifecycle events |
 | **Phase F — MCP loader** | ⏸ Future | **Promoted from old Phase G (2026-05-27)** — MCP is the ecosystem surface most users try first; precedes Plan Mode |
 | Phase G — Plan Mode | ⏸ Future | Pulled forward from v2 (D23 promoted); demoted from old Phase F to follow MCP |
 | Phase H — A2A 4.e + broader tests | ⏸ Future | OIDC/GCP A2A auth; broader test coverage; eval-loop work tracked under Phase 7 |

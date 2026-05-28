@@ -1,6 +1,6 @@
 # Codebase map
 
-> **Audience:** contributors navigating `src/jac/` as built in **v0.4.0**.
+> **Audience:** contributors navigating `src/jac/` as built in **v0.5.0**.
 
 Package root: `src/jac/`. Console entry: `jac.cli.app:main` (`pyproject.toml`).
 
@@ -10,7 +10,7 @@ For the rules behind this layout — what goes where, slash-vs-capability, when 
 
 ```text
 src/jac/
-├── __init__.py              # __version__ = "0.4.0"
+├── __init__.py              # __version__ = "0.5.0"
 ├── __main__.py              # python -m jac
 ├── config.py                # Settings, CompactionSettings, BudgetSettings
 ├── errors.py                # JacConfigError
@@ -197,7 +197,7 @@ User workspace: `~/.jac/config.yaml`, `memory.md`, `AGENTS.md`, `history`, optio
 
 ## Tests (orientation)
 
-**296 tests** at last count (`uv run pytest --collect-only -q`). No dedicated `test_memory.py` or `test_session.py` yet — see Phase 7 in `progress.md`.
+**487 tests** at last count (`uv run pytest --collect-only -q`). No dedicated `test_memory.py` or `test_session.py` yet — see Phase 7 in `progress.md`.
 
 | Area | Files |
 | --- | --- |
@@ -210,8 +210,12 @@ User workspace: `~/.jac/config.yaml`, `memory.md`, `AGENTS.md`, `history`, optio
 | Context capability | `test_context_capability.py` |
 | Profiles / secrets / editor | `test_profiles.py`, `test_secrets.py`, `test_editor.py` |
 | Provider registry | `test_provider_registry.py` |
+| Prompt cache stability | `test_prompt_cache_stability.py` |
 | Slash | `test_slash.py` |
-| A2A (9 files) | `test_a2a_auth.py`, `test_a2a_card.py`, `test_a2a_audit.py`, `test_a2a_storage.py`, `test_a2a_guest.py`, `test_a2a_slash.py`, `test_a2a_server.py`, `test_a2a_client.py`, `test_a2a_auth_strategies.py` |
+| Skills (Phase D) | `test_skills.py` |
+| Tool decorator / summarizer (Phase A) | `test_tool_decorator.py`, `test_tool_summarize.py` |
+| Sub-agents (Phase B/E) | `test_sub_agent.py` |
+| A2A (10 files) | `test_a2a_auth.py`, `test_a2a_card.py`, `test_a2a_audit.py`, `test_a2a_storage.py`, `test_a2a_guest.py`, `test_a2a_guest_files.py`, `test_a2a_slash.py`, `test_a2a_server.py`, `test_a2a_client.py`, `test_a2a_auth_strategies.py` |
 
 Run: `just check` (ruff format + lint + `ty check src` + pytest) or `uv run pytest tests/ -q`.
 

@@ -91,7 +91,7 @@ The roadmap was reframed around the cost-efficiency thesis. Old Phase 3/5/6 entr
 - **Phase B — Sub-agent tool.** `spawn_sub_agent` with task packet, tier-HITL approval, depth cap = 1. **Shipped v0.3.0.**
 - **Phase C — Deterministic hooks.** **Dropped** — complexity didn't earn its keep; `success_criteria` + post-return `run_shell` covers verification.
 - **Phase D — Skill loader.** Anthropic community format; skills are loadable prompts, no `mode: minion`. **Shipped v0.4.0.**
-- **Phase E — Parallel sub-agents + HITL multiplexing.**
+- **Phase E — Parallel sub-agents + bidirectional comms.** `spawn_sub_agents` fan-out; D41 bidirectional channel (on by default); `minion-N` IDs; sub-agent HITL/skills/A2A parity. **Shipped v0.5.0.**
 - **Phase F — MCP loader** (promoted from old Phase G after 2026-05-27 review).
 - **Phase G — Plan Mode** (pulled forward from v2; demoted from old Phase F to follow MCP).
 - **Phase H — A2A Phase 4.e (OIDC/GCP) + broader test coverage.**

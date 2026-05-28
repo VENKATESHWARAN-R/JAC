@@ -159,6 +159,7 @@ profile:claude  tier:medium (anthropic:claude-sonnet-4-5)  branch:main*  ctx:34%
 
 - **ctx** — estimated history tokens vs `compaction.max_context_tokens` (color follows warn/auto/refuse thresholds)
 - **bud** — appears when token budgets are configured
+- **spawns** — appears when one or more bidirectional sub-agents are parked waiting for a reply (e.g. `spawns:2`)
 
 ## Related
 
