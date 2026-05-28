@@ -94,6 +94,10 @@ def sub_agent_capabilities(
     allowed_tools: list[str] | None = None,
     *,
     channel: Any = None,
+    hooks: Any = None,
+    approval: Any = None,
+    skills_capability: Any = None,
+    a2a_capability: Any = None,
 ) -> list[Any]:
     """Capability list a spawned sub-agent receives.
 
@@ -111,6 +115,22 @@ def sub_agent_capabilities(
             :class:`AskMainAgentCapability` so the sub-agent can call
             ``ask_main_agent``. The channel itself is threaded to the tool
             via a contextvar — this argument's presence is the toggle.
+        hooks: ``Hooks`` capability instance from :func:`jac.runtime.hooks.make_hooks`.
+            Attached unchanged so the sub-agent's tool-call lifecycle events
+            flow onto ``bus`` alongside the main agent's.
+        approval: ``HandleDeferredToolCalls`` capability from
+            :func:`jac.runtime.approval.make_approval_handler`. Attached so
+            destructive sub-agent tool calls trip the same HITL flow the
+            main agent uses. "Delegate and walk away" without HITL is a
+            YOLO-mode (v2) concern; until then sub-agent destructive ops
+            stay user-gated.
+        skills_capability: shared :class:`SkillsCapability` instance from
+            the REPL. Lets a sub-agent call ``load_skill`` so the skill
+            body stays in the sub-agent's context (the cost-efficiency
+            point of delegating in the first place).
+        a2a_capability: shared :class:`A2ACapability` instance. Lets a
+            sub-agent be the one talking to a remote A2A peer when the
+            peer's response would otherwise bloat the main agent's history.
     """
     _ = allowed_tools  # reserved; honored in a follow-up that filters toolsets
     caps: list[Any] = [
@@ -122,6 +142,19 @@ def sub_agent_capabilities(
         MemoryCapability(),
         WebCapability(),
     ]
+    # HITL + lifecycle events: when the REPL supplied a bus, attach hooks
+    # and the approval handler so the sub-agent's destructive tool calls
+    # appear in the CLI and require the same approval the main agent does.
+    # Headless/test contexts that build sub-agents without a bus get the
+    # original silent-and-unguarded behaviour.
+    if hooks is not None:
+        caps.append(hooks)
+    if approval is not None:
+        caps.append(approval)
+    if skills_capability is not None:
+        caps.append(skills_capability)
+    if a2a_capability is not None:
+        caps.append(a2a_capability)
     # D41: ask_main_agent only goes into the sub-agent's toolset when
     # both the flag is on AND the spawn was started via the bidirectional
     # path (which provides the channel). Either condition off → tool stays

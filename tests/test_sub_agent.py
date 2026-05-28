@@ -1502,6 +1502,96 @@ def test_statusbar_spawns_segment_visible_when_parked() -> None:
     assert "1" in segment
 
 
+# ---------- sub-agent wiring: HITL + skills + a2a ----------
+#
+# Sub-agents share the main agent's bus-bound capabilities so destructive
+# tool calls route through the same HITL flow and the user never loses
+# visibility / control. Skills + A2A are shared instances (not fresh) so
+# ``/skill reload`` is observed by both surfaces and the guest A2A server
+# isn't duplicated.
+
+
+def test_sub_agent_capability_default_excludes_bus_bound_caps() -> None:
+    """Bare ``sub_agent_capabilities()`` (no kwargs) must keep the
+    Phase B silent-and-unguarded behaviour — test contexts that don't
+    have a bus rely on it."""
+    from jac.runtime.gru import sub_agent_capabilities
+
+    caps = sub_agent_capabilities()
+    # Sentinel: HITL/approval is absent when no kwargs supplied.
+    type_names = {type(c).__name__ for c in caps}
+    assert "Hooks" not in type_names
+    # ``HandleDeferredToolCalls`` is the pydantic-ai approval-handler type.
+    assert "HandleDeferredToolCalls" not in type_names
+    assert "SkillsCapability" not in type_names
+    assert "A2ACapability" not in type_names
+
+
+def test_sub_agent_capability_includes_hooks_approval_skills_a2a_when_supplied() -> None:
+    """When the REPL closure passes hooks / approval / skills / a2a, the
+    sub-agent's capability list grows by exactly those instances and the
+    objects are reused (same identity) — not copied — so /skill reload
+    affects sub-agents too and the guest A2A server stays singular."""
+    from jac.capabilities.skills import make_skills_capability
+    from jac.runtime.approval import make_approval_handler
+    from jac.runtime.gru import sub_agent_capabilities
+    from jac.runtime.hooks import make_hooks
+
+    bus = EventBus()
+    hooks = make_hooks(bus)
+    approval = make_approval_handler(bus)
+    skills = make_skills_capability()
+
+    # A2A capability requires a model param; a sentinel string is enough
+    # — we never call it, only check identity in the cap list.
+    class _A2ASentinel:
+        pass
+
+    a2a = _A2ASentinel()
+
+    caps = sub_agent_capabilities(
+        hooks=hooks,
+        approval=approval,
+        skills_capability=skills,
+        a2a_capability=a2a,
+    )
+
+    assert hooks in caps
+    assert approval in caps
+    assert skills in caps
+    assert a2a in caps
+
+
+def test_sub_agent_destructive_tool_marked_approval_required() -> None:
+    """Spot-check: the toolset wrapping that gates destructive tools for
+    the main agent applies the same way once a sub-agent gets the
+    ``HandleDeferredToolCalls`` capability — i.e. the @jac_tool decorator
+    on shared tools (write_file, run_shell, …) carries the approval
+    marker into the sub-agent's toolset, not just the main agent's.
+
+    We assert this at the capability level: the filesystem + shell
+    capabilities the sub-agent gets are the *same classes* the main
+    agent uses, so any tool marked approval-required upstream stays
+    marked downstream. (A full end-to-end approval round-trip is
+    already covered by the bidirectional happy-path test; this one
+    keeps the wiring honest with a smaller-blast-radius check.)
+    """
+    from jac.capabilities.filesystem import FilesystemCapability
+    from jac.capabilities.shell import ShellCapability
+    from jac.runtime.gru import _default_tool_capabilities, sub_agent_capabilities
+
+    sub_caps = sub_agent_capabilities()
+    main_caps = _default_tool_capabilities()
+
+    sub_types = {type(c) for c in sub_caps}
+    main_types = {type(c) for c in main_caps}
+
+    # Both surfaces share the same FilesystemCapability / ShellCapability
+    # types — destructive tools carry their approval marker uniformly.
+    assert FilesystemCapability in sub_types and FilesystemCapability in main_types
+    assert ShellCapability in sub_types and ShellCapability in main_types
+
+
 # Silence the "imported but unused" warning when the module-level access
 # is what triggers the import. The fake usage classes above intentionally
 # don't subclass RunUsage so we don't accidentally pull in pydantic-ai

@@ -1,6 +1,6 @@
 # JAC — Implementation Progress
 
-> **Just Another Companion/CLI** · **Updated:** 2026-05-27 · keep this in sync as work lands.
+> **Just Another Companion/CLI** · **Updated:** 2026-05-28 · keep this in sync as work lands.
 
 This file is the **live progress dashboard**: what is shipped, what is active, what should happen next. Short enough for an agent to read at the start of every task.
 
@@ -18,7 +18,7 @@ For deeper context:
 ## Agent Start Here
 
 - **Roadmap was reframed on 2026-05-26 around the cost-efficiency thesis.** Old Phase 3 (Skills with `mode: minion`), Phase 5 (Minion runtime), and Phase 6 (MCP) were archived to [`progress-archive-2026-05.md`](progress-archive-2026-05.md). Read [`architecture.md`](architecture.md) §0 and [`design/cost-efficient-orchestration.md`](design/cost-efficient-orchestration.md) before touching anything in Phases A–G.
-- **Current active work:** **Phase E.2 — Bidirectional comms (D41)**. Implementation + tests landed on `phase-e-bidirectional-comms` (channel + `ask_main_agent` + `respond_to_sub_agent` + 5-round-trip cap with graceful finalize directive on the 6th ask + flag-gated capability wiring + flag-gated prompt addendum). Only manual UX validation with the flag flipped on remains before merge. E.1 (parallel spawn via `spawn_sub_agents`) was the prior slice. Phase C (deterministic hooks) was dropped — the complexity doesn't earn its keep given that `success_criteria` in the task packet and a post-return `run_shell` call already cover the verification use case without any framework machinery.
+- **Current active work:** **Phase E.2 + E.2.1 on `phase-e-bidirectional-comms`**. E.2 D41 bidirectional comms (channel + `ask_main_agent` + `respond_to_sub_agent` + 5-round-trip cap with graceful finalize directive on the 6th ask + flag-gated capability wiring + flag-gated prompt addendum) plus the manual-validation follow-up E.2.1 (sub-agent now shares the main agent's HITL approval handler + skills + A2A capabilities — destructive sub-agent tool calls go through the same approval flow). E.1 (parallel spawn via `spawn_sub_agents`) was the prior slice. Phase C (deterministic hooks) was dropped — `success_criteria` in the task packet and a post-return `run_shell` call already cover the verification use case without framework machinery.
 - **Released:** v0.3.0 (Phases A + B, 2026-05-27) · v0.4.0 (Phase D skill loader, 2026-05-27).
 - **Terminology change:** "Minion" is retired. New name: **sub-agent**. If you touch old "minion" references in unrelated changes, rename in the same commit.
 - **A2A is feature-complete** for its v1 scope. Phase 4.e (OIDC/GCP) was demoted to Phase G; not urgent.
@@ -42,7 +42,7 @@ For deeper context:
 | Phase B — Sub-agent tool | ✅ Complete (v0.3.0) | `spawn_sub_agent`, packet model, tier cascade (small→medium→large, never down), depth cap = 1 structural, HITL via existing approval flow, UsageTracker.add_sub_agent + JSONL `kind=sub_agent:<tier>`, `/tokens` line. Hooks shape locked, runner stubbed (Phase C). |
 | Phase C — Deterministic hooks | 🚫 Dropped | Complexity didn't earn its keep; `success_criteria` + post-return `run_shell` covers the use case |
 | **Phase D — Skill loader** | ✅ Complete (v0.4.0) | Loader walks project/user/package; 2 KB prompt cap with name-only fallback; `load_skill` tool; `/skill list|use|reload`; 3 reference skills (`code-review`, `summarize-large-files`, `verify-change`); A2A AgentCard publishes loaded skills as `jac-skill-<name>` entries. |
-| **Phase E — Parallel + bidirectional** | 🚧 In progress | E.1 parallel `spawn_sub_agents` shipped; E.2 D41 bidirectional comms behind feature flag is next |
+| **Phase E — Parallel + bidirectional** | 🚧 In progress | E.1 parallel `spawn_sub_agents` shipped; E.2 D41 bidirectional comms + E.2.1 sub-agent HITL/skills/A2A parity landed behind feature flag |
 | **Phase F — MCP loader** | ⏸ Future | **Promoted from old Phase G (2026-05-27)** — MCP is the ecosystem surface most users try first; precedes Plan Mode |
 | Phase G — Plan Mode | ⏸ Future | Pulled forward from v2 (D23 promoted); demoted from old Phase F to follow MCP |
 | Phase H — A2A 4.e + broader tests | ⏸ Future | OIDC/GCP A2A auth; broader test coverage; eval-loop work tracked under Phase 7 |
@@ -162,13 +162,41 @@ For deeper context:
 - [x] Renderer markers + Rich panels: dedicated `SubAgentSpawned` / `SubAgentQuestion` / `SubAgentAnswer` / `SubAgentCompleted` events on the bus, painted as Rich panels (blue spawn start with objective, yellow question, cyan answer, single-line green/red completed). `/spawns` slash command lists every parked channel. Status bar shows `spawns:N` segment when anything is in flight.
 - [x] Conditional prompt addendum `gru_bidirectional.md` appended to `gru_system.md` only when flag is on (we never describe tools the agent doesn't have). New section in `sub_agent_system.md` covering `ask_main_agent` use, the cap, and the finalize directive.
 - [x] Tests (21 new, all 48 sub-agent tests + 476 total green): capability wiring both flags, jac_tool surface, no-channel fail-fast, happy-path single round-trip, multi round-trip, cap → finalize directive, unknown / already-finished spawn_id error rendering, cancellation cleanup, round_trip counter behaviour, prompt addendum present/absent, lifecycle event order (Spawned → Question → Answer → Completed), sequential path emits no SubAgent* events, error path still emits Completed, `/spawns` empty + populated state, status bar segment visibility.
+- [x] Manual UX validation pass (2026-05-28): parallel + bidirectional happy paths confirmed; surfaced the parallel-approval clutter (tracked in E.3) and the sub-agent-without-HITL safety gap (fixed in E.2.1 below).
+
+### E.2.1 Sub-agent capability parity with main agent
+
+- [x] `sub_agent_capabilities()` now accepts `hooks`, `approval`, `skills_capability`, `a2a_capability` kwargs. When supplied (REPL path), sub-agent destructive tool calls (`write_file`, `edit_file`, `delete_file`, `run_shell`, `remember`) route through the **same HITL approval handler** as the main agent — no walk-away on destructive ops until v2 YOLO/sandboxing lands.
+- [x] Skills + A2A capabilities are shared instances (not duplicates), so `/skill reload` is observed by spawned sub-agents and the guest A2A server stays singular. Rationale: a sub-agent talking to a remote A2A peer (or following a loaded skill) keeps the (often large) response in the *sub-agent's* context — on-thesis for cost-efficient delegation.
+- [x] REPL wraps `sub_agent_capabilities` in a closure capturing `hooks` / `approval` / `skills_capability` / `a2a_capability`; the `SubAgentCapability.capability_factory` signature stays `(allowed_tools, *, channel=None)` so existing call sites and tests continue to work.
+- [x] `sub_agent_system.md` updated: prompt now states destructive tools require HITL approval and lists skills + A2A as available.
+- [x] Tests: bare-factory (no kwargs) keeps the silent/unguarded behaviour for hermetic tests; with-kwargs path inserts hooks/approval/skills/a2a by identity; destructive tool capability types match between main and sub.
 - [ ] Validation: flag stays off in v1 ship; flip on after manual testing demonstrates no UX regressions.
 
 ### E.3 Polish (post-bidirectional)
 
 - [ ] Batched approval line: `Approve N spawns? [a]ll [d]eny [r]eview each` (renderer special-case for `spawn_sub_agents`)
+- [ ] Parallel-spawn approval panel: summary view of N spawns (label / tier / 1-line objective) instead of dumping `spawns` JSON inline with `+1 more` truncation; expandable affordance for the full packet
+- [ ] Per-spawn completion line as each parallel worker finishes (`✓ spawn N (label) done · turns=N`), not just the combined block at the end
 - [ ] Counter-tier deny flow via D26's `denied_with_feedback("retry tier=large")` (D42) — carried over from Phase B
 - [ ] Reference example `examples/sub-agent-summarize/` — carried over from Phase B
+
+---
+
+## Queued — Tool polish ⏸
+
+Cross-cutting bucket for small enhancements to existing first-party tools — not big enough to warrant their own phase, valuable enough to track.
+
+### Clarify tool — richer ask-the-user surface
+
+Today `clarify(reason, question, options[2-8])` is single-select only. Surfaced during Phase E manual UX validation: this is too narrow for several real cases (multi-pick lists, "or describe in your own words", picking from a list with per-option context).
+
+- [ ] `multi_select: bool = False` — when true, the renderer offers a checkbox-style picker and the tool returns a list of selected option strings (vs the current single string)
+- [ ] `allow_custom: bool = False` — adds an "Other (describe)" affordance; when chosen the tool returns the user's free-text reply
+- [ ] `option_descriptions: list[str] | None` — optional one-line context per option, rendered below the option label
+- [ ] Keep the existing single-select / no-description signature working unchanged (defaults preserve current behaviour)
+- [ ] Update the model's prompt-side guidance in `gru_system.md` so the agent knows when each new knob is appropriate
+- [ ] Tests: each new knob (passthrough when off, expected behaviour when on, mixed combinations)
 
 ---
 

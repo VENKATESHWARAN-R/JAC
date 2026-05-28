@@ -19,6 +19,7 @@ by the CLI's ``--resume`` / ``--session`` flags.
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
@@ -378,12 +379,35 @@ async def _repl_loop(
     # over bus + summarizer_model so spawned sub-agents inherit them).
     # ``None`` profile disables spawning (the tool will error fail-fast
     # with a setup message).
+    #
+    # Closure captures the shared bus-bound capabilities so a spawned
+    # sub-agent's tool calls emit onto the same bus the CLI renderer
+    # reads (lifecycle events visible) AND its destructive tools route
+    # through the same HITL approval handler the main agent uses. Same
+    # ``skills_capability`` / ``a2a_capability`` instances are reused so
+    # ``/skill reload`` is observed by both surfaces and the guest A2A
+    # server isn't duplicated. ``allowed_tools`` / ``channel`` continue
+    # to flow from the spawn call site untouched.
+    def _sub_agent_capability_factory(
+        allowed_tools: list[str] | None = None,
+        *,
+        channel: Any = None,
+    ) -> list[Any]:
+        return sub_agent_capabilities(
+            allowed_tools,
+            channel=channel,
+            hooks=hooks,
+            approval=approval,
+            skills_capability=skills_capability,
+            a2a_capability=a2a_capability,
+        )
+
     if active_profile is not None:
         set_sub_agent_capability(
             SubAgentCapability(
                 profile=active_profile,
                 base_prompt=load_prompt("sub_agent_system").strip(),
-                capability_factory=sub_agent_capabilities,
+                capability_factory=_sub_agent_capability_factory,
             )
         )
     else:
