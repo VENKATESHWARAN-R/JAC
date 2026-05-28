@@ -190,5 +190,6 @@ If a task seems to require any v2 item, stop and ask before scaffolding.
 - Structural decision → `docs/architecture.md` §5 in the same change.
 - Vision or scope shift → `docs/idea.md`.
 - Work lands → `docs/progress.md` + relevant `docs/user-guide/*.md` page if user-visible.
+- **CLI surface changes** (new/renamed Typer command, root flag, slash command, A2A peer auth shape, budget kind, etc.) → update [`docs/user-guide/cli-reference.md`](docs/user-guide/cli-reference.md) **and** the shipped [`src/jac/data/skills/jac-cli/SKILL.md`](src/jac/data/skills/jac-cli/SKILL.md) in the same change. The skill is what Gru consults when the user asks "how do I run X" — drift here means Gru improvises wrong commands.
 - When updating docs, **replace outdated information** — don't append. One fact, one home.
 - Don't accumulate undocumented architectural debt.

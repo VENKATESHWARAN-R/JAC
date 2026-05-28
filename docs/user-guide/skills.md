@@ -126,13 +126,14 @@ Gru will see `my-checklist` in its system prompt, recognize the match, call `loa
 
 ## Reference skills
 
-JAC ships three reference skills you can use as templates or tune for your own repo. They live under `src/jac/data/skills/` in the installed package; override them by creating a skill with the same name under `~/.jac/skills/` or `<repo>/.agents/skills/`.
+JAC ships four reference skills you can use as templates or tune for your own repo. They live under `src/jac/data/skills/` in the installed package; override them by creating a skill with the same name under `~/.jac/skills/` or `<repo>/.agents/skills/`.
 
 | Name | When to use |
 | --- | --- |
 | `code-review` | Reviewing a diff or branch before it ships. Lays out the five-question filter and recommends per-file sub-agent delegation for large diffs. |
 | `summarize-large-files` | Reading a file that would otherwise blow up your context. Pushes the model toward `spawn_sub_agent(tier="small")` rather than pulling 50k tokens into the main loop. |
 | `verify-change` | Running the project's check suite after an edit. References `just check` and shows how to structure verification steps in a sub-agent's `success_criteria`. |
+| `jac-cli` | Composing JAC CLI invocations and REPL slash commands — flag combinations, A2A peer auth shapes (bearer / API key / OAuth2), budget kinds. Loaded when the user asks "how do I run X in JAC". Kept in sync with [CLI reference](cli-reference.md) per CLAUDE.md policy. |
 
 Run `/skill list` to see them in your session.
 
