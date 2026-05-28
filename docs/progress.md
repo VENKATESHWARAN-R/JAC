@@ -18,7 +18,7 @@ For deeper context:
 ## Agent Start Here
 
 - **Roadmap was reframed on 2026-05-26 around the cost-efficiency thesis.** Old Phase 3 (Skills with `mode: minion`), Phase 5 (Minion runtime), and Phase 6 (MCP) were archived to [`progress-archive-2026-05.md`](progress-archive-2026-05.md). Read [`architecture.md`](architecture.md) §0 and [`design/cost-efficient-orchestration.md`](design/cost-efficient-orchestration.md) before touching anything in Phases A–G.
-- **Current active work:** **Phase E.2 + E.2.1 + E.2.2 on `phase-e-bidirectional-comms`**. E.2 D41 bidirectional comms (channel + `ask_main_agent` + `respond_to_sub_agent` + 5-round-trip cap with graceful finalize directive on the 6th ask + flag-gated capability wiring + flag-gated prompt addendum), E.2.1 sub-agent HITL/skills/A2A parity with main agent, and E.2.2 human-readable `sub-N` spawn IDs + "who's asking" on approval panels. E.1 (parallel spawn via `spawn_sub_agents`) was the prior slice. Phase C (deterministic hooks) was dropped — `success_criteria` in the task packet and a post-return `run_shell` call already cover the verification use case without framework machinery.
+- **Current active work:** **Phase E.2 + E.2.1 + E.2.2 on `phase-e-bidirectional-comms`**. E.2 D41 bidirectional comms (channel + `ask_main_agent` + `respond_to_sub_agent` + 5-round-trip cap with graceful finalize directive on the 6th ask + flag-gated capability wiring + flag-gated prompt addendum), E.2.1 sub-agent HITL/skills/A2A parity with main agent, and E.2.2 human-readable `minion-N` spawn IDs + "who's asking" on approval panels. E.1 (parallel spawn via `spawn_sub_agents`) was the prior slice. Phase C (deterministic hooks) was dropped — `success_criteria` in the task packet and a post-return `run_shell` call already cover the verification use case without framework machinery.
 - **Released:** v0.3.0 (Phases A + B, 2026-05-27) · v0.4.0 (Phase D skill loader, 2026-05-27).
 - **Terminology change:** "Minion" is retired. New name: **sub-agent**. If you touch old "minion" references in unrelated changes, rename in the same commit.
 - **A2A is feature-complete** for its v1 scope. Phase 4.e (OIDC/GCP) was demoted to Phase G; not urgent.
@@ -42,7 +42,7 @@ For deeper context:
 | Phase B — Sub-agent tool | ✅ Complete (v0.3.0) | `spawn_sub_agent`, packet model, tier cascade (small→medium→large, never down), depth cap = 1 structural, HITL via existing approval flow, UsageTracker.add_sub_agent + JSONL `kind=sub_agent:<tier>`, `/tokens` line. Hooks shape locked, runner stubbed (Phase C). |
 | Phase C — Deterministic hooks | 🚫 Dropped | Complexity didn't earn its keep; `success_criteria` + post-return `run_shell` covers the use case |
 | **Phase D — Skill loader** | ✅ Complete (v0.4.0) | Loader walks project/user/package; 2 KB prompt cap with name-only fallback; `load_skill` tool; `/skill list|use|reload`; 3 reference skills (`code-review`, `summarize-large-files`, `verify-change`); A2A AgentCard publishes loaded skills as `jac-skill-<name>` entries. |
-| **Phase E — Parallel + bidirectional** | 🚧 In progress | E.1 parallel `spawn_sub_agents` shipped; E.2 D41 bidirectional comms + E.2.1 sub-agent HITL/skills/A2A parity + E.2.2 `sub-N` IDs + approval-panel "who's asking" landed behind feature flag |
+| **Phase E — Parallel + bidirectional** | 🚧 In progress | E.1 parallel `spawn_sub_agents` shipped; E.2 D41 bidirectional comms + E.2.1 sub-agent HITL/skills/A2A parity + E.2.2 `minion-N` IDs + approval-panel "who's asking" landed behind feature flag |
 | **Phase F — MCP loader** | ⏸ Future | **Promoted from old Phase G (2026-05-27)** — MCP is the ecosystem surface most users try first; precedes Plan Mode |
 | Phase G — Plan Mode | ⏸ Future | Pulled forward from v2 (D23 promoted); demoted from old Phase F to follow MCP |
 | Phase H — A2A 4.e + broader tests | ⏸ Future | OIDC/GCP A2A auth; broader test coverage; eval-loop work tracked under Phase 7 |
@@ -168,11 +168,11 @@ For deeper context:
 
 Surfaced during the same E.2 validation pass: the previous 8-hex spawn IDs (`a3f201b9`) were noise to the user, and the approval panel didn't tell you *which* agent (Gru? which sub-agent?) was requesting permission for a destructive tool. Both wins are tiny but compound over a session that fans out several sub-agents in parallel.
 
-- [x] `secrets.token_hex(4)` → session-scoped monotonic counter producing `sub-1`, `sub-2`, … Resets on REPL teardown / `_reset_pending_channels()` so every new session starts at `sub-1`. Sequential + bidirectional + parallel paths all mint via the same `_mint_spawn_id()` helper.
+- [x] `secrets.token_hex(4)` → session-scoped monotonic counter producing `minion-1`, `minion-2`, … Resets on REPL teardown / `_reset_pending_channels()` so every new session starts at `minion-1`. Sequential + bidirectional + parallel paths all mint via the same `_mint_spawn_id()` helper.
 - [x] `_current_agent_label` contextvar (default `"Gru"`) bound to the spawn_id inside `_run_sub_agent`. The shared approval handler reads it and stamps `agent_label` onto every `ApprovalRequest` event. Token reset in a `finally` so the sequential path doesn't leak the label back into Gru's context after the spawn returns.
 - [x] `ApprovalRequest` gained an `agent_label: str = "Gru"` field.
-- [x] CLI renderer's approval panel title now shows `approval needed · Gru` (dim) or `approval needed · sub-N` (blue, matching the spawn lifecycle panel colour) so the user can tell at a glance who is asking — important for parallel spawns and bidirectional sub-agents that may issue approvals across multiple turns.
-- [x] `gru_bidirectional.md` prompt example updated to use the `sub-1` shape so the model's mental model matches what it sees.
+- [x] CLI renderer's approval panel title now shows `approval needed · Gru` (dim) or `approval needed · minion-N` (blue, matching the spawn lifecycle panel colour) so the user can tell at a glance who is asking — important for parallel spawns and bidirectional sub-agents that may issue approvals across multiple turns.
+- [x] `gru_bidirectional.md` prompt example updated to use the `minion-1` shape so the model's mental model matches what it sees.
 - [x] Tests (+5): counter monotonicity, reset behaviour, default label is "Gru", inside-run label is the spawn_id (with contextvar reset confirmed), `ApprovalRequest` carries the label end-to-end through `make_approval_handler`.
 
 ### E.2.1 Sub-agent capability parity with main agent

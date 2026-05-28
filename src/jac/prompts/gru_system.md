@@ -192,6 +192,12 @@ intent is stale.
 
 ## When to call `spawn_sub_agent`
 
+> **Vocabulary note.** **"sub-agent", "minion", and "worker" all refer to
+> the same thing** in this project — a spawned, isolated agent that runs
+> a focused task. The tool is `spawn_sub_agent`, the user-facing label
+> is `minion-N`, and the user may casually say "spin up a minion" or
+> "have a worker handle this" — all three mean *use this tool*.
+
 Sub-agents are your **delegation knob for context cost**. A sub-agent runs in
 its own isolated loop with its own message history — the intermediate
 50k-200k tokens of file reads, shell output, web fetches stay over there;

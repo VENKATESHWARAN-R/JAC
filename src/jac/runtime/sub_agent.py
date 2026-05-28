@@ -324,22 +324,25 @@ read by ``respond_to_sub_agent``, popped when the worker task ends."""
 
 # Session-scoped monotonic counter. The previous design used
 # ``secrets.token_hex(4)`` which produced opaque 8-hex IDs (``a3f201b9``)
-# — fine for routing but useless for the human in the loop. ``sub-1``,
-# ``sub-2``, … give the user a stable label they can correlate across
+# — fine for routing but useless for the human in the loop. ``minion-1``,
+# ``minion-2``, … give the user a stable label they can correlate across
 # the approval panel, the spawn lifecycle events, ``/spawns``, and the
-# question/answer panels. Resets when the session ends (via
+# question/answer panels. The label leans into JAC's Gru-and-minions
+# theme; "sub-agent", "minion", and "worker" all refer to the same thing
+# in this codebase (the prompt teaches Gru this so casual user phrasing
+# routes correctly). Resets when the session ends (via
 # ``_reset_pending_channels`` from the REPL teardown path) so each new
-# session starts at ``sub-1``.
+# session starts at ``minion-1``.
 _spawn_counter: int = 0
 
 
 def _mint_spawn_id() -> str:
-    """Return the next ``sub-N`` ID and bump the counter. Not thread-safe;
+    """Return the next ``minion-N`` ID and bump the counter. Not thread-safe;
     the REPL runs single-threaded and concurrent spawn calls inside one
     ``asyncio.gather`` still serialise through the event loop."""
     global _spawn_counter
     _spawn_counter += 1
-    return f"sub-{_spawn_counter}"
+    return f"minion-{_spawn_counter}"
 
 
 def _reset_spawn_counter() -> None:
@@ -371,7 +374,7 @@ _current_agent_label: contextvars.ContextVar[str] = contextvars.ContextVar(
 
 def get_current_agent_label() -> str:
     """Return the label of the agent currently executing — ``"Gru"`` on
-    the main loop, ``"sub-N"`` inside a sub-agent's run. Read by
+    the main loop, ``"minion-N"`` inside a sub-agent's run. Read by
     :func:`jac.runtime.approval.make_approval_handler` to stamp the
     label onto every emitted :class:`ApprovalRequest`."""
     return _current_agent_label.get()
@@ -454,7 +457,7 @@ async def _run_sub_agent(
     accept ``channel`` (e.g. tests) are called positionally and never see
     the new kwarg.
 
-    ``spawn_id`` is the human-readable label (``"sub-N"``) used to stamp
+    ``spawn_id`` is the human-readable label (``"minion-N"``) used to stamp
     HITL approval requests so the user can tell which agent is asking.
     Optional for back-compat with tests that build their own runner; when
     omitted, the contextvar stays at the default ``"Gru"`` (which is wrong
@@ -475,7 +478,7 @@ async def _run_sub_agent(
     capabilities.insert(0, Instrumentation())
 
     # Bind the agent label so the shared approval handler can stamp
-    # "sub-N" (instead of the default "Gru") onto HITL prompts raised by
+    # "minion-N" (instead of the default "Gru") onto HITL prompts raised by
     # this sub-agent's tools. The bidirectional + parallel paths already
     # invoke us via ``asyncio.create_task`` (which forks the context), but
     # the sequential path awaits us directly — that path would otherwise
@@ -558,7 +561,7 @@ async def _run_sub_agent(
             )
     finally:
         # Restore the previous label so the sequential spawn path doesn't
-        # leak "sub-N" back into Gru's context after the spawn tool returns.
+        # leak "minion-N" back into Gru's context after the spawn tool returns.
         # The bidirectional + parallel paths fork context via
         # ``asyncio.create_task`` so the leak is impossible there, but
         # resetting unconditionally is cheap and keeps every path safe.

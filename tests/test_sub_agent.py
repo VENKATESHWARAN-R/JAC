@@ -936,7 +936,7 @@ async def test_bidirectional_happy_path_single_round_trip(
     # spawn_id is a hex token — pull it out of the result.
     import re
 
-    match = re.search(r"spawn_id=(sub-\d+)", first_result)
+    match = re.search(r"spawn_id=(minion-\d+)", first_result)
     assert match is not None
     spawn_id = match.group(1)
     assert spawn_id in _pending_channels
@@ -1592,28 +1592,28 @@ def test_sub_agent_destructive_tool_marked_approval_required() -> None:
     assert ShellCapability in sub_types and ShellCapability in main_types
 
 
-# ---------- sub-N spawn IDs + agent_label on approvals (E.2.2) ----------
+# ---------- minion-N spawn IDs + agent_label on approvals (E.2.2) ----------
 
 
 def test_mint_spawn_id_increments_monotonically() -> None:
-    """sub-1, sub-2, sub-3 — the user-facing counter the renderer keys
-    panels off of. Must not skip or restart mid-session."""
+    """minion-1, minion-2, minion-3 — the user-facing counter the
+    renderer keys panels off of. Must not skip or restart mid-session."""
     from jac.runtime.sub_agent import _mint_spawn_id
 
-    assert _mint_spawn_id() == "sub-1"
-    assert _mint_spawn_id() == "sub-2"
-    assert _mint_spawn_id() == "sub-3"
+    assert _mint_spawn_id() == "minion-1"
+    assert _mint_spawn_id() == "minion-2"
+    assert _mint_spawn_id() == "minion-3"
 
 
 def test_reset_pending_channels_resets_counter() -> None:
     """REPL teardown / per-test isolation must reset the counter so the
-    next session starts at sub-1, not sub-7."""
+    next session starts at minion-1, not minion-7."""
     from jac.runtime.sub_agent import _mint_spawn_id
 
     _mint_spawn_id()
     _mint_spawn_id()
     _reset_pending_channels()
-    assert _mint_spawn_id() == "sub-1"
+    assert _mint_spawn_id() == "minion-1"
 
 
 def test_get_current_agent_label_defaults_to_gru() -> None:
@@ -1627,7 +1627,7 @@ async def test_agent_label_is_set_to_spawn_id_inside_run(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Inside a sub-agent's Agent.run() the contextvar reports the
-    spawn_id, so the shared approval handler stamps "sub-N" onto its
+    spawn_id, so the shared approval handler stamps "minion-N" onto its
     ApprovalRequest emissions instead of the default "Gru"."""
     from jac.runtime.sub_agent import _run_sub_agent, get_current_agent_label
 
@@ -1661,16 +1661,16 @@ async def test_agent_label_is_set_to_spawn_id_inside_run(
     resolved = resolve_tier(p, "small")
     packet = SubAgentTaskPacket(objective="x", max_turns=3)
 
-    await _run_sub_agent(cap, packet, resolved, spawn_id="sub-7")
+    await _run_sub_agent(cap, packet, resolved, spawn_id="minion-7")
 
-    assert captured == ["sub-7"]
+    assert captured == ["minion-7"]
     # Outer scope sees the default again — per-task contextvar copy.
     assert get_current_agent_label() == "Gru"
 
 
 async def test_approval_request_carries_agent_label() -> None:
     """End-to-end: when the approval handler runs inside a sub-agent's
-    context, the ApprovalRequest event it emits carries the sub-N label,
+    context, the ApprovalRequest event it emits carries the minion-N label,
     not the default Gru. The renderer reads this to title the panel."""
     import asyncio as _asyncio
 
@@ -1701,9 +1701,9 @@ async def test_approval_request_carries_agent_label() -> None:
         captured.append(event)
         event.response_future.set_result(ApprovalResponse(approved=True))
 
-    # Bind the contextvar so the handler reads sub-3 (the synthetic
+    # Bind the contextvar so the handler reads minion-3 (the synthetic
     # spawn we're pretending is currently running).
-    token = _current_agent_label.set("sub-3")
+    token = _current_agent_label.set("minion-3")
     try:
         consumer = _asyncio.create_task(_consume_and_approve())
         await handler.handler(None, requests)  # type: ignore[arg-type]
@@ -1712,7 +1712,7 @@ async def test_approval_request_carries_agent_label() -> None:
         _current_agent_label.reset(token)
 
     assert len(captured) == 1
-    assert captured[0].agent_label == "sub-3"
+    assert captured[0].agent_label == "minion-3"
     assert captured[0].tool_name == "run_shell"
 
 

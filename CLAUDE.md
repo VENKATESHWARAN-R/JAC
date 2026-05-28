@@ -145,7 +145,7 @@ Phases in dependency order:
 - **Phase A — Context-cost foundation.** Tool result caps; tool result post-processor (small-tier AI summarization above threshold); cache-friendly prompt assembly; `/tokens` breakdown. **Shipped v0.3.0.**
 - **Phase B — Sub-agent tool.** Single `spawn_sub_agent(reason, task_summary, tier, task_packet)` tool. Sequential only. Tier-HITL approval. Depth cap = 1 (no recursive spawning). Logfire parent chain, budget rollup. **Shipped v0.3.0.**
 - **Phase C — Deterministic hooks.** **Dropped** — complexity didn't earn its keep; `success_criteria` in the packet + a post-return `run_shell` call cover verification without framework machinery.
-- **Phase D — Skill loader.** Anthropic community format. Loadable prompts / playbooks the main agent reads when relevant. **No `mode: minion`** — skills are advice, not a runtime mode. **Shipped v0.4.0.**
+- **Phase D — Skill loader.** Anthropic community format. Loadable prompts / playbooks the main agent reads when relevant. Skills are advice — they do NOT carry a runtime-mode declaration (no `mode:` frontmatter, no `mode: minion`, no `mode: planner` etc.). **Shipped v0.4.0.**
 - **Phase E — Parallel sub-agents + HITL multiplexing.** Polish on top of B/D. Next up.
 - **Phase F — MCP loader (D28).** Promoted from old Phase G after 2026-05-27 external review — MCP is the ecosystem surface most users try first.
 - **Phase G — Plan Mode (D23).** Pulled forward from v2; demoted from old Phase F to follow MCP.
@@ -165,7 +165,7 @@ What's still genuinely v2:
 
 If a task seems to require any v2 item, stop and ask before scaffolding.
 
-**Watch the terminology change:** "Minions" (Phase 5, was queued) is **archived**. The new path is a single `spawn_sub_agent` tool the main agent calls — no bespoke runtime mode, no separate factory. If you see "minion" in old code or docs and the change touches it, rename to "sub-agent" in the same commit.
+**On the "minion" name.** The *old Phase 5 minion runtime* — a separate process / runtime mode with its own factory — is **archived**. What we ship is a single `spawn_sub_agent` tool the main agent calls, plus `spawn_sub_agents` for parallel fan-out. The **vocabulary**, however, stayed: **"minion", "sub-agent", and "worker" are interchangeable terms in this project**, and the user-facing labels (spawn IDs, `/spawns` table, approval panel "who's asking") use `minion-N`. The code API surface stays `spawn_sub_agent`, `SubAgentCapability`, etc. — don't sweep-rename those. Gru's system prompt teaches the model the alias so casual user phrasing routes correctly.
 
 ## Documentation discipline
 

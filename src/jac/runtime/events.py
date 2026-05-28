@@ -92,9 +92,10 @@ class ApprovalRequest(JacEvent):
     before deciding what to send back to the agent loop.
 
     ``agent_label`` identifies which agent raised the call — ``"Gru"``
-    for the main loop, ``"sub-N"`` for a spawned sub-agent. Surfaced in
-    the approval panel title so the user can tell *who* is asking (one
-    sub-agent? several running in parallel?). Defaults to ``"Gru"`` to
+    for the main loop, ``"minion-N"`` for a spawned sub-agent. Surfaced
+    in the approval panel title so the user can tell *who* is asking
+    (one sub-agent? several running in parallel?). Defaults to ``"Gru"``
+    to
     keep behaviour unchanged for surfaces that haven't started reading
     the field yet.
     """

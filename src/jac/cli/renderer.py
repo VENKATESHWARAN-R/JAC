@@ -415,9 +415,9 @@ class CliRenderer:
             body.append(f"[dim]{key}:[/dim] {value_str}")
 
         # Title shows who's asking. ``Gru`` (the main agent) renders dim
-        # so the panel still reads as a generic approval; a ``sub-N``
+        # so the panel still reads as a generic approval; a ``minion-N``
         # label renders blue to match the spawn lifecycle panels so the
-        # user can correlate "which sub-agent is asking" at a glance.
+        # user can correlate "which minion is asking" at a glance.
         if event.agent_label == "Gru":
             title = "[dim]approval needed · Gru[/dim]"
         else:
