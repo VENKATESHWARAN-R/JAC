@@ -765,7 +765,7 @@ wheels = [
 
 [[package]]
 name = "jac"
-version = "0.4.0"
+version = "0.5.0"
 source = { editable = "." }
 dependencies = [
     { name = "fasta2a", extra = ["pydantic-ai"] },
