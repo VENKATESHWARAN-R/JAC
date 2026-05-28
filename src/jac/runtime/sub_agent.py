@@ -992,7 +992,45 @@ async def spawn_sub_agents(
         async def _run_one(spec: SubAgentSpawnSpec, r: _ResolvedTier) -> SubAgentResult:
             # Each parallel spawn mints its own ID so the approval panel
             # can tell the user which sub-agent is asking.
-            return await _run_sub_agent(cap, spec.task_packet, r, spawn_id=_mint_spawn_id())
+            spawn_id = _mint_spawn_id()
+            # E.3: emit lifecycle events so the user sees each parallel
+            # spawn appear ("▶ minion-N") and complete ("✓ minion-N done")
+            # individually instead of waiting for the whole batch to land
+            # as one combined output block. Mirrors the bidirectional path
+            # — the renderer paints the same panels there. ``ask_main_agent``
+            # is always 0 for parallel spawns (the tool isn't in their
+            # toolset; that's a single-spawn bidirectional feature).
+            await _emit_sub_agent_event(
+                SubAgentSpawned(
+                    spawn_id=spawn_id,
+                    tier=r.resolved,
+                    model=r.model,
+                    objective=spec.task_packet.objective[:200],
+                )
+            )
+            try:
+                result = await _run_sub_agent(cap, spec.task_packet, r, spawn_id=spawn_id)
+            except BaseException:
+                # Cancellation / out-of-band — still surface a Completed so
+                # the renderer doesn't leave a "▶" panel orphaned.
+                await _emit_sub_agent_event(
+                    SubAgentCompleted(
+                        spawn_id=spawn_id,
+                        exit_status="error",
+                        turns_used=0,
+                        ask_main_agent_count=0,
+                    )
+                )
+                raise
+            await _emit_sub_agent_event(
+                SubAgentCompleted(
+                    spawn_id=spawn_id,
+                    exit_status=result.exit_status,
+                    turns_used=result.turns_used,
+                    ask_main_agent_count=0,
+                )
+            )
+            return result
 
         tasks: list[asyncio.Task[SubAgentResult] | None] = [
             asyncio.create_task(_run_one(spec, r)) if isinstance(r, _ResolvedTier) else None

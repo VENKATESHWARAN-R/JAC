@@ -1716,6 +1716,176 @@ async def test_approval_request_carries_agent_label() -> None:
     assert captured[0].tool_name == "run_shell"
 
 
+# ---------- E.3: parallel-spawn lifecycle events + renderer panel ----------
+
+
+async def test_parallel_spawn_emits_spawned_and_completed_per_spawn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``spawn_sub_agents`` should now emit one ``SubAgentSpawned`` and
+    one ``SubAgentCompleted`` per sub-agent (E.3b), not just a single
+    combined block at the end. The user gets a blue panel as each spawn
+    starts and a green completion line as each finishes."""
+    from jac.runtime.events import EventBus, SubAgentCompleted, SubAgentSpawned
+
+    bus = EventBus()
+    set_sub_agent_event_bus(bus)
+
+    p = _profile(small=["anthropic:claude-haiku-4-5"])
+    set_sub_agent_capability(SubAgentCapability(p, "BASE", lambda _a: []))
+
+    class _U:
+        requests = 1
+        input_tokens = 10
+        output_tokens = 5
+
+    class _R:
+        output = "ok"
+
+        @property
+        def usage(self) -> _U:
+            return _U()
+
+    async def fake_run(self: Any, prompt: str, **_kwargs: Any) -> _R:
+        return _R()
+
+    monkeypatch.setattr("pydantic_ai.Agent.run", fake_run)
+
+    out = await spawn_sub_agents(
+        reason="batch",
+        task_summary="two things",
+        spawns=[
+            SubAgentSpawnSpec(tier="small", task_packet=SubAgentTaskPacket(objective="alpha")),
+            SubAgentSpawnSpec(tier="small", task_packet=SubAgentTaskPacket(objective="beta")),
+        ],
+    )
+
+    assert "[parallel spawn: 2 sub-agents]" in out
+
+    # Drain the bus and bucket events by type.
+    events: list[Any] = []
+    while not bus._queue.empty():
+        events.append(bus._queue.get_nowait())
+
+    spawned = [e for e in events if isinstance(e, SubAgentSpawned)]
+    completed = [e for e in events if isinstance(e, SubAgentCompleted)]
+
+    assert len(spawned) == 2, f"expected 2 Spawned, got {len(spawned)}: {events}"
+    assert len(completed) == 2, f"expected 2 Completed, got {len(completed)}: {events}"
+
+    # Every Spawned must pair with a Completed for the same spawn_id;
+    # otherwise the renderer would leave a ▶ panel orphaned.
+    spawned_ids = {e.spawn_id for e in spawned}
+    completed_ids = {e.spawn_id for e in completed}
+    assert spawned_ids == completed_ids
+
+
+async def test_renderer_special_cases_spawn_sub_agents_panel() -> None:
+    """The approval panel for ``spawn_sub_agents`` shows a per-spawn
+    summary table (label / tier / objective) instead of dumping the
+    nested ``spawns`` dict inline (E.3a)."""
+    import asyncio as _asyncio
+    from io import StringIO
+
+    from rich.console import Console
+
+    from jac.cli.renderer import CliRenderer
+    from jac.runtime.events import ApprovalRequest, ApprovalResponse
+
+    buf = StringIO()
+    console = Console(file=buf, force_terminal=False, width=120)
+    renderer = CliRenderer(console=console)
+
+    future: _asyncio.Future[ApprovalResponse] = _asyncio.get_running_loop().create_future()
+    event = ApprovalRequest(
+        tool_call_id="abc",
+        tool_name="spawn_sub_agents",
+        reason="three independent investigations",
+        args={
+            "reason": "three independent investigations",
+            "task_summary": "audit three modules",
+            "spawns": [
+                {
+                    "tier": "medium",
+                    "label": "runtime_audit",
+                    "task_packet": {
+                        "objective": "list and describe every file in src/jac/runtime/",
+                    },
+                },
+                {
+                    "tier": "small",
+                    "label": "cli_audit",
+                    "task_packet": {"objective": "list every file in src/jac/cli/"},
+                },
+                {
+                    "tier": "large",
+                    "task_packet": {"objective": "deep-review src/jac/capabilities/sub_agent.py"},
+                },
+            ],
+        },
+        response_future=future,
+        agent_label="Gru",
+    )
+
+    group = renderer._build_parallel_spawn_body(event)
+    # Render the group through the same console so we can grep the output.
+    console.print(group)
+    out = buf.getvalue()
+
+    # Header conveys the count + summary.
+    assert "spawn_sub_agents" in out
+    assert "3" in out
+    assert "parallel sub-agent" in out  # "agents" (plural)
+
+    # Per-spawn rows show label + tier + a piece of each objective.
+    assert "runtime_audit" in out
+    assert "cli_audit" in out
+    assert "medium" in out and "small" in out and "large" in out
+    assert "src/jac/runtime/" in out
+    assert "src/jac/cli/" in out
+
+    # The unlabeled spawn renders a "no label" placeholder, not the literal
+    # string "None" or empty cell that'd be hard to read.
+    assert "no label" in out or "(no label)" in out
+
+
+async def test_renderer_singular_in_single_parallel_spawn() -> None:
+    """One-spawn batch (rare but legal) reads "1 parallel sub-agent" not
+    "1 parallel sub-agents"."""
+    import asyncio as _asyncio
+    from io import StringIO
+
+    from rich.console import Console
+
+    from jac.cli.renderer import CliRenderer
+    from jac.runtime.events import ApprovalRequest, ApprovalResponse
+
+    buf = StringIO()
+    console = Console(file=buf, force_terminal=False, width=120)
+    renderer = CliRenderer(console=console)
+
+    future: _asyncio.Future[ApprovalResponse] = _asyncio.get_running_loop().create_future()
+    event = ApprovalRequest(
+        tool_call_id="abc",
+        tool_name="spawn_sub_agents",
+        reason="r",
+        args={
+            "reason": "r",
+            "task_summary": "ts",
+            "spawns": [
+                {"tier": "small", "label": "x", "task_packet": {"objective": "do x"}},
+            ],
+        },
+        response_future=future,
+    )
+    group = renderer._build_parallel_spawn_body(event)
+    console.print(group)
+    out = buf.getvalue()
+    assert "1" in out
+    # No trailing 's' on the noun for a singleton.
+    assert "1 parallel sub-agent\n" in out or "1 parallel sub-agent " in out
+
+
 # Silence the "imported but unused" warning when the module-level access
 # is what triggers the import. The fake usage classes above intentionally
 # don't subclass RunUsage so we don't accidentally pull in pydantic-ai

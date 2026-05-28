@@ -42,7 +42,7 @@ For deeper context:
 | Phase B — Sub-agent tool | ✅ Complete (v0.3.0) | `spawn_sub_agent`, packet model, tier cascade (small→medium→large, never down), depth cap = 1 structural, HITL via existing approval flow, UsageTracker.add_sub_agent + JSONL `kind=sub_agent:<tier>`, `/tokens` line. Hooks shape locked, runner stubbed (Phase C). |
 | Phase C — Deterministic hooks | 🚫 Dropped | Complexity didn't earn its keep; `success_criteria` + post-return `run_shell` covers the use case |
 | **Phase D — Skill loader** | ✅ Complete (v0.4.0) | Loader walks project/user/package; 2 KB prompt cap with name-only fallback; `load_skill` tool; `/skill list|use|reload`; 3 reference skills (`code-review`, `summarize-large-files`, `verify-change`); A2A AgentCard publishes loaded skills as `jac-skill-<name>` entries. |
-| **Phase E — Parallel + bidirectional** | 🚧 In progress | E.1 parallel `spawn_sub_agents` shipped; E.2 D41 bidirectional comms + E.2.1 sub-agent HITL/skills/A2A parity + E.2.2 `minion-N` IDs + approval-panel "who's asking" landed behind feature flag |
+| **Phase E — Parallel + bidirectional** | 🚧 In progress | E.1 parallel `spawn_sub_agents` shipped; E.2 D41 bidirectional comms + E.2.1 sub-agent HITL/skills/A2A parity + E.2.2 `minion-N` IDs + approval-panel "who's asking" + E.3a/b parallel approval panel + per-spawn lifecycle events landed behind feature flag |
 | **Phase F — MCP loader** | ⏸ Future | **Promoted from old Phase G (2026-05-27)** — MCP is the ecosystem surface most users try first; precedes Plan Mode |
 | Phase G — Plan Mode | ⏸ Future | Pulled forward from v2 (D23 promoted); demoted from old Phase F to follow MCP |
 | Phase H — A2A 4.e + broader tests | ⏸ Future | OIDC/GCP A2A auth; broader test coverage; eval-loop work tracked under Phase 7 |
@@ -186,9 +186,9 @@ Surfaced during the same E.2 validation pass: the previous 8-hex spawn IDs (`a3f
 
 ### E.3 Polish (post-bidirectional)
 
-- [ ] Batched approval line: `Approve N spawns? [a]ll [d]eny [r]eview each` (renderer special-case for `spawn_sub_agents`)
-- [ ] Parallel-spawn approval panel: summary view of N spawns (label / tier / 1-line objective) instead of dumping `spawns` JSON inline with `+1 more` truncation; expandable affordance for the full packet
-- [ ] Per-spawn completion line as each parallel worker finishes (`✓ spawn N (label) done · turns=N`), not just the combined block at the end
+- [x] **Parallel-spawn approval panel** (E.3a): `spawn_sub_agents` now renders a per-spawn summary table (`# / label / tier / one-line objective`) inside the approval panel instead of the generic key/value dump that previously truncated the nested `spawns` JSON to `+1 more`. Header shows count + reason + task_summary; pluralisation handled (`1 parallel sub-agent` vs `N parallel sub-agents`).
+- [x] **Per-spawn lifecycle events in parallel path** (E.3b): each worker in `spawn_sub_agents` emits `SubAgentSpawned` at start and `SubAgentCompleted` on finish (mirroring the bidirectional path). User sees a blue `▶ minion-N` panel as each spawn launches and a green `✓ minion-N done · turns=N` line as each completes — no more "nothing visible until the whole gather lands".
+- [ ] Batched approval line: `Approve N spawns? [a]ll [d]eny [r]eview each` — "review each" is structural work (would need to reshape the deferred tool call into N approvals at the pydantic-ai layer); skipped for this pass. The existing `y/n/r` prompt now applies to the summary view above.
 - [ ] Counter-tier deny flow via D26's `denied_with_feedback("retry tier=large")` (D42) — carried over from Phase B
 - [ ] Reference example `examples/sub-agent-summarize/` — carried over from Phase B
 

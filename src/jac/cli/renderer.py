@@ -17,10 +17,11 @@ import asyncio
 import random
 from typing import Any
 
-from rich.console import Console
+from rich.console import Console, Group
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.prompt import IntPrompt, Prompt
+from rich.table import Table
 
 from jac.runtime.events import (
     A2AInboundCall,
@@ -69,6 +70,7 @@ _THINKING_LABELS: tuple[str, ...] = (
 _ARG_VALUE_TRUNCATE_AT = 300
 _TOOL_ARG_INLINE_TRUNCATE_AT = 60
 _FEEDBACK_TRUNCATE_AT = 600  # cap free-text inputs from approval / clarify
+_PARALLEL_OBJECTIVE_TRUNCATE_AT = 70  # one-line objective per spawn in the batch panel
 
 _PLAN_GLYPH: dict[PlanStepStatus, str] = {
     "pending": "[dim]○[/dim]",
@@ -402,18 +404,14 @@ class CliRenderer:
         Three-way prompt (D26): ``y`` approves, ``n`` denies, ``r`` denies and
         opens a follow-up text input the user can use to redirect the model
         in-band without spending a turn.
-        """
-        body: list[str] = [f"[bold]{event.tool_name}[/bold]"]
-        if event.reason:
-            body.append(f"[dim]reason:[/dim] {event.reason}")
-        for key, value in event.args.items():
-            if key == "reason":
-                continue
-            value_str = str(value)
-            if len(value_str) > _ARG_VALUE_TRUNCATE_AT:
-                value_str = value_str[: _ARG_VALUE_TRUNCATE_AT - 1] + "…"
-            body.append(f"[dim]{key}:[/dim] {value_str}")
 
+        ``spawn_sub_agents`` gets a special-case rendering (E.3): instead of
+        the generic key/value dump, the panel shows a per-spawn table with
+        label / tier / one-line objective. The single ``y/n/r`` prompt
+        still covers the whole batch — partial "review each" is structural
+        work for a later pass (it requires reshaping the deferred-tool
+        call into N separate approvals at the pydantic-ai layer).
+        """
         # Title shows who's asking. ``Gru`` (the main agent) renders dim
         # so the panel still reads as a generic approval; a ``minion-N``
         # label renders blue to match the spawn lifecycle panels so the
@@ -424,7 +422,26 @@ class CliRenderer:
             title = f"approval needed · [blue]{event.agent_label}[/blue]"
 
         self.console.print()
-        self.console.print(Panel("\n".join(body), title=title, border_style="yellow"))
+        if event.tool_name == "spawn_sub_agents":
+            self.console.print(
+                Panel(
+                    self._build_parallel_spawn_body(event),
+                    title=title,
+                    border_style="yellow",
+                )
+            )
+        else:
+            body: list[str] = [f"[bold]{event.tool_name}[/bold]"]
+            if event.reason:
+                body.append(f"[dim]reason:[/dim] {event.reason}")
+            for key, value in event.args.items():
+                if key == "reason":
+                    continue
+                value_str = str(value)
+                if len(value_str) > _ARG_VALUE_TRUNCATE_AT:
+                    value_str = value_str[: _ARG_VALUE_TRUNCATE_AT - 1] + "…"
+                body.append(f"[dim]{key}:[/dim] {value_str}")
+            self.console.print(Panel("\n".join(body), title=title, border_style="yellow"))
         try:
             choice = await asyncio.to_thread(
                 Prompt.ask,
@@ -444,6 +461,61 @@ class CliRenderer:
         if choice == "r":
             return await self._collect_approval_feedback()
         return ApprovalResponse(approved=False)
+
+    def _build_parallel_spawn_body(self, event: ApprovalRequest) -> Group:
+        """Render the body of a ``spawn_sub_agents`` approval panel.
+
+        Layout:
+
+            spawn_sub_agents — 2 parallel sub-agents
+            reason: <text>
+            task_summary: <text>
+            ────────────────────────────────────────
+             # │ label           │ tier   │ objective
+             1 │ runtime_summary │ medium │ List Python files in src/jac/runtime/
+             2 │ cli_summary     │ medium │ List Python files in src/jac/cli/
+
+        The generic key/value dump was hostile for this tool because the
+        ``spawns`` arg is a list of nested dicts; truncated at 240 chars it
+        rendered as ``spawns: [{'label': 'runtime…``"+1 more". The summary
+        view fits in the same vertical space and tells the user what they
+        actually need to decide on.
+        """
+        spawns_raw = event.args.get("spawns") or []
+        task_summary = event.args.get("task_summary")
+        count = len(spawns_raw) if isinstance(spawns_raw, list) else 0
+
+        header_lines: list[str] = [
+            f"[bold]spawn_sub_agents[/bold] — [bold]{count}[/bold] parallel sub-agent"
+            + ("s" if count != 1 else "")
+        ]
+        if event.reason:
+            header_lines.append(f"[dim]reason:[/dim] {event.reason}")
+        if isinstance(task_summary, str) and task_summary:
+            header_lines.append(f"[dim]task_summary:[/dim] {task_summary}")
+
+        table = Table(show_header=True, show_lines=False, expand=False, pad_edge=False)
+        table.add_column("#", style="dim", justify="right", width=2)
+        table.add_column("label", style="bold")
+        table.add_column("tier")
+        table.add_column("objective")
+
+        if isinstance(spawns_raw, list):
+            for idx, spec in enumerate(spawns_raw, start=1):
+                if not isinstance(spec, dict):
+                    table.add_row(str(idx), "?", "?", str(spec))
+                    continue
+                label = str(spec.get("label") or "[dim](no label)[/dim]")
+                tier = str(spec.get("tier") or "?")
+                packet = spec.get("task_packet") or {}
+                objective = ""
+                if isinstance(packet, dict):
+                    objective = str(packet.get("objective") or "")
+                if len(objective) > _PARALLEL_OBJECTIVE_TRUNCATE_AT:
+                    objective = objective[: _PARALLEL_OBJECTIVE_TRUNCATE_AT - 1] + "…"
+                table.add_row(str(idx), label, tier, objective or "[dim](none)[/dim]")
+
+        return Group(*[*[(line) for line in header_lines], "", table])
 
     async def _collect_approval_feedback(self) -> ApprovalResponse:
         """Collect a redirection on the approval deny path (D26).
