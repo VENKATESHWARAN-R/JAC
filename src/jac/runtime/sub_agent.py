@@ -27,7 +27,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import contextvars
-import secrets
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -323,6 +322,33 @@ main-agent turns — populated by ``spawn_sub_agent`` (bidirectional path),
 read by ``respond_to_sub_agent``, popped when the worker task ends."""
 
 
+# Session-scoped monotonic counter. The previous design used
+# ``secrets.token_hex(4)`` which produced opaque 8-hex IDs (``a3f201b9``)
+# — fine for routing but useless for the human in the loop. ``sub-1``,
+# ``sub-2``, … give the user a stable label they can correlate across
+# the approval panel, the spawn lifecycle events, ``/spawns``, and the
+# question/answer panels. Resets when the session ends (via
+# ``_reset_pending_channels`` from the REPL teardown path) so each new
+# session starts at ``sub-1``.
+_spawn_counter: int = 0
+
+
+def _mint_spawn_id() -> str:
+    """Return the next ``sub-N`` ID and bump the counter. Not thread-safe;
+    the REPL runs single-threaded and concurrent spawn calls inside one
+    ``asyncio.gather`` still serialise through the event loop."""
+    global _spawn_counter
+    _spawn_counter += 1
+    return f"sub-{_spawn_counter}"
+
+
+def _reset_spawn_counter() -> None:
+    """Reset the spawn counter. Called by ``_reset_pending_channels`` so
+    /exit + REPL teardown + per-test cleanup all reset together."""
+    global _spawn_counter
+    _spawn_counter = 0
+
+
 # Threaded into the worker task's context so the ``ask_main_agent`` tool
 # can locate its channel without a closure (capability factories stay
 # plain functions). asyncio.Task copies the current context on creation
@@ -330,6 +356,25 @@ read by ``respond_to_sub_agent``, popped when the worker task ends."""
 _current_sub_agent_channel: contextvars.ContextVar[SubAgentChannel | None] = contextvars.ContextVar(
     "_current_sub_agent_channel", default=None
 )
+
+
+# Human-readable label for whoever is currently asking for approval.
+# Defaults to ``"Gru"`` (the main agent). Set to the spawn_id during a
+# sub-agent's ``Agent.run()`` so the approval handler — shared between
+# main and sub-agents — can stamp the right name onto the HITL prompt.
+# Per-task copy (same asyncio.Task contextvar semantics as the channel
+# binding above), so parallel spawns each see their own label.
+_current_agent_label: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "_current_agent_label", default="Gru"
+)
+
+
+def get_current_agent_label() -> str:
+    """Return the label of the agent currently executing — ``"Gru"`` on
+    the main loop, ``"sub-N"`` inside a sub-agent's run. Read by
+    :func:`jac.runtime.approval.make_approval_handler` to stamp the
+    label onto every emitted :class:`ApprovalRequest`."""
+    return _current_agent_label.get()
 
 
 def _current_channel_for_ask() -> SubAgentChannel | None:
@@ -351,12 +396,15 @@ def _get_pending_channel(spawn_id: str) -> SubAgentChannel | None:
 
 
 def _reset_pending_channels() -> None:
-    """Cancel every parked worker and clear the registry. Test fixture
-    hook + safety net for REPL shutdown."""
+    """Cancel every parked worker, clear the registry, and reset the
+    spawn counter. Test fixture hook + safety net for REPL shutdown.
+    Resetting the counter here keeps every new session's first spawn at
+    ``sub-1`` (and test isolation works for free)."""
     for channel in list(_pending_channels.values()):
         if channel.worker_task and not channel.worker_task.done():
             channel.worker_task.cancel()
     _pending_channels.clear()
+    _reset_spawn_counter()
 
 
 # ---------- packet → prompt rendering ----------
@@ -395,6 +443,8 @@ async def _run_sub_agent(
     packet: SubAgentTaskPacket,
     resolved: _ResolvedTier,
     channel: SubAgentChannel | None = None,
+    *,
+    spawn_id: str | None = None,
 ) -> SubAgentResult:
     """Build and run a sub-agent. Internal — wrapped by ``spawn_sub_agent``.
 
@@ -403,6 +453,13 @@ async def _run_sub_agent(
     can be attached with the right per-spawn queues. Factories that don't
     accept ``channel`` (e.g. tests) are called positionally and never see
     the new kwarg.
+
+    ``spawn_id`` is the human-readable label (``"sub-N"``) used to stamp
+    HITL approval requests so the user can tell which agent is asking.
+    Optional for back-compat with tests that build their own runner; when
+    omitted, the contextvar stays at the default ``"Gru"`` (which is wrong
+    for sub-agents but matches the pre-D41 behaviour and keeps simple
+    test factories working).
     """
     if channel is not None:
         capabilities = list(cap.capability_factory(packet.allowed_tools, channel=channel))
@@ -417,6 +474,17 @@ async def _run_sub_agent(
     # Always attach Instrumentation so spans nest under the spawn span.
     capabilities.insert(0, Instrumentation())
 
+    # Bind the agent label so the shared approval handler can stamp
+    # "sub-N" (instead of the default "Gru") onto HITL prompts raised by
+    # this sub-agent's tools. The bidirectional + parallel paths already
+    # invoke us via ``asyncio.create_task`` (which forks the context), but
+    # the sequential path awaits us directly — that path would otherwise
+    # leak the label back to Gru's context once we return. Save the token
+    # and reset in the finally block so every call site is safe.
+    label_token: contextvars.Token[str] | None = None
+    if spawn_id is not None:
+        label_token = _current_agent_label.set(spawn_id)
+
     instructions = _render_packet(packet, cap.base_prompt)
     sub_agent: Agent[None, str] = Agent(
         resolved.model,
@@ -424,69 +492,78 @@ async def _run_sub_agent(
         capabilities=capabilities,
     )
 
-    # Logfire span: parent of every model request the sub-agent makes.
-    truncated_objective = packet.objective[:100]
-    with logfire.span(
-        "spawn_sub_agent",
-        tier=resolved.resolved,
-        requested_tier=resolved.requested,
-        cascaded=resolved.cascaded,
-        model=resolved.model,
-        objective=truncated_objective,
-        max_turns=packet.max_turns,
-        allowed_tools=packet.allowed_tools or "<default>",
-        bidirectional=channel is not None,
-    ) as span:
-        try:
-            run_result = await sub_agent.run(
-                packet.objective,
-                usage_limits=None,
+    try:
+        # Logfire span: parent of every model request the sub-agent makes.
+        truncated_objective = packet.objective[:100]
+        with logfire.span(
+            "spawn_sub_agent",
+            tier=resolved.resolved,
+            requested_tier=resolved.requested,
+            cascaded=resolved.cascaded,
+            model=resolved.model,
+            objective=truncated_objective,
+            max_turns=packet.max_turns,
+            allowed_tools=packet.allowed_tools or "<default>",
+            bidirectional=channel is not None,
+        ) as span:
+            try:
+                run_result = await sub_agent.run(
+                    packet.objective,
+                    usage_limits=None,
+                )
+            except Exception as exc:
+                span.set_attribute("exit_status", "error")
+                if channel is not None:
+                    span.set_attribute("ask_main_agent_count", channel.round_trips)
+                span.record_exception(exc)
+                return SubAgentResult(
+                    output=f"Sub-agent failed: {exc}",
+                    turns_used=0,
+                    resolved_tier=resolved.resolved,
+                    resolved_model=resolved.model,
+                    exit_status="error",
+                )
+
+            # ``AgentRunResult.usage`` is a property in current pydantic-ai
+            # (it used to be a method; the deprecation warning bites the moment
+            # we call it). Read once, reuse twice.
+            usage = run_result.usage
+            turns = int(getattr(usage, "requests", 0))
+            # max_turns check is informational here — pydantic-ai's own
+            # usage_limits will enforce hard caps in a follow-up. For now we
+            # surface the status when the sub-agent burned the budget.
+            exit_status: ExitStatus = "max_turns" if turns >= packet.max_turns else "ok"
+
+            # Forward token usage to the main session's tracker so spawn
+            # cost rolls up into session_total (per the dashboard).
+            from jac.runtime.sub_agent_usage import record_sub_agent_usage
+
+            await record_sub_agent_usage(
+                input_tokens=int(getattr(usage, "input_tokens", 0) or 0),
+                output_tokens=int(getattr(usage, "output_tokens", 0) or 0),
+                tier=resolved.resolved,
             )
-        except Exception as exc:
-            span.set_attribute("exit_status", "error")
+
+            span.set_attribute("turns_used", turns)
+            span.set_attribute("exit_status", exit_status)
             if channel is not None:
                 span.set_attribute("ask_main_agent_count", channel.round_trips)
-            span.record_exception(exc)
+
             return SubAgentResult(
-                output=f"Sub-agent failed: {exc}",
-                turns_used=0,
+                output=str(run_result.output),
+                turns_used=turns,
                 resolved_tier=resolved.resolved,
                 resolved_model=resolved.model,
-                exit_status="error",
+                exit_status=exit_status,
             )
-
-        # ``AgentRunResult.usage`` is a property in current pydantic-ai
-        # (it used to be a method; the deprecation warning bites the moment
-        # we call it). Read once, reuse twice.
-        usage = run_result.usage
-        turns = int(getattr(usage, "requests", 0))
-        # max_turns check is informational here — pydantic-ai's own
-        # usage_limits will enforce hard caps in a follow-up. For now we
-        # surface the status when the sub-agent burned the budget.
-        exit_status: ExitStatus = "max_turns" if turns >= packet.max_turns else "ok"
-
-        # Forward token usage to the main session's tracker so spawn
-        # cost rolls up into session_total (per the dashboard).
-        from jac.runtime.sub_agent_usage import record_sub_agent_usage
-
-        await record_sub_agent_usage(
-            input_tokens=int(getattr(usage, "input_tokens", 0) or 0),
-            output_tokens=int(getattr(usage, "output_tokens", 0) or 0),
-            tier=resolved.resolved,
-        )
-
-        span.set_attribute("turns_used", turns)
-        span.set_attribute("exit_status", exit_status)
-        if channel is not None:
-            span.set_attribute("ask_main_agent_count", channel.round_trips)
-
-        return SubAgentResult(
-            output=str(run_result.output),
-            turns_used=turns,
-            resolved_tier=resolved.resolved,
-            resolved_model=resolved.model,
-            exit_status=exit_status,
-        )
+    finally:
+        # Restore the previous label so the sequential spawn path doesn't
+        # leak "sub-N" back into Gru's context after the spawn tool returns.
+        # The bidirectional + parallel paths fork context via
+        # ``asyncio.create_task`` so the leak is impossible there, but
+        # resetting unconditionally is cheap and keeps every path safe.
+        if label_token is not None:
+            _current_agent_label.reset(label_token)
 
 
 def _render_final_result(result: SubAgentResult, resolved: _ResolvedTier) -> str:
@@ -592,14 +669,16 @@ async def _spawn_bidirectional(
     """Bidirectional path for ``spawn_sub_agent``. Wraps the sub-agent
     in a background task so the spawn tool can return mid-run when the
     sub-agent asks a question."""
-    spawn_id = secrets.token_hex(4)
+    spawn_id = _mint_spawn_id()
     channel = SubAgentChannel(
         spawn_id=spawn_id,
         resolved=resolved,
         objective=packet.objective[:200],
     )
     _pending_channels[spawn_id] = channel
-    channel.worker_task = asyncio.create_task(_run_sub_agent(cap, packet, resolved, channel))
+    channel.worker_task = asyncio.create_task(
+        _run_sub_agent(cap, packet, resolved, channel, spawn_id=spawn_id)
+    )
 
     # Tell the renderer a worker is now running. Sequential spawns get
     # visibility via the existing ToolCallStarted line; bidirectional
@@ -675,7 +754,8 @@ async def spawn_sub_agent(
     if get_settings().cost.sub_agent_bidirectional:
         return await _spawn_bidirectional(cap, packet, resolved)
 
-    result = await _run_sub_agent(cap, packet, resolved)
+    spawn_id = _mint_spawn_id()
+    result = await _run_sub_agent(cap, packet, resolved, spawn_id=spawn_id)
     return _render_final_result(result, resolved)
 
 
@@ -907,7 +987,9 @@ async def spawn_sub_agents(
         # at the bus level (the renderer reads the queue one event at a
         # time), so HITL multiplexing is correct by construction.
         async def _run_one(spec: SubAgentSpawnSpec, r: _ResolvedTier) -> SubAgentResult:
-            return await _run_sub_agent(cap, spec.task_packet, r)
+            # Each parallel spawn mints its own ID so the approval panel
+            # can tell the user which sub-agent is asking.
+            return await _run_sub_agent(cap, spec.task_packet, r, spawn_id=_mint_spawn_id())
 
         tasks: list[asyncio.Task[SubAgentResult] | None] = [
             asyncio.create_task(_run_one(spec, r)) if isinstance(r, _ResolvedTier) else None

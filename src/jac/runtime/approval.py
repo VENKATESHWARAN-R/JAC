@@ -70,6 +70,14 @@ def make_approval_handler(bus: EventBus) -> HandleDeferredToolCalls[Any]:
         if not requests.approvals:
             return None
 
+        # Resolve which agent is asking. Imported lazily so this module
+        # stays free of a hard dependency on the sub-agent runtime — the
+        # approval handler is also used in headless tests that don't load
+        # sub_agent.py at all.
+        from jac.runtime.sub_agent import get_current_agent_label
+
+        agent_label = get_current_agent_label()
+
         approvals: dict[str, bool | ToolApproved | ToolDenied] = {}
         for call in requests.approvals:
             args = _coerce_args(call.args)
@@ -82,6 +90,7 @@ def make_approval_handler(bus: EventBus) -> HandleDeferredToolCalls[Any]:
                     reason=reason if isinstance(reason, str) else None,
                     args=args,
                     response_future=future,
+                    agent_label=agent_label,
                 )
             )
             response = await future

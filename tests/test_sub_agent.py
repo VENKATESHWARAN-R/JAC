@@ -936,7 +936,7 @@ async def test_bidirectional_happy_path_single_round_trip(
     # spawn_id is a hex token — pull it out of the result.
     import re
 
-    match = re.search(r"spawn_id=([0-9a-f]+)", first_result)
+    match = re.search(r"spawn_id=(sub-\d+)", first_result)
     assert match is not None
     spawn_id = match.group(1)
     assert spawn_id in _pending_channels
@@ -1590,6 +1590,130 @@ def test_sub_agent_destructive_tool_marked_approval_required() -> None:
     # types — destructive tools carry their approval marker uniformly.
     assert FilesystemCapability in sub_types and FilesystemCapability in main_types
     assert ShellCapability in sub_types and ShellCapability in main_types
+
+
+# ---------- sub-N spawn IDs + agent_label on approvals (E.2.2) ----------
+
+
+def test_mint_spawn_id_increments_monotonically() -> None:
+    """sub-1, sub-2, sub-3 — the user-facing counter the renderer keys
+    panels off of. Must not skip or restart mid-session."""
+    from jac.runtime.sub_agent import _mint_spawn_id
+
+    assert _mint_spawn_id() == "sub-1"
+    assert _mint_spawn_id() == "sub-2"
+    assert _mint_spawn_id() == "sub-3"
+
+
+def test_reset_pending_channels_resets_counter() -> None:
+    """REPL teardown / per-test isolation must reset the counter so the
+    next session starts at sub-1, not sub-7."""
+    from jac.runtime.sub_agent import _mint_spawn_id
+
+    _mint_spawn_id()
+    _mint_spawn_id()
+    _reset_pending_channels()
+    assert _mint_spawn_id() == "sub-1"
+
+
+def test_get_current_agent_label_defaults_to_gru() -> None:
+    """Outside any sub-agent run the label is the main agent — Gru."""
+    from jac.runtime.sub_agent import get_current_agent_label
+
+    assert get_current_agent_label() == "Gru"
+
+
+async def test_agent_label_is_set_to_spawn_id_inside_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Inside a sub-agent's Agent.run() the contextvar reports the
+    spawn_id, so the shared approval handler stamps "sub-N" onto its
+    ApprovalRequest emissions instead of the default "Gru"."""
+    from jac.runtime.sub_agent import _run_sub_agent, get_current_agent_label
+
+    captured: list[str] = []
+
+    class _FakeUsage:
+        requests = 1
+        input_tokens = 10
+        output_tokens = 10
+
+    class _FakeRunResult:
+        output = "ok"
+
+        @property
+        def usage(self) -> _FakeUsage:
+            return _FakeUsage()
+
+    async def fake_run(self: Any, prompt: str, **_kwargs: Any) -> _FakeRunResult:
+        # The interesting assertion: inside the run, the label is bound.
+        captured.append(get_current_agent_label())
+        return _FakeRunResult()
+
+    monkeypatch.setattr("pydantic_ai.Agent.run", fake_run)
+
+    p = _profile(small=["anthropic:claude-haiku-4-5"])
+    cap = SubAgentCapability(
+        profile=p,
+        base_prompt="BASE",
+        capability_factory=lambda _allowed: [],
+    )
+    resolved = resolve_tier(p, "small")
+    packet = SubAgentTaskPacket(objective="x", max_turns=3)
+
+    await _run_sub_agent(cap, packet, resolved, spawn_id="sub-7")
+
+    assert captured == ["sub-7"]
+    # Outer scope sees the default again — per-task contextvar copy.
+    assert get_current_agent_label() == "Gru"
+
+
+async def test_approval_request_carries_agent_label() -> None:
+    """End-to-end: when the approval handler runs inside a sub-agent's
+    context, the ApprovalRequest event it emits carries the sub-N label,
+    not the default Gru. The renderer reads this to title the panel."""
+    import asyncio as _asyncio
+
+    from pydantic_ai.tools import DeferredToolRequests, ToolCallPart
+
+    from jac.runtime.approval import make_approval_handler
+    from jac.runtime.events import ApprovalRequest, ApprovalResponse, EventBus
+    from jac.runtime.sub_agent import _current_agent_label
+
+    bus = EventBus()
+    handler = make_approval_handler(bus)
+
+    call = ToolCallPart(
+        tool_name="run_shell",
+        args={"reason": "do the thing", "command": "ls"},
+        tool_call_id="abc",
+    )
+    requests = DeferredToolRequests(approvals=[call])
+
+    captured: list[ApprovalRequest] = []
+
+    async def _consume_and_approve() -> None:
+        # The bus is an asyncio.Queue under the hood; the public API is
+        # ``emit`` + ``stream``. Tests poke the queue directly to keep
+        # the consume-and-approve dance synchronous.
+        event = await bus._queue.get()
+        assert isinstance(event, ApprovalRequest)
+        captured.append(event)
+        event.response_future.set_result(ApprovalResponse(approved=True))
+
+    # Bind the contextvar so the handler reads sub-3 (the synthetic
+    # spawn we're pretending is currently running).
+    token = _current_agent_label.set("sub-3")
+    try:
+        consumer = _asyncio.create_task(_consume_and_approve())
+        await handler.handler(None, requests)  # type: ignore[arg-type]
+        await consumer
+    finally:
+        _current_agent_label.reset(token)
+
+    assert len(captured) == 1
+    assert captured[0].agent_label == "sub-3"
+    assert captured[0].tool_name == "run_shell"
 
 
 # Silence the "imported but unused" warning when the module-level access

@@ -6,11 +6,11 @@ that its task packet didn't answer. When that happens, `spawn_sub_agent`
 returns a block shaped like:
 
 ```
-[sub-agent → main: question pending] spawn_id=abc12345
+[sub-agent → main: question pending] spawn_id=sub-1
 
 <the sub-agent's question>
 
-Reply with `respond_to_sub_agent(reason=..., spawn_id='abc12345', answer=...)`. …
+Reply with `respond_to_sub_agent(reason=..., spawn_id='sub-1', answer=...)`. …
 ```
 
 **This is your cue to reply.** You may call other tools first if the

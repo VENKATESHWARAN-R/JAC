@@ -90,6 +90,13 @@ class ApprovalRequest(JacEvent):
     The consumer (renderer) is expected to resolve ``response_future`` with
     an :class:`ApprovalResponse`. The approval handler awaits the future
     before deciding what to send back to the agent loop.
+
+    ``agent_label`` identifies which agent raised the call — ``"Gru"``
+    for the main loop, ``"sub-N"`` for a spawned sub-agent. Surfaced in
+    the approval panel title so the user can tell *who* is asking (one
+    sub-agent? several running in parallel?). Defaults to ``"Gru"`` to
+    keep behaviour unchanged for surfaces that haven't started reading
+    the field yet.
     """
 
     tool_call_id: str
@@ -97,6 +104,7 @@ class ApprovalRequest(JacEvent):
     reason: str | None
     args: dict[str, Any]
     response_future: asyncio.Future[ApprovalResponse]
+    agent_label: str = "Gru"
 
 
 @dataclass(frozen=True, slots=True)

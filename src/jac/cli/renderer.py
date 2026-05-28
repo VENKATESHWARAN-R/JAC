@@ -414,8 +414,17 @@ class CliRenderer:
                 value_str = value_str[: _ARG_VALUE_TRUNCATE_AT - 1] + "…"
             body.append(f"[dim]{key}:[/dim] {value_str}")
 
+        # Title shows who's asking. ``Gru`` (the main agent) renders dim
+        # so the panel still reads as a generic approval; a ``sub-N``
+        # label renders blue to match the spawn lifecycle panels so the
+        # user can correlate "which sub-agent is asking" at a glance.
+        if event.agent_label == "Gru":
+            title = "[dim]approval needed · Gru[/dim]"
+        else:
+            title = f"approval needed · [blue]{event.agent_label}[/blue]"
+
         self.console.print()
-        self.console.print(Panel("\n".join(body), title="approval needed", border_style="yellow"))
+        self.console.print(Panel("\n".join(body), title=title, border_style="yellow"))
         try:
             choice = await asyncio.to_thread(
                 Prompt.ask,
