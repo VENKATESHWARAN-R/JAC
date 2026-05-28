@@ -46,6 +46,8 @@ Set `include_default_tools=False` for tests or minimal agents.
 | `ProcessCapability` | `capabilities/process.py` | Background processes — `start_process` / `kill_process` approval-gated |
 | `ClarifyCapability` | `capabilities/clarify.py` | `clarify` — numbered user picker via bus |
 | `A2ACapability` | `capabilities/a2a/` | Server lifecycle + `a2a_discover`, `a2a_call` |
+| `SkillsCapability` | `capabilities/skills.py` | `load_skill` — three-source layered loader (Phase D); injects name+description index into system prompt |
+| `SubAgentToolCapability` | `capabilities/sub_agent.py` | `spawn_sub_agent` + `spawn_sub_agents` — always approval-gated; only attached to host Gru (depth cap enforced by omission) |
 
 Guest Gru (inbound A2A) is a **separate** `Agent` built by `build_guest_gru` — read-only fs/search only, no bus, no approval, no plan/process/clarify/memory writes. See [A2A operator guide](../user-guide/a2a-operator.md).
 
@@ -129,12 +131,14 @@ Slash input is **never** sent to the model — unknown commands raise `UnknownSl
 
 ## What not to build here
 
-- Sub-agent runtime (Phase B — `SubAgentCapability` + `spawn_sub_agent`, design in [`design/cost-efficient-orchestration.md`](../design/cost-efficient-orchestration.md))
-- Post-flight hook runner (Phase C)
 - MCP loader (Phase F / D28)
 - Plan Mode toolset swap (Phase G / D23)
 - YOLO / Monty sandbox (v2 — D43, direct `pydantic-monty`)
 
-(Phase D / skill loader **is** built — see `jac/capabilities/skills.py` and the user-guide [Skills](../user-guide/skills.md) page.)
+Already built (do not reinvent):
 
-If a task needs those, stop and check [`progress.md`](../progress.md) first.
+- Phase B sub-agents — `SubAgentToolCapability` + `spawn_sub_agent` / `spawn_sub_agents` (see `jac/capabilities/sub_agent.py` + `jac/runtime/sub_agent.py`)
+- Phase D skill loader — `SkillsCapability` (see `jac/capabilities/skills.py` and the user-guide [Skills](../user-guide/skills.md) page)
+- Phase C deterministic hooks — **dropped** (D37); `success_criteria` + `run_shell` after sub-agent return covers the use case without framework machinery
+
+If a task needs anything above, stop and check [`progress.md`](../progress.md) first.

@@ -4,7 +4,7 @@
 
 JAC (**J**ust **A**nother **C**ompanion/CLI) is a Python CLI agent built on [Pydantic AI](https://ai.pydantic.dev/). It runs on your machine with your API keys, your files, and persistent sessions per git project.
 
-**Current release:** v0.2.0 (Phase 1.7 complete). A2A interoperability is partial (PR1–PR3) — see [A2A operator](a2a-operator.md).
+**Current release:** v0.4.0. Phases A + B (context-cost controls, sub-agents), Phase D (skill loader), and Phase 4 A2A (v1 scope) are shipped — see [Implementation progress](../progress.md) for the live state.
 
 ## Requirements
 
@@ -102,7 +102,7 @@ jac sessions
 
 Inside the REPL: `/sessions`, `/resume [ID]`, `/clear` — see [CLI reference](cli-reference.md).
 
-## What Gru can do in v0.2.0
+## What Gru can do in v0.4.0
 
 - Read and search the repo (`read_file`, `grep`, `glob`, `list_dir`)
 - Edit files and run shell commands **with your approval**
@@ -111,6 +111,8 @@ Inside the REPL: `/sessions`, `/resume [ID]`, `/clear` — see [CLI reference](c
 - Run long commands in the background (`start_process`, …)
 - Ask structured multiple-choice questions (`clarify`)
 - Maintain a visible checklist (`plan`, `update_plan`)
+- Delegate context-heavy work to isolated **sub-agents** (`spawn_sub_agent`, `spawn_sub_agents`) — see [Cost controls](cost-controls.md)
+- Load on-demand **skill playbooks** (`load_skill`) — see [Skills](skills.md)
 - Call remote A2A agents when configured (`a2a_call`) — see [A2A operator](a2a-operator.md)
 
 Project context from `<repo>/AGENTS.md` and `~/.jac/AGENTS.md` loads automatically. See [Sessions & memory](sessions-and-memory.md).

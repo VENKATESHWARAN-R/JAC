@@ -13,7 +13,6 @@ from . import paths
 _USER_SKELETON_DIRS = (
     paths.USER_WORKSPACE,
     paths.USER_PROMPTS_DIR,
-    paths.USER_MINIONS_DIR,
     paths.USER_SKILLS_DIR,
 )
 

@@ -61,10 +61,11 @@ Slash lines are handled locally — they are **not** sent to the model.
 | `/clear` | `/clear` | New session (prior session kept on disk) |
 | `/profile` | `/profile [NAME]` | List profiles or switch |
 | `/model` | `/model [PROVIDER:ID]` | Numbered picker or explicit model |
-| `/budget` | `/budget` | Show token budgets vs usage |
-| `/budget extend` | `/budget extend [KIND] N` | Raise limit for this session (`KIND`: `session_input`, `session_total`, `project_total`; default `session_total`) |
+| `/budget` | `/budget [extend [KIND] N]` | Show token budgets vs usage; `extend` raises the limit for this session (`KIND`: `session_input`, `session_total`, `project_total`; default `session_total`) |
 | `/tokens` | `/tokens` | Detailed token counters; shows a separate `a2a guest` line when inbound calls have consumed model tokens (counts toward `project_total` only) |
-| `/a2a` | see [A2A operator](a2a-operator.md) | Server + peers; `/a2a status` shows server state, peer count, and last 5 inbound calls from `inbound.jsonl` |
+| `/skill` | `/skill list\|use NAME\|reload` | Manage loaded skills — list active/shadowed, inject a skill body, or re-scan skill directories |
+| `/spawns` | `/spawns` | List currently-active bidirectional sub-agent channels (only populated when `cost.sub_agent_bidirectional` is on) |
+| `/a2a` | see [A2A operator](a2a-operator.md) | Server lifecycle, token, and peer management — `serve`, `stop`, `status`, `token`, `peers`, `peer add\|remove` |
 
 Tab completion: type `/` and start a command name (first word only).
 

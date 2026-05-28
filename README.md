@@ -6,10 +6,7 @@ JAC is a Python CLI that wraps an LLM with persistent memory, tools,
 human-in-the-loop gates, multi-provider credentials, and session continuity.
 It runs on your machine — your keys, your files, your context.
 
-> **Status:** **v0.2.0 alpha** (pre-release). Phase 1.7 is complete — compaction,
-> tiered profiles, slash commands, token budgets, plan persistence on resume.
-> Phase 4 A2A is in flight — feature-complete for the originally-scoped surface
-> (server, guest-Gru, outbound tools with auto-polling, pluggable peer auth, bidirectional file transfer, inbound usage accounting, retention timer); a [standalone data-analyst demo peer](examples/data-analyst-a2a/) is included. OIDC / GCP ID-token strategies (4.e) are next.
+> **Status:** **v0.4.0** (pre-release). Phases A + B shipped context-cost controls and sub-agents (`spawn_sub_agent`, tier HITL, parallel `spawn_sub_agents`). Phase D shipped the skill loader (Anthropic community format). Phase 4 A2A is feature-complete for v1 scope (server, guest Gru, outbound tools, pluggable peer auth, bidirectional file transfer, inbound accounting); a [standalone data-analyst demo peer](examples/data-analyst-a2a/) is included.
 > See [implementation progress](https://venkateshwaran-r.github.io/JAC/progress/) for the live state.
 
 ## What it does
@@ -35,7 +32,7 @@ It runs on your machine — your keys, your files, your context.
 uv tool install "git+https://github.com/VENKATESHWARAN-R/JAC.git"
 
 # One-off, no install
-uvx --from "git+https://github.com/VENKATESHWARAN-R/JAC.git" jac --help
+uv run --from "git+https://github.com/VENKATESHWARAN-R/JAC.git" jac --help
 
 # From a local clone
 git clone https://github.com/VENKATESHWARAN-R/JAC.git && cd JAC && uv sync

@@ -87,6 +87,13 @@ uv run jac --help                # full CLI help
 | Project memory (JAC-managed, auto-loaded) | `<repo>/.agents/memory.md` | **Markdown** |
 | User memory (JAC-managed, auto-loaded) | `~/.jac/memory.md` | **Markdown** |
 | Per-session token usage (D25 budgets) | `<repo>/.agents/usage.jsonl` | **JSONL** |
+| Tool-result cache (Phase A post-processor) | `<repo>/.agents/cache/tool-results/<session-id>/<call-id>.txt` | **plain text** |
+| A2A context threads (D24) | `<repo>/.agents/a2a/contexts/<context_id>.json` | **JSON** |
+| A2A inbound audit log (D24) | `<repo>/.agents/a2a/inbound.jsonl` | **JSONL** |
+| A2A received files (D33) | `<repo>/.agents/a2a/inbound-files/<task_id>/<file>` | binary |
+| A2A guest-upload files (D33) | `<repo>/.agents/a2a/guest-uploads/<context_id>/<file>` | binary |
+| Secrets backend (dotenv mode) | `~/.jac/.env` (`chmod 600`) | **dotenv** |
+| REPL command history | `~/.jac/history` | prompt-toolkit `FileHistory` |
 
 **Unified standards:** one format per category. YAML for human-edited structured data; JSON / JSONL for machine state; Markdown for prose; dotenv for secrets.
 

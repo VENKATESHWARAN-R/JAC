@@ -1,6 +1,6 @@
 # Codebase map
 
-> **Audience:** contributors navigating `src/jac/` as built in **v0.2.0**.
+> **Audience:** contributors navigating `src/jac/` as built in **v0.4.0**.
 
 Package root: `src/jac/`. Console entry: `jac.cli.app:main` (`pyproject.toml`).
 
@@ -10,7 +10,7 @@ For the rules behind this layout — what goes where, slash-vs-capability, when 
 
 ```text
 src/jac/
-├── __init__.py              # __version__ = "0.2.0"
+├── __init__.py              # __version__ = "0.4.0"
 ├── __main__.py              # python -m jac
 ├── config.py                # Settings, CompactionSettings, BudgetSettings
 ├── errors.py                # JacConfigError
@@ -45,6 +45,7 @@ src/jac/
 │           ├── budget.py    # /budget
 │           ├── tokens.py    # /tokens
 │           ├── skill.py     # /skill list|use|reload
+│           ├── spawns.py    # /spawns — list active bidirectional sub-agent channels (Phase E)
 │           └── a2a/         # /a2a multi-subcommand subpackage
 │               ├── __init__.py  # /a2a dispatcher
 │               ├── _args.py     # parsers
@@ -62,7 +63,10 @@ src/jac/
 │   ├── hooks.py             # make_hooks → EventBus (PAI Hooks wiring)
 │   ├── approval.py          # make_approval_handler (HandleDeferredToolCalls wiring)
 │   ├── observability.py     # logfire.configure() — global pipeline
-│   └── usage.py             # UsageTracker, BudgetLimits, usage.jsonl
+│   ├── usage.py             # UsageTracker, BudgetLimits, usage.jsonl
+│   ├── sub_agent.py         # spawn_sub_agent / spawn_sub_agents runners; SubAgentCapability factory; bidirectional channel (Phase B/E)
+│   ├── sub_agent_usage.py   # sub-agent cost attribution helpers (rolled into UsageTracker)
+│   └── tool_summarize.py    # maybe_summarize_tool_result — cheap-tier summarization gate (Phase A)
 ├── capabilities/
 │   ├── context.py           # ContextCapability — dynamic AGENTS.md/memory.md (get_instructions)
 │   ├── filesystem.py        # read/write/edit/list
@@ -75,10 +79,12 @@ src/jac/
 │   ├── process.py           # background processes (state on capability directly)
 │   ├── clarify.py           # clarify
 │   ├── skills.py            # SkillsCapability + load_skill (Phase D / D21) — three-source layered loader
+│   ├── sub_agent.py         # SubAgentToolCapability — registers spawn_sub_agent/spawn_sub_agents + bidirectional tools (Phase B/E)
 │   └── a2a/
 │       ├── __init__.py      # A2ACapability, make_a2a_capability
 │       ├── server.py        # A2AServer, uvicorn lifecycle
 │       ├── guest.py         # build_guest_gru (inbound)
+│       ├── guest_files.py   # file-part materialization for inbound A2A (Phase 4.d.4)
 │       ├── client.py        # a2a_discover, a2a_call
 │       ├── card.py          # Agent card JSON
 │       ├── auth.py          # Bearer middleware, token generation
@@ -124,6 +130,7 @@ Filename = command. Open `cli/slash/handlers/` to see the catalog.
 | `/tokens` | `handlers/tokens.py` | Detailed usage counters |
 | `/a2a serve|stop|status|token|peers|peer` | `handlers/a2a/<sub>.py` | A2A server + peers (one file per subcommand) |
 | `/skill list|use|reload` | `handlers/skill.py` | Community-format skill loader (Phase D / D21) |
+| `/spawns` | `handlers/spawns.py` | List active bidirectional sub-agent channels (Phase E) |
 
 Registration: import handlers in `jac/cli/slash/handlers/__init__.py`. Completer: `command_names()` in `repl.py`.
 
@@ -153,6 +160,10 @@ Registration: import handlers in `jac/cli/slash/handlers/__init__.py`. Completer
 | `a2a_discover` | a2a | No |
 | `a2a_call` | a2a | No |
 | `load_skill` | skills | No |
+| `spawn_sub_agent` | sub_agent | Yes (tier + task packet shown) |
+| `spawn_sub_agents` | sub_agent | Yes (one panel per spawn) |
+| `ask_main_agent` | sub_agent | No (sub-agent side; flag-gated `sub_agent_bidirectional`) |
+| `respond_to_sub_agent` | sub_agent | No (main-agent side; flag-gated) |
 
 **Guest Gru (inbound A2A only):** `read_file`, `list_dir`, `grep`, `glob`.
 

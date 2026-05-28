@@ -92,9 +92,7 @@ The next lever past the post-processor is **delegating context-heavy work to a s
 
 **Depth cap = 1.** Sub-agents do not get the `spawn_sub_agent` tool in their own toolset. Enforced structurally — the recursion is impossible, not just disallowed.
 
-**Always HITL-approved.** Every spawn surfaces a prompt with the resolved tier, the cascade note (if any), the packet, and the tool allowlist. Approve / deny with feedback / counter-tier (planned Phase E).
-
-**Hooks (Phase C, queued).** The packet accepts a `hooks: list[HookSpec]` field today but the runner is a stub — Phase C lands the post-flight validators (`ruff_check`, `pytest_run`, etc.) plus the "all-pass → return verbatim, no extra LLM turn" optimization.
+**Always HITL-approved.** Every spawn surfaces a prompt with the resolved tier, the cascade note (if any), the packet, and the tool allowlist. Approve / deny with feedback / counter-tier.
 
 ### Bidirectional comms (opt-in, D41)
 

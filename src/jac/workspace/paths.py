@@ -28,7 +28,6 @@ USER_PROVIDERS_EXAMPLE_FILE: Path = USER_WORKSPACE / "providers.yaml.example"
 USER_CONTEXT_FILE: Path = USER_WORKSPACE / "AGENTS.md"
 USER_MEMORY_FILE: Path = USER_WORKSPACE / "memory.md"
 USER_PROMPTS_DIR: Path = USER_WORKSPACE / "prompts"
-USER_MINIONS_DIR: Path = USER_WORKSPACE / "minions" / "templates"
 USER_SKILLS_DIR: Path = USER_WORKSPACE / "skills"
 USER_HISTORY_FILE: Path = USER_WORKSPACE / "history"
 
@@ -166,10 +165,6 @@ def project_prompts_dir() -> Path:
     return project_workspace() / "prompts"
 
 
-def project_minions_dir() -> Path:
-    return project_workspace() / "minions" / "templates"
-
-
 def project_skills_dir() -> Path:
     return project_workspace() / "skills"
 
@@ -215,10 +210,6 @@ def package_providers_file() -> Path:
 
 def package_prompts_dir() -> Path:
     return package_root() / "prompts"
-
-
-def package_minions_dir() -> Path:
-    return package_root() / "minions" / "templates"
 
 
 def package_skills_dir() -> Path:
