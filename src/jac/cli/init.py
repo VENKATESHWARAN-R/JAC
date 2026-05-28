@@ -37,7 +37,7 @@ console = Console()
 def run_init() -> None:
     """Run the wizard. Idempotent: re-runs add or update profiles."""
     ensure_user_workspace()
-    _maybe_migrate_old_profiles()
+    _run_pending_migrations()
     existing = list_profiles()
 
     _print_intro(existing)
@@ -53,8 +53,26 @@ def run_init() -> None:
     _print_done(profile_name, set_as_default)
 
 
-def _maybe_migrate_old_profiles() -> None:
-    # TODO: Update this to be more generic and helpful for future version upgrades not just this one
+def _run_pending_migrations() -> None:
+    """Run any config-shape migrations the workspace still needs.
+
+    Add a new migration here when (and only when) a release changes the
+    **shape** of user config — field renames, removals, or new required
+    fields. Default-value flips do NOT need a migration: pydantic-settings
+    merges YAML sources field-level, so any key absent from the user's
+    ``~/.jac/config.yaml`` falls through to ``defaults.yaml`` and picks
+    up the new value automatically on upgrade. See CLAUDE.md "Changing
+    config schema" for the full rule.
+
+    Each migration must be idempotent (safe to run on every ``jac init``)
+    and should surface a clear panel explaining what's about to change
+    before touching files.
+    """
+    _migrate_pre_d22_profiles()
+    # Add future migrations below, oldest → newest.
+
+
+def _migrate_pre_d22_profiles() -> None:
     """Detect pre-D22 ``model:`` profiles and offer to auto-rewrite as ``tiers:``."""
     old = detect_old_profiles()
     if not old:

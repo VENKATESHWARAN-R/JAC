@@ -44,6 +44,7 @@ cost:
   # get `ask_main_agent` and the main agent gets `respond_to_sub_agent`,
   # letting a sub-agent ask one focused clarifying question mid-run.
   # Hard cap = 5 round-trips per spawn (a sixth ask returns a graceful
-  # "finalize with what you have" directive, not an error). Default off —
-  # flip when you understand the doubled per-question cost.
-  sub_agent_bidirectional: false
+  # "finalize with what you have" directive, not an error). On by default
+  # since v0.4.x — set to false if you'd rather sub-agents finalize with
+  # what they have rather than pause for clarification.
+  sub_agent_bidirectional: true

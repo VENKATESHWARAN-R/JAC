@@ -94,9 +94,9 @@ The next lever past the post-processor is **delegating context-heavy work to a s
 
 **Always HITL-approved.** Every spawn surfaces a prompt with the resolved tier, the cascade note (if any), the packet, and the tool allowlist. Approve / deny with feedback / counter-tier.
 
-### Bidirectional comms (opt-in, D41)
+### Bidirectional comms (D41)
 
-Off by default. Flip `cost.sub_agent_bidirectional: true` in your config to enable. When on:
+On by default since v0.4.x. Set `cost.sub_agent_bidirectional: false` in your config to turn it off — sub-agents will then finalize with whatever they have rather than pause to ask. When on (the default):
 
 - The sub-agent gets `ask_main_agent(reason, question, context)` — it can pause once or twice mid-run to ask the main agent a focused clarifying question.
 - The main agent gets `respond_to_sub_agent(reason, spawn_id, answer)` — its reply tool. Not approval-gated; you already approved the parent spawn.

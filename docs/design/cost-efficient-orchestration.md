@@ -297,7 +297,7 @@ The mechanism: a sub-agent can call `ask_main_agent(reason, question, context)`.
 | Loops (sub-agent keeps asking, main keeps answering, no progress) | Round-trip cap + Logfire metric `ask_main_agent_count` per spawn. |
 | Deadlock if main is waiting on user input | Cannot happen by construction — main is already blocked in the spawn tool call; it's not awaiting user input. |
 
-**v1 implementation gate:** the tool isn't registered into the sub-agent toolset unless `settings.cost.sub_agent_bidirectional = true`. Default `false`. Flip when UX has been validated.
+**v1 implementation gate:** the tool isn't registered into the sub-agent toolset unless `settings.cost.sub_agent_bidirectional = true`. Default `true` since v0.4.x (UX validated 2026-05-28); set `false` to opt out.
 
 ### 9.2 Tier cascading
 

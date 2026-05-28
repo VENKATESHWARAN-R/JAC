@@ -108,6 +108,15 @@ uv run jac --help                # full CLI help
 
 Implementation lives in `jac.workspace.config_loader`. Missing required values raise `JacConfigError` at point of use. Profiles, tiers, compaction, budgets, secrets: [`docs/user-guide/configuration.md`](docs/user-guide/configuration.md). Memory read/write paths: [`docs/user-guide/sessions-and-memory.md`](docs/user-guide/sessions-and-memory.md).
 
+### Changing config schema
+
+When you touch any field on `Settings` (or its sub-models like `CostSettings`) or any key in `defaults.yaml`, pick the right path — they are not the same kind of change:
+
+- **Default-value flip** (e.g. `sub_agent_bidirectional: false → true`): change `src/jac/config.py` + `src/jac/data/defaults.yaml` and update the docs. **No migration code.** Pydantic-settings merges YAML sources field-level, so any key absent from a user's `~/.jac/config.yaml` falls through to `defaults.yaml` and the new value lands on upgrade. Users who explicitly set the old value keep it — that's correct: they made a deliberate choice.
+- **Schema shape change** (field rename, removal, new *required* field, type change, restructuring): add an idempotent migration alongside `migrate_old_profiles` in [`src/jac/profiles_io.py`](src/jac/profiles_io.py), wire it into `_run_pending_migrations` in [`src/jac/cli/init.py`](src/jac/cli/init.py), and note it in `docs/progress.md`. The migration must detect the old shape, print a panel explaining what's about to change, and be safe to run on every `jac init` (no-op if already migrated).
+
+Either way, update [`docs/user-guide/configuration.md`](docs/user-guide/configuration.md) so the user-visible reference reflects the new default or shape in the same change.
+
 ## Architecture — non-negotiables
 
 Structural rules every change must respect. Full rationale in [`docs/architecture.md`](docs/architecture.md); capability patterns in [`docs/developer/capabilities.md`](docs/developer/capabilities.md).

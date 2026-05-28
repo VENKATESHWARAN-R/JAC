@@ -151,7 +151,7 @@ class CostSettings(BaseModel):
     """Prompt sent to the small-tier model. Receives ``tool_name``,
     ``original_tokens``, ``output`` via ``str.format``."""
 
-    sub_agent_bidirectional: bool = False
+    sub_agent_bidirectional: bool = True
     """Bidirectional sub-agent ↔ main-agent comms (D41).
 
     When ``True``, spawned sub-agents get an ``ask_main_agent`` tool and
@@ -162,9 +162,10 @@ class CostSettings(BaseModel):
     sub-agent rather than raising — so the spawn always produces a
     coherent final answer even if the conversation runs long.
 
-    Default ``False`` because every round-trip costs an extra main-agent
-    turn (full context, full toolset). Flip on once the UX has been
-    validated for your workflow."""
+    Default ``True`` since v0.4.x — the UX validation pass on 2026-05-28
+    confirmed the happy paths and the per-question cost is bounded by
+    the 5-round-trip cap. Set to ``False`` if you'd rather sub-agents
+    finalize with what they have rather than pause for clarification."""
 
 
 class Settings(BaseSettings):

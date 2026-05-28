@@ -153,7 +153,7 @@ For deeper context:
 
 ### E.2 Bidirectional comms (D41) 🚧
 
-- [x] `settings.cost.sub_agent_bidirectional` flag (default `false`), defaults.yaml entry
+- [x] `settings.cost.sub_agent_bidirectional` flag, defaults.yaml entry. **Default flipped to `true` on 2026-05-28** after the UX validation pass — the 5-round-trip cap bounds the worst-case cost and the clarifying-question flow earned its keep. Existing users inherit the new value automatically via layered-config fall-through; no migration needed. See CLAUDE.md "Changing config schema" for the policy this set the precedent for.
 - [x] `ask_main_agent(reason, question, context)` tool — registered in sub-agent toolset only when flag is on AND a channel is bound. Reads its channel via a contextvar so capability factories stay plain functions.
 - [x] `respond_to_sub_agent(reason, spawn_id, answer)` tool — registered on the main agent only when flag is on; **not** approval-gated (the parent spawn was already approved).
 - [x] `SubAgentChannel` (per-spawn queues + round_trip counter) + `_pending_channels` registry keyed by 8-hex `spawn_id`. Cleaned up on completion AND on session-end via `_reset_pending_channels`.
@@ -182,7 +182,7 @@ Surfaced during the same E.2 validation pass: the previous 8-hex spawn IDs (`a3f
 - [x] REPL wraps `sub_agent_capabilities` in a closure capturing `hooks` / `approval` / `skills_capability` / `a2a_capability`; the `SubAgentCapability.capability_factory` signature stays `(allowed_tools, *, channel=None)` so existing call sites and tests continue to work.
 - [x] `sub_agent_system.md` updated: prompt now states destructive tools require HITL approval and lists skills + A2A as available.
 - [x] Tests: bare-factory (no kwargs) keeps the silent/unguarded behaviour for hermetic tests; with-kwargs path inserts hooks/approval/skills/a2a by identity; destructive tool capability types match between main and sub.
-- [ ] Validation: flag stays off in v1 ship; flip on after manual testing demonstrates no UX regressions.
+- [x] Validation: 2026-05-28 — flag flipped on by default after manual testing across happy paths showed no UX regressions. Opt-out via `cost.sub_agent_bidirectional: false` if a user prefers sub-agents to finalize without pausing.
 
 ### E.3 Polish (post-bidirectional)
 
