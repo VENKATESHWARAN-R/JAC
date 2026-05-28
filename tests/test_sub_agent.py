@@ -69,12 +69,21 @@ def _isolated_sub_agent_state(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]
     # construction time, before our monkeypatched `Agent.run` ever fires.
     # A dummy key keeps construction quiet without hitting the network.
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-not-real")
+    # Force the bidirectional flag off so tests that don't use
+    # ``_bidirectional_on`` run the sequential path regardless of what
+    # ~/.jac/config.yaml says. ``_bidirectional_on`` overrides this with
+    # "true" + another reset for tests that explicitly need the flag on.
+    monkeypatch.setenv("JAC_COST__SUB_AGENT_BIDIRECTIONAL", "false")
+    from jac.config import reset_settings_cache
+
+    reset_settings_cache()
     set_sub_agent_capability(None)
     reset_sub_agent_stats()
     set_sub_agent_usage_recorder(None)
     set_sub_agent_event_bus(None)
     _reset_pending_channels()
     yield
+    reset_settings_cache()
     set_sub_agent_capability(None)
     reset_sub_agent_stats()
     set_sub_agent_usage_recorder(None)
