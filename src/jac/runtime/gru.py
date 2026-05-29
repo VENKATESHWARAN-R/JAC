@@ -98,6 +98,7 @@ def sub_agent_capabilities(
     approval: Any = None,
     skills_capability: Any = None,
     a2a_capability: Any = None,
+    mcp_capability: Any = None,
 ) -> list[Any]:
     """Capability list a spawned sub-agent receives.
 
@@ -131,6 +132,11 @@ def sub_agent_capabilities(
         a2a_capability: shared :class:`A2ACapability` instance. Lets a
             sub-agent be the one talking to a remote A2A peer when the
             peer's response would otherwise bloat the main agent's history.
+        mcp_capability: shared :class:`MCPCapability` instance (Phase F).
+            Gives the sub-agent the same external MCP tools the main agent
+            has — deferred-loaded, so they cost nothing until the sub-agent
+            searches for one. Especially valuable here: an MCP tool's bulky
+            output stays in the sub-agent's isolated context.
     """
     _ = allowed_tools  # reserved; honored in a follow-up that filters toolsets
     caps: list[Any] = [
@@ -155,6 +161,8 @@ def sub_agent_capabilities(
         caps.append(skills_capability)
     if a2a_capability is not None:
         caps.append(a2a_capability)
+    if mcp_capability is not None:
+        caps.append(mcp_capability)
     # D41: ask_main_agent only goes into the sub-agent's toolset when
     # both the flag is on AND the spawn was started via the bidirectional
     # path (which provides the channel). Either condition off → tool stays

@@ -71,6 +71,7 @@ Slash lines are handled locally — they are **not** sent to the model.
 | `/budget` | `/budget [extend [KIND] N]` | Show token budgets vs usage; `extend` raises the limit for this session (`KIND`: `session_input`, `session_total`, `project_total`; default `session_total`) |
 | `/tokens` | `/tokens` | Detailed token counters; shows a separate `a2a guest` line when inbound calls have consumed model tokens (counts toward `project_total` only) |
 | `/skill` | `/skill list\|use NAME\|reload` | Manage loaded skills — list active/shadowed, inject a skill body, or re-scan skill directories |
+| `/mcp` | `/mcp list\|reload\|enable NAME\|disable NAME` | Manage external MCP tool servers — list status/transport/source, re-scan catalogs, toggle a server (persists + rebuilds Gru). See [MCP servers](mcp.md) |
 | `/spawns` | `/spawns` | List currently-active bidirectional sub-agent channels (only populated when `cost.sub_agent_bidirectional` is on) |
 | `/a2a` | see [A2A operator](a2a-operator.md) | Server lifecycle, token, and peer management — `serve`, `stop`, `status`, `token`, `peers`, `peer add\|remove` |
 
@@ -78,12 +79,17 @@ Tab completion: type `/` and start a command name (first word only).
 
 ## Approval flow
 
-These tools require **y** / **n** at a panel showing **reason** and arguments:
+These tools prompt at a panel showing **reason** and arguments. The prompt is
+`Yes / no / redirect` and **defaults to yes** — bare **Enter** approves; type
+**n** to deny or **r** to deny with redirect feedback. Ctrl-C / EOF deny.
 
 - `write_file`, `edit_file`
 - `run_shell`
 - `remember`, `forget`
 - `start_process`, `kill_process`
+- every **MCP tool** from a server with `requires_approval` on (the default) —
+  these show `reason: (mcp tool — no reason captured)` since external tools
+  don't carry JAC's `reason:` argument
 
 ## Gru tools
 

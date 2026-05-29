@@ -74,6 +74,7 @@ A folder is a **project** if it has `.git` or `.agents/` at/above the CWD. Outsi
 /tokens                              # detailed token counters
 /budget [extend [KIND] N]            # see Budget composition below
 /skill list|use NAME|reload          # see Skill composition below
+/mcp list|reload|enable NAME|disable NAME   # see MCP composition below
 /spawns                              # list parked bidirectional sub-agents
 /a2a …                               # see A2A composition below
 /exit                                # quit (also: exit / quit / :q / Ctrl-D)
@@ -101,6 +102,17 @@ Valid KIND values: `session_input`, `session_total`, `project_total`. Default is
 ```
 
 The body of a skill loads via the `load_skill(reason, name)` tool — that's the path Gru uses when it decides on its own. `/skill use NAME` is the operator-driven equivalent.
+
+## MCP composition
+
+```text
+/mcp list                            # servers: transport, status, approval/defer, source + any errors
+/mcp reload                          # rescan ~/.jac/mcp.json + <repo>/.agents/mcp.json, rebuild Gru
+/mcp enable NAME                     # turn a server on  (persists + rebuilds)
+/mcp disable NAME                    # turn a server off (persists + rebuilds)
+```
+
+Servers are declared in `~/.jac/mcp.json` (user) and `<repo>/.agents/mcp.json` (project, shadows user per name), in the standard `mcpServers` JSON shape (same as Claude Desktop / Cursor). Optional per-server `jac` knobs: `enabled`, `defer` (tool-search hiding, default on), `requires_approval` (HITL, default on). MCP tools are **deferred-loaded** — Gru searches for them on demand rather than seeing them upfront — and every call is HITL-gated unless the server sets `requires_approval: false`. Full reference: `read_file docs/user-guide/mcp.md`.
 
 ## A2A composition
 

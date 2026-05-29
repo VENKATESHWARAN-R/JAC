@@ -35,6 +35,7 @@ from jac import __version__
 from jac.capabilities.a2a import make_a2a_capability
 from jac.capabilities.clarify import make_clarify_capability
 from jac.capabilities.history import estimate_text_tokens, estimate_tokens
+from jac.capabilities.mcp import make_mcp_capability
 from jac.capabilities.plan import make_plan_capability
 from jac.capabilities.process import make_process_capability
 from jac.capabilities.skills import make_skills_capability
@@ -44,6 +45,7 @@ from jac.cli.slash import (
     Exit,
     InjectUserText,
     RebuildGru,
+    RefreshToolsets,
     SlashContext,
     StartA2AServer,
     StopA2AServer,
@@ -330,6 +332,11 @@ async def _repl_loop(
         # Lambda so /skill reload mid-session is reflected when a future
         # /a2a serve restarts the guest server's AgentCard.
         a2a_capability.skills_getter = lambda: skills_capability.skills
+        # MCP server loader (Phase F / D28). Discovers external tool servers
+        # from ~/.jac/mcp.json + <repo>/.agents/mcp.json; their tools are
+        # deferred-loaded so tool search pulls them in on demand rather than
+        # bloating the prompt. /mcp list|reload|enable|disable read + mutate it.
+        mcp_capability = make_mcp_capability()
         gru = build_gru(
             model_override=model_override,
             extra_capabilities=[
@@ -340,6 +347,7 @@ async def _repl_loop(
                 clarify_capability,
                 a2a_capability,
                 skills_capability,
+                mcp_capability,
             ],
             bus=bus,
             summarizer_model=_resolve_summarizer_model(profile_name),
@@ -419,6 +427,7 @@ async def _repl_loop(
             approval=approval,
             skills_capability=skills_capability,
             a2a_capability=a2a_capability,
+            mcp_capability=mcp_capability,
         )
 
     if active_profile is not None:
@@ -477,6 +486,7 @@ async def _repl_loop(
         clarify_capability,
         a2a_capability,
         skills_capability,
+        mcp_capability,
     ]
     user_prompt = HTML("<ansiyellow><b>» </b></ansiyellow>")
     try:
@@ -504,6 +514,7 @@ async def _repl_loop(
                     usage_tracker=usage_tracker,
                     a2a=a2a_capability,
                     skills=skills_capability,
+                    mcp=mcp_capability,
                 )
                 try:
                     result = dispatch(text, ctx)
@@ -572,6 +583,30 @@ async def _repl_loop(
                             # and survive a profile switch.
                             a2a_capability.profile_peers.clear()
                             a2a_capability.profile_peers.update(active_profile.a2a.peers)
+                elif isinstance(result, RefreshToolsets):
+                    # /mcp reload|enable|disable: the MCP capability's catalog
+                    # already changed in place; rebuild Gru against the *same*
+                    # model so its get_toolset() is re-consulted. No env dance,
+                    # no model switch. Pass the active model explicitly so the
+                    # --model (no-profile) path doesn't fall back to settings.
+                    if model_id == "unknown":
+                        console.print(
+                            "[yellow]no model bound; cannot rebuild.[/yellow] "
+                            "Set one with [bold]/model[/bold] first."
+                        )
+                    else:
+                        try:
+                            gru = build_gru(
+                                model_override=model_id,
+                                extra_capabilities=persisted_capabilities,
+                                bus=bus,
+                                summarizer_model=_resolve_summarizer_model(profile_name),
+                            )
+                        except JacConfigError as exc:
+                            console.print(f"[red]rebuild failed:[/red] {exc}")
+                        else:
+                            if result.note:
+                                console.print(f"[green]✓[/green] {result.note}")
                 elif isinstance(result, StartA2AServer):
                     await _handle_start_a2a(a2a_capability, result)
                 elif isinstance(result, StopA2AServer):

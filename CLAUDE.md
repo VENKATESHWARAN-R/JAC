@@ -79,6 +79,7 @@ uv run jac --help                # full CLI help
 | App config | `~/.jac/config.yaml`, `<repo>/.agents/config.yaml` | **YAML** |
 | Provider catalog | `src/jac/data/providers.yaml` (package), `~/.jac/providers.yaml` (user overlay) | **YAML** |
 | Skills (community Anthropic format — D21) | `~/.jac/skills/<name>/SKILL.md`, `<repo>/.agents/skills/<name>/SKILL.md` | **Markdown w/ YAML frontmatter** |
+| MCP server catalog (community `mcpServers` shape — D46) | `~/.jac/mcp.json`, `<repo>/.agents/mcp.json` | **JSON** (interop artifact, *deliberate* exception to "YAML for human config" — see D46) |
 | System prompts | `~/.jac/prompts/*.md`, `<repo>/.agents/prompts/*.md` | **Markdown** |
 | Project context (auto-loaded) | `<repo>/AGENTS.md` (at repo root, community convention) | **Markdown** |
 | User context (auto-loaded) | `~/.jac/AGENTS.md` | **Markdown** |
@@ -163,7 +164,7 @@ Phases in dependency order:
 - **Phase C — Deterministic hooks.** **Dropped** — complexity didn't earn its keep; `success_criteria` in the packet + a post-return `run_shell` call cover verification without framework machinery.
 - **Phase D — Skill loader.** Anthropic community format. Loadable prompts / playbooks the main agent reads when relevant. Skills are advice — they do NOT carry a runtime-mode declaration (no `mode:` frontmatter, no `mode: minion`, no `mode: planner` etc.). **Shipped v0.4.0.**
 - **Phase E — Parallel sub-agents + HITL multiplexing.** Polish on top of B/D. Next up.
-- **Phase F — MCP loader (D28).** Promoted from old Phase G after 2026-05-27 external review — MCP is the ecosystem surface most users try first.
+- **Phase F — MCP loader + tool search (D28, D46). Shipped 2026-05-29.** External MCP servers (`mcp.json`, standard `mcpServers` shape) wired in as deferred-loaded, HITL-gated, summarized toolsets via `MCPCapability`; `.defer_loading()` + auto `ToolSearch` keeps definitions out of the prompt. `/mcp list|reload|enable|disable`.
 - **Phase G — Plan Mode (D23).** Pulled forward from v2; demoted from old Phase F to follow MCP.
 - **Phase H — A2A Phase 4.e (OIDC/GCP) + broader test coverage.** Lower priority than A-G.
 - **Phase 7 stream — Evaluation via Logfire span replay (D44).** Trajectory tests asserting span shape, not output text. Ongoing; not a numbered phase.

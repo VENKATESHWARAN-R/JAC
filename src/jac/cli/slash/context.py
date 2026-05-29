@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from rich.console import Console
 
 from jac.capabilities.a2a import A2ACapability
+from jac.capabilities.mcp import MCPCapability
 from jac.capabilities.skills import SkillsCapability
 from jac.profiles import Profile
 from jac.runtime.session import Session
@@ -60,3 +61,8 @@ class SlashContext:
     """Skill loader capability (D21, Phase D). ``/skill list|use|reload``
     read from it; ``/skill reload`` mutates its in-memory catalog. ``None``
     in tests that don't exercise the skills surface."""
+
+    mcp: MCPCapability | None = None
+    """MCP server loader capability (Phase F, D28). ``/mcp list|reload|
+    enable|disable`` read and mutate its catalog. ``None`` in tests that
+    don't exercise the MCP surface."""

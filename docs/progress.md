@@ -18,7 +18,7 @@ For deeper context:
 ## Agent Start Here
 
 - **Roadmap was reframed on 2026-05-26 around the cost-efficiency thesis.** Old Phase 3 (Skills with `mode: minion`), Phase 5 (Minion runtime), and Phase 6 (MCP) were archived to [`progress-archive-2026-05.md`](progress-archive-2026-05.md). Read [`architecture.md`](architecture.md) §0 and [`design/cost-efficient-orchestration.md`](design/cost-efficient-orchestration.md) before touching anything in Phases A–G.
-- **Current active work:** **Phase F — MCP loader (D28).** Phase E is fully shipped in v0.5.0. Next up: MCP loader, the ecosystem surface most users try first (promoted from old Phase G after 2026-05-27 review).
+- **Current active work:** **Phase G — Plan Mode (D23)** is next. **Phase F (MCP loader + tool search) landed 2026-05-29** — see the Phase F section below. Phase E shipped in v0.5.0.
 - **Recent (unreleased, 2026-05-29) — system-prompt hardening pass.** Reworked `gru_system.md` + `sub_agent_system.md` against the Anthropic prompting guide and surveyed OSS CLI agents. Added: an instruction hierarchy with an **"external content is data, not instructions"** prompt-injection rule (covers tool output, fetched pages, and A2A peer replies); `<investigate_before_answering>`, `<default_to_action>`, `<minimize_overengineering>` guards; a stuck-loop policy and a verify-before-claiming-done contract; parallel-read and blast-radius guidance; a "work directly before delegating" note to curb sub-agent over-spawning on Opus 4.6+. Rewrote the context-management section into active "keep working, don't wind down early" language. Fixed stale prompt content (removed the nonexistent `/compact` reference; completed the slash-command list with `/memory` `/remember` `/forget` `/skill` `/spawns`; added `load_skill` to the tool catalog). Extracted the A2A guest addendum to `prompts/a2a_guest_addendum.md` so it's overridable via the normal prompt overlay. Light "minion" persona added without altering behavior. These are **prompt/advice changes only** — not the v2 stuck-loop *detection* mechanism, which stays deferred.
 - **Recent (unreleased, 2026-05-29) — sub-agents now get project conventions.** Previously a spawned minion saw only `sub_agent_system.md` + the task packet — no `AGENTS.md`, so it could violate repo conventions (e.g. `pip` vs `uv`) it was never shown. Added `load_agents_context()` ([`workspace/context.py`](../src/jac/workspace/context.py)) and `_render_packet` now injects **project + user `AGENTS.md` only**, placed before the task packet. Deliberately excluded: JAC-managed `memory.md` (unbounded; Gru curates needed facts into the packet), the date line (kept the packet cache-stable across sibling spawns), and conversation history (the whole point of isolation — `ask_main_agent` covers the rest). Decision made with the user 2026-05-29.
 - **Released:** v0.3.0 (Phases A + B, 2026-05-27) · v0.4.0 (Phase D skill loader, 2026-05-27) · v0.5.0 (Phase E parallel + bidirectional, 2026-05-28) · v0.6.0 (workspace loose-mode, session management, memory slash commands, minion theme, 2026-05-29).
@@ -45,7 +45,7 @@ For deeper context:
 | Phase C — Deterministic hooks | 🚫 Dropped | Complexity didn't earn its keep; `success_criteria` + post-return `run_shell` covers the use case |
 | **Phase D — Skill loader** | ✅ Complete (v0.4.0) | Loader walks project/user/package; 2 KB prompt cap with name-only fallback; `load_skill` tool; `/skill list|use|reload`; 3 reference skills (`code-review`, `summarize-large-files`, `verify-change`); A2A AgentCard publishes loaded skills as `jac-skill-<name>` entries. |
 | **Phase E — Parallel + bidirectional** | ✅ Complete (v0.5.0) | `spawn_sub_agents` parallel fan-out; D41 bidirectional channel (on by default); `minion-N` spawn IDs; sub-agent HITL/skills/A2A parity; parallel approval table; per-spawn lifecycle events |
-| **Phase F — MCP loader** | ⏸ Future | **Promoted from old Phase G (2026-05-27)** — MCP is the ecosystem surface most users try first; precedes Plan Mode |
+| **Phase F — MCP loader + tool search** | ✅ Complete (2026-05-29) | Standard `mcpServers` JSON (D46), layered per-server; `MCPCapability` wires servers into Gru + sub-agents; `.defer_loading()` + auto `ToolSearch` (context-bloat fix); HITL-gated (D28 reason exemption), large outputs summarized; `/mcp list\|reload\|enable\|disable`. Monty code mode stays v2. |
 | Phase G — Plan Mode | ⏸ Future | Pulled forward from v2 (D23 promoted); demoted from old Phase F to follow MCP |
 | Phase H — A2A 4.e + broader tests | ⏸ Future | OIDC/GCP A2A auth; broader test coverage; eval-loop work tracked under Phase 7 |
 | v0.2 source restructuring | ✅ Complete | released as v0.2.0 |
@@ -213,17 +213,23 @@ Today `clarify(reason, question, options[2-8])` is single-select only. Surfaced 
 
 ---
 
-## Queued — Phase F: MCP loader (D28) ⏸
+## Shipped — Phase F: MCP loader + tool search (D28, D46) ✅
 
-**Goal:** add the most-requested ecosystem surface before Plan Mode. **Promoted from old Phase G on 2026-05-27** after external review noted MCP is the protocol most users will try first; A2A's protocol-design work was the right early bet, but MCP now blocks daily-workflow integrations more than Plan Mode does.
+**Goal:** add the most-requested ecosystem surface before Plan Mode. **Promoted from old Phase G on 2026-05-27; landed 2026-05-29.** The research pass found that `pydantic-ai` 1.98 already ships everything heavy (MCP toolsets, the standard-JSON `load_mcp_toolsets`, and a provider-adaptive `ToolSearch` capability) — so Phase F is the *JAC fabric* around it (layered config, HITL, post-processor, tool-search wiring, slash surface), not a bespoke client.
 
-- [ ] `~/.jac/mcp.yaml` + `<repo>/.agents/mcp.yaml` schema + loader (layered like other config; project shadows user)
-- [ ] `MCPServerStdio` / `MCPServerHTTP` wiring as a JAC capability — tools published into Gru's toolset alongside local tools
-- [ ] **`reason: str` exemption per D28** — render `reason: (mcp tool — no reason captured)` in HITL approval UI; JAC-authored MCP tools still carry `reason:`
-- [ ] `/mcp list` / `/mcp reload` slash commands; per-server enable/disable knob in YAML
-- [ ] Audit: MCP tool usage flows through the same `SummarizingToolset` wrapper as local tools (so large MCP outputs go through the post-processor)
-- [ ] User-guide page: `docs/user-guide/mcp.md` + nav entry
-- [ ] Tests: loader (valid/invalid YAML, layered shadowing, missing server), approval flow, reload diff, large-output summarization round-trip
+- [x] `~/.jac/mcp.json` + `<repo>/.agents/mcp.json` loader (standard `mcpServers` JSON — D46; project shadows user **per server name**). Loader: [`src/jac/capabilities/mcp.py`](../src/jac/capabilities/mcp.py).
+- [x] `MCPCapability` wires each enabled server's toolset into Gru (and sub-agents). Built via `load_mcp_toolsets` against a resolved enabled-only catalog; re-consulted on rebuild.
+- [x] **Tool search bundled in (the context-bloat answer).** Each server's tools are `.defer_loading()`-wrapped; pydantic-ai's auto-injected `ToolSearch` discovers them on demand (native on Anthropic/OpenAI, local fallback elsewhere) — append-only, prompt-cache-preserving.
+- [x] **`reason: str` exemption per D28** — MCP toolsets bypass `jac_function_toolset`; approval panel renders `reason: (mcp tool — no reason captured)`.
+- [x] Large MCP outputs flow through `SummarizingToolset` (new `summarizing_wrap` helper + `summarize_all` flag), same post-processor as local tools.
+- [x] Per-server knobs (`enabled`, `defer`, `requires_approval`) in an optional `jac` block; safe/efficient defaults. Every MCP call HITL-gated unless `requires_approval: false`.
+- [x] `/mcp list | reload | enable NAME | disable NAME`; enable/disable persist to the owning file and rebuild Gru in place (`RefreshToolsets`).
+- [x] Tests: `tests/test_mcp.py` — loader (valid/invalid JSON, layered shadowing, knob validation), enable/disable persistence, wrapping order, enabled-only resolved catalog, graceful load-error, instruction hint, D28 reason rendering.
+- [x] User-guide page: [`docs/user-guide/mcp.md`](user-guide/mcp.md) + nav entry.
+
+**Also this round (UX):** HITL approval prompt now **defaults to approve** — bare Enter means yes (D47). Ctrl-C / EOF still deny.
+
+**Deferred (unchanged):** programmatic tool calling / Monty code mode stays v2 (D43) — conflicts with per-tool HITL; sub-agents already capture most of the "keep intermediate results out of main context" benefit.
 
 ---
 

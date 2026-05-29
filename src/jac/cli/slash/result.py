@@ -56,6 +56,25 @@ class RebuildGru:
 
 
 @dataclass(frozen=True)
+class RefreshToolsets:
+    """REPL should rebuild Gru in place against the *current* model/profile.
+
+    Returned by ``/mcp reload|enable|disable`` (Phase F). Unlike
+    :class:`RebuildGru` there's no model or profile change — the active
+    model stays bound; we only need the agent reconstructed so a capability
+    whose toolset changed (the reused :class:`MCPCapability`, whose
+    ``get_toolset`` reads its live catalog) is re-consulted. No env dance,
+    no "switched model" message.
+
+    Attributes:
+        note: short status line the REPL prints after the rebuild
+            (e.g. ``"reloaded MCP servers"``).
+    """
+
+    note: str = ""
+
+
+@dataclass(frozen=True)
 class StartA2AServer:
     """REPL should start the A2A guest server (D24, Phase 4.a).
 
@@ -102,5 +121,12 @@ class InjectUserText:
 
 
 SlashResult = (
-    Handled | Exit | SwitchSession | RebuildGru | StartA2AServer | StopA2AServer | InjectUserText
+    Handled
+    | Exit
+    | SwitchSession
+    | RebuildGru
+    | RefreshToolsets
+    | StartA2AServer
+    | StopA2AServer
+    | InjectUserText
 )

@@ -427,6 +427,11 @@ class CliRenderer:
         opens a follow-up text input the user can use to redirect the model
         in-band without spending a turn.
 
+        **Default is approve** — bare Enter means yes. Most tool calls are
+        reasonable, so optimising the common path to a single keystroke beats
+        making the user type ``y`` every time. Explicit ``n``/``r`` reject;
+        Ctrl-C / EOF still deny (an interrupt must never approve by accident).
+
         ``spawn_sub_agents`` gets a special-case rendering (E.3): instead of
         the generic key/value dump, the panel shows a per-spawn table with
         label / tier / one-line objective. The single ``y/n/r`` prompt
@@ -469,17 +474,17 @@ class CliRenderer:
         try:
             choice = await asyncio.to_thread(
                 Prompt.ask,
-                "[bold yellow]y[/bold yellow]es / [bold yellow]n[/bold yellow]o / "
-                "[bold yellow]r[/bold yellow]edirect with feedback",
+                "[bold yellow]Y[/bold yellow]es / [bold yellow]n[/bold yellow]o / "
+                "[bold yellow]r[/bold yellow]edirect with feedback [dim](Enter = yes)[/dim]",
                 choices=["y", "n", "r"],
-                default="n",
+                default="y",
                 show_choices=False,
                 console=self.console,
             )
         except (KeyboardInterrupt, EOFError):
             self.console.print("[dim]denied[/dim]")
             return ApprovalResponse(approved=False)
-        choice = str(choice or "n").lower()
+        choice = str(choice or "y").lower()
         if choice == "y":
             return ApprovalResponse(approved=True)
         if choice == "r":

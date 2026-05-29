@@ -37,9 +37,16 @@ class SummarizingToolset(WrapperToolset[Any]):
     ``@jac_tool(summarizable=True)``. User overrides
     (``cost.summarize_tools`` / ``cost.no_summarize_tools``) still apply
     on top — see :func:`jac.runtime.tool_summarize.should_summarize`.
+
+    ``summarize_all`` opts *every* tool in the wrapped toolset into
+    summarization regardless of name. Used for MCP toolsets (Phase F): the
+    tool names aren't known until the server connects, and external server
+    output is exactly the kind of large, noisy payload the post-processor
+    exists for. User ``cost.no_summarize_tools`` still force-skips per name.
     """
 
     summarizable_tools: frozenset[str] = field(default_factory=frozenset)
+    summarize_all: bool = False
 
     async def call_tool(
         self,
@@ -64,10 +71,37 @@ class SummarizingToolset(WrapperToolset[Any]):
         return await maybe_summarize_tool_result(
             tool_name=name,
             raw_output=result,
-            tool_summarizable=name in self.summarizable_tools,
+            tool_summarizable=self.summarize_all or name in self.summarizable_tools,
             current_model=current_model,
             tool_call_id=ctx.tool_call_id,
         )
+
+
+def summarizing_wrap(
+    toolset: Any,
+    *,
+    summarizable_tools: frozenset[str] = frozenset(),
+    summarize_all: bool = False,
+) -> SummarizingToolset:
+    """Wrap an arbitrary toolset in :class:`SummarizingToolset`.
+
+    The shared post-processor layer, decoupled from the ``@jac_tool``
+    ``reason:`` enforcement that :func:`jac_function_toolset` also applies.
+    JAC-authored tools go through ``jac_function_toolset`` (enforcement +
+    this wrap); **externally-defined** toolsets — MCP servers (Phase F),
+    whose tools can't carry ``reason:`` (D28) — call this directly to get
+    summarization without tripping enforcement.
+
+    Args:
+        toolset: any ``AbstractToolset`` to wrap.
+        summarizable_tools: tool names to opt into summarization.
+        summarize_all: opt every tool in ``toolset`` in (MCP default).
+    """
+    return SummarizingToolset(
+        wrapped=toolset,
+        summarizable_tools=summarizable_tools,
+        summarize_all=summarize_all,
+    )
 
 
 def jac_function_toolset(*funcs: Callable[..., Any]) -> SummarizingToolset:
@@ -93,4 +127,4 @@ def jac_function_toolset(*funcs: Callable[..., Any]) -> SummarizingToolset:
             )
     inner = FunctionToolset(tools=list(funcs))
     summarizable = frozenset(getattr(f, "__name__", "") for f in funcs if is_summarizable(f))
-    return SummarizingToolset(wrapped=inner, summarizable_tools=summarizable)
+    return summarizing_wrap(inner, summarizable_tools=summarizable)

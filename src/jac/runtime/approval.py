@@ -82,12 +82,20 @@ def make_approval_handler(bus: EventBus) -> HandleDeferredToolCalls[Any]:
         for call in requests.approvals:
             args = _coerce_args(call.args)
             reason = args.get("reason")
+            # JAC tools structurally always carry ``reason: str`` (the
+            # @jac_tool guard). So an approval call that arrives *without*
+            # one is an external MCP tool, which is exempt from the
+            # discipline by D28 — surface that explicitly in the panel
+            # rather than showing a blank reason line.
+            display_reason = (
+                reason if isinstance(reason, str) else "(mcp tool — no reason captured)"
+            )
             future: asyncio.Future[ApprovalResponse] = asyncio.get_running_loop().create_future()
             await bus.emit(
                 ApprovalRequest(
                     tool_call_id=call.tool_call_id,
                     tool_name=call.tool_name,
-                    reason=reason if isinstance(reason, str) else None,
+                    reason=display_reason,
                     args=args,
                     response_future=future,
                     agent_label=agent_label,

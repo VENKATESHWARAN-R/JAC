@@ -30,6 +30,11 @@ USER_MEMORY_FILE: Path = USER_WORKSPACE / "memory.md"
 USER_PROMPTS_DIR: Path = USER_WORKSPACE / "prompts"
 USER_SKILLS_DIR: Path = USER_WORKSPACE / "skills"
 USER_HISTORY_FILE: Path = USER_WORKSPACE / "history"
+USER_MCP_FILE: Path = USER_WORKSPACE / "mcp.json"
+"""User-level MCP server catalog (Phase F, D28). Standard ``mcpServers`` JSON
+shape (Claude Desktop / Cursor / MCP spec) so existing configs paste in
+verbatim. JAC per-server knobs live in an optional sibling ``jac`` block —
+see :mod:`jac.capabilities.mcp`."""
 
 # --- Project workspace --------------------------------------------
 
@@ -217,6 +222,29 @@ def project_prompts_dir() -> Path:
 
 def project_skills_dir() -> Path:
     return project_workspace() / "skills"
+
+
+def project_mcp_file() -> Path:
+    """``<project_root>/.agents/mcp.json`` — project MCP server catalog (Phase F).
+
+    Same standard ``mcpServers`` JSON shape as :data:`USER_MCP_FILE`. The
+    MCP loader merges this over the user file **per server name** (project
+    wins), mirroring the skill / prompt overlay precedence.
+    """
+    return project_workspace() / "mcp.json"
+
+
+def mcp_resolved_file() -> Path:
+    """``<state_root>/cache/mcp/resolved.json`` — the merged+filtered catalog.
+
+    The MCP loader writes the *enabled* servers from the merged user+project
+    catalogs here (standard ``mcpServers`` shape, ``jac`` knobs stripped) and
+    hands the path to pydantic-ai's ``load_mcp_toolsets`` — which owns env
+    expansion, transport selection, and per-server prefixing. Regenerated on
+    every load / reload. Anchored to :func:`project_state_root` so loose runs
+    keep it under ``~/.jac``.
+    """
+    return project_state_root() / "cache" / "mcp" / "resolved.json"
 
 
 def project_sessions_dir() -> Path:
