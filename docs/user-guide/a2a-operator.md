@@ -1,5 +1,23 @@
 # A2A operator guide
 
+```text
+        JAC A2A RADIO TOWER
+
+              📡
+              │
+        ┌─────▼─────┐
+        │ Gru@local │
+        └─────┬─────┘
+              │  "Calling all agents..."
+     ┌────────┼────────┐
+     │        │        │
+     ▼        ▼        ▼
+  peer-A   peer-B   peer-C
+ "banana" "on it" "who pushed main?"
+
+  One CLI. Many agents. Mild chaos. Mostly controlled.
+```
+
 > **Audience:** operators exposing JAC to other agents or calling remote A2A peers.
 >
 > **Status:** Phase 4.d shipped (2026-05-26) — server, guest Gru, outbound tools with `tasks/get` polling, pluggable peer auth, session peers, **bidirectional file transfer (inline bytes)**, inbound usage accounting, 1-hour retention timer, OAuth2 token-mint visibility, and a standalone [data-analyst demo peer](#demo-peer-data-analyst). OIDC / GCP ID-token strategies (Phase 4.e) and skill auto-publish (Phase 4.1) are queued — see [`progress.md`](../progress.md).

@@ -17,6 +17,25 @@ from typing import Any
 
 from rich.console import Console
 
+_RADIO_TOWER = """\
+
+        JAC A2A RADIO TOWER
+
+              📡
+              │
+        ┌─────▼─────┐
+        │ Gru@local │
+        └─────┬─────┘
+              │  "Calling all agents..."
+     ┌────────┼────────┐
+     │        │        │
+     ▼        ▼        ▼
+  peer-A   peer-B   peer-C
+ "banana" "on it" "who pushed main?"
+
+  One CLI. Many agents. Mild chaos. Mostly controlled.
+"""
+
 
 def print_server_started_banner(
     info: Any,
@@ -37,6 +56,8 @@ def print_server_started_banner(
             REPL uses the default; the headless path overrides because
             ``/a2a token`` isn't available outside a REPL.
     """
+    if console.is_terminal:
+        console.print(_RADIO_TOWER, highlight=False)
     bind_tail = f"profile {profile_name!r}" if profile_name else ""
     bind_block = f"bind {info.bind_host}:{info.port}"
     if bind_tail:
