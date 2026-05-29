@@ -56,10 +56,10 @@ def isolated_sessions(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterat
     """Redirect project_sessions_dir() to a tmp dir for session-related tests."""
     sessions_dir = tmp_path / ".agents" / "sessions"
     sessions_dir.mkdir(parents=True)
-    # Clear find_project_root's @cache BEFORE the monkeypatch replaces it.
-    paths.find_project_root.cache_clear()  # type: ignore[attr-defined]
-    monkeypatch.setattr(paths, "project_sessions_dir", lambda: sessions_dir)
-    monkeypatch.setattr(paths, "find_project_root", lambda start=None: tmp_path)
+    # Patch project_root so project_state_root → tmp_path/.agents and every
+    # session helper (imported directly into session.py) follows. Cache
+    # clearing is handled by the autouse _clear_root_caches in conftest.
+    monkeypatch.setattr(paths, "project_root", lambda start=None: tmp_path)
     yield sessions_dir
 
 
@@ -167,6 +167,128 @@ def test_sessions_when_empty(ctx: SlashContext, isolated_sessions: Path) -> None
     dispatch("/sessions", ctx)
     out = ctx.console.export_text()
     assert "no sessions yet" in out
+
+
+def _make_session_dir(isolated_sessions: Path, sid: str) -> None:
+    d = isolated_sessions / sid
+    d.mkdir()
+    (d / "messages.json").write_text("[]")
+
+
+def test_sessions_delete_removes_session(ctx: SlashContext, isolated_sessions: Path) -> None:
+    _make_session_dir(isolated_sessions, "2026-05-01T10-00-00")
+    dispatch("/sessions delete 2026-05-01T10-00-00", ctx)
+    assert "deleted" in ctx.console.export_text()
+    assert not (isolated_sessions / "2026-05-01T10-00-00").exists()
+
+
+def test_sessions_delete_refuses_active_session(ctx: SlashContext, isolated_sessions: Path) -> None:
+    _make_session_dir(isolated_sessions, ctx.session.session_id)
+    dispatch(f"/sessions delete {ctx.session.session_id}", ctx)
+    assert "active session" in ctx.console.export_text()
+    assert (isolated_sessions / ctx.session.session_id).exists()  # not removed
+
+
+def test_sessions_prune_previews_without_yes(ctx: SlashContext, isolated_sessions: Path) -> None:
+    _make_session_dir(isolated_sessions, "2026-01-01T10-00-00")
+    dispatch("/sessions prune 1d", ctx)
+    out = ctx.console.export_text()
+    assert "2026-01-01T10-00-00" in out
+    assert "to delete them" in out
+    # Preview only — still on disk.
+    assert (isolated_sessions / "2026-01-01T10-00-00").exists()
+
+
+def test_sessions_prune_deletes_with_yes(ctx: SlashContext, isolated_sessions: Path) -> None:
+    _make_session_dir(isolated_sessions, "2026-01-01T10-00-00")
+    dispatch("/sessions prune 1d yes", ctx)
+    assert "pruned" in ctx.console.export_text()
+    assert not (isolated_sessions / "2026-01-01T10-00-00").exists()
+
+
+def test_sessions_prune_rejects_bad_duration(ctx: SlashContext, isolated_sessions: Path) -> None:
+    dispatch("/sessions prune nonsense", ctx)
+    assert "invalid duration" in ctx.console.export_text()
+
+
+# ---------- /memory ----------
+
+
+@pytest.fixture
+def isolated_memory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
+    """Point user + project memory at tmp_path for /memory dispatch tests."""
+    monkeypatch.setattr(paths, "USER_MEMORY_FILE", tmp_path / "user-memory.md")
+    monkeypatch.setattr(paths, "project_memory_file", lambda: tmp_path / "project-memory.md")
+    monkeypatch.setattr(paths, "in_project", lambda start=None: True)
+    yield tmp_path
+
+
+def test_memory_empty_reports_not_created(ctx: SlashContext, isolated_memory: Path) -> None:
+    result = dispatch("/memory", ctx)
+    assert isinstance(result, Handled)
+    out = ctx.console.export_text()
+    assert "User memory" in out and "Project memory" in out
+    assert "not created yet" in out
+
+
+def test_memory_lists_stored_entries(ctx: SlashContext, isolated_memory: Path) -> None:
+    from jac.capabilities.memory import remember
+
+    remember(reason="r", content="uses uv, not pip", category="convention", scope="user")
+    dispatch("/memory user", ctx)
+    out = ctx.console.export_text()
+    assert "Conventions" in out
+    assert "uses uv, not pip" in out
+
+
+def test_memory_rejects_unknown_scope(ctx: SlashContext, isolated_memory: Path) -> None:
+    dispatch("/memory bogus", ctx)
+    assert "unknown scope" in ctx.console.export_text()
+
+
+# ---------- /remember + /forget (user-driven) ----------
+
+
+def test_remember_slash_stores_entry(ctx: SlashContext, isolated_memory: Path) -> None:
+    result = dispatch("/remember user convention uses uv, not pip", ctx)
+    assert isinstance(result, Handled)
+    assert "stored under Conventions" in ctx.console.export_text()
+    assert "uses uv, not pip" in paths.USER_MEMORY_FILE.read_text()
+
+
+def test_remember_slash_multiword_content_preserved(
+    ctx: SlashContext, isolated_memory: Path
+) -> None:
+    dispatch("/remember user fact tests live in the tests directory", ctx)
+    assert "tests live in the tests directory" in paths.USER_MEMORY_FILE.read_text()
+
+
+def test_remember_slash_bad_scope(ctx: SlashContext, isolated_memory: Path) -> None:
+    dispatch("/remember nope convention x", ctx)
+    assert "bad scope" in ctx.console.export_text()
+
+
+def test_remember_slash_bad_category(ctx: SlashContext, isolated_memory: Path) -> None:
+    dispatch("/remember user bogus some text", ctx)
+    assert "bad category" in ctx.console.export_text()
+
+
+def test_remember_slash_too_few_args_shows_usage(ctx: SlashContext, isolated_memory: Path) -> None:
+    dispatch("/remember user convention", ctx)
+    assert "usage:" in ctx.console.export_text()
+
+
+def test_forget_slash_removes_entry(ctx: SlashContext, isolated_memory: Path) -> None:
+    dispatch("/remember user convention uses uv, not pip", ctx)
+    dispatch("/forget user uses uv, not pip", ctx)
+    assert "removed from Conventions" in ctx.console.export_text()
+    assert "uses uv, not pip" not in paths.USER_MEMORY_FILE.read_text()
+
+
+def test_forget_slash_no_match_reports_error(ctx: SlashContext, isolated_memory: Path) -> None:
+    dispatch("/remember user convention something real", ctx)
+    dispatch("/forget user not present", ctx)
+    assert "no entry matching" in ctx.console.export_text()
 
 
 # ---------- /resume ----------

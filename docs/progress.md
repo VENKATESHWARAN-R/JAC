@@ -19,7 +19,7 @@ For deeper context:
 
 - **Roadmap was reframed on 2026-05-26 around the cost-efficiency thesis.** Old Phase 3 (Skills with `mode: minion`), Phase 5 (Minion runtime), and Phase 6 (MCP) were archived to [`progress-archive-2026-05.md`](progress-archive-2026-05.md). Read [`architecture.md`](architecture.md) §0 and [`design/cost-efficient-orchestration.md`](design/cost-efficient-orchestration.md) before touching anything in Phases A–G.
 - **Current active work:** **Phase F — MCP loader (D28).** Phase E is fully shipped in v0.5.0. Next up: MCP loader, the ecosystem surface most users try first (promoted from old Phase G after 2026-05-27 review).
-- **Released:** v0.3.0 (Phases A + B, 2026-05-27) · v0.4.0 (Phase D skill loader, 2026-05-27) · v0.5.0 (Phase E parallel + bidirectional, 2026-05-28).
+- **Released:** v0.3.0 (Phases A + B, 2026-05-27) · v0.4.0 (Phase D skill loader, 2026-05-27) · v0.5.0 (Phase E parallel + bidirectional, 2026-05-28) · v0.6.0 (workspace loose-mode, session management, memory slash commands, minion theme, 2026-05-29).
 - **Terminology change:** "Minion" is retired. New name: **sub-agent**. If you touch old "minion" references in unrelated changes, rename in the same commit.
 - **A2A is feature-complete** for its v1 scope. Phase 4.e (OIDC/GCP) was demoted to Phase G; not urgent.
 - **Do not build yet without grooming:** v2 YOLO/sandboxing, CodeMode, stuck-loop, Night Shift.
@@ -242,6 +242,31 @@ Today `clarify(reason, question, options[2-8])` is single-select only. Surfaced 
 - [ ] **Broader test coverage:** Phase 1 core (session, fs/shell bus), memory (`remember`/`forget`), slash edge cases
 
 ---
+
+## Landed — Workspace / memory / session polish ✅ (2026-05-29)
+
+A focused reliability + UX + test-coverage pass over the workspace, memory, and session subsystems (no new phase; tightening shipped surfaces).
+
+- [x] **Atomic session save.** `Session.save()` now writes `messages.json` via tempfile + rename (matching memory's atomic write), so a kill mid-write can't truncate/corrupt the session. Regression tests assert no leftover `.tmp` and clean overwrite-on-repeat.
+- [x] **`test_memory.py` (42 tests).** First coverage of `remember`/`forget` end to end (bootstrap, category + scope routing, de-dup case/whitespace/substring rules, size hint, validation/fail-first paths) plus the markdown parsing internals (`_extract_section`, `_insert_into_section`, `_find_all_matches`, `_remove_line`, `_find_duplicate`, `_strip_bullet_metadata`, `_count_bullets`) on their edge cases.
+- [x] **`test_session.py` (17 tests).** First coverage of the message-history round-trip, atomicity, resume failure modes, and `list_ids`/`list_summaries`.
+- [x] **`/memory` slash command.** Read-only view of stored entries (both scopes, or `/memory user|project`), audit comments stripped so the prose can be fed back to `forget`. Backed by a new read-only `memory.read_memory_entries(scope)` helper (project scope readable even outside a repo).
+- [x] **Richer session listing.** `jac sessions` / `/sessions` now show message count + human-readable creation time per session (via new `Session.list_summaries()` / `SessionSummary`), not just bare ids. Malformed `messages.json` keeps the session listed with an `unreadable` count.
+- [x] **Docs fix.** Memory audit-comment example in `sessions-and-memory.md` corrected to the dashes form (`YYYY-MM-DDTHH-MM-SS`) the code actually writes; regression test guards the no-colon invariant.
+- [x] Docs updated in the same change: `cli-reference.md` + shipped `jac-cli/SKILL.md` (new `/memory` slash, richer listing), `sessions-and-memory.md` (atomic save, `/memory`, listing).
+
+## Landed — Project detection + loose-mode workspace ✅ (2026-05-29)
+
+Fixes the "`.agents/` scattered into random folders" problem and rounds out session/memory maintenance.
+
+- [x] **Project detection now `.git` OR `.agents/`.** New `paths.project_root() → Path | None` (no CWD fallback), `paths.in_project()`, and `paths.project_state_root()`. `find_project_root()` stays the *working* root (CWD fallback) for tools; `is_in_project_repo()` renamed to `in_project()` (callers: memory, skills, skill slash).
+- [x] **Loose-mode fallback.** When no project is found, state writers (sessions, `usage.jsonl`, tool-result cache, A2A) anchor to the user workspace `~/.jac/` via `project_state_root()` instead of creating `<cwd>/.agents/`. Overlay resources (config/memory/prompts/skills) stay project-only and are simply skipped when loose; project-scope `remember` still refuses outside a project.
+- [x] **`jac init` opt-in + startup notice.** `bootstrap.init_project_workspace()` creates `.agents/` (clearing the root cache). `jac init` offers it in a non-project folder; the REPL greets with a `workspace: global` line when loose.
+- [x] **Session delete + prune.** `Session.delete()` / `Session.prune_older_than()` + `parse_duration()` (`w`/`d`/`h`). CLI: `jac sessions` is now a sub-app (`list` / `delete <id>` / `prune --older-than <dur>`, `--yes` to skip confirm). In-REPL: `/sessions delete <id>` (refuses active session) and `/sessions prune <dur> [yes]` (previews without `yes`). Pruning leaves `usage.jsonl` intact (tokens were spent).
+- [x] **User-driven `/remember` + `/forget`.** Deterministic slash edits to memory (no model call; the typed command is the approval). One-bullet audited writes, fixed schema — never a wholesale rewrite.
+- [x] **`@jac_tool` overloads.** Added `@overload`s so a bare-decorated tool keeps its original type — lets `/remember`/`/forget` call `remember`/`forget` directly and still type-check.
+- [x] **Tests.** New `test_workspace_paths.py` (13: detection, loose fallback, opt-in). `test_session.py` +delete/prune/`parse_duration`. `test_slash.py` +`/sessions delete|prune`, `/remember`, `/forget`. Autouse `_clear_root_caches` in conftest kills the `@cache` cross-test landmine; state-isolation fixtures migrated from patching `find_project_root` to `project_root`.
+- [x] **Docs.** `sessions-and-memory.md` (project vs. global, delete/prune, editing memory yourself), `cli-reference.md`, `configuration.md`, shipped `jac-cli/SKILL.md`.
 
 ## Ongoing — Phase 7 Quality 🚧
 

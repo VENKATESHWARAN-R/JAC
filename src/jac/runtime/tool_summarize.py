@@ -173,7 +173,7 @@ def is_strictly_cheaper(small_model: str, current_model: str) -> bool:
 
 def _cache_dir() -> Path:
     session = get_current_session_id() or "headless"
-    path = paths.find_project_root() / ".agents" / "cache" / "tool-results" / session
+    path = paths.project_state_root() / "cache" / "tool-results" / session
     path.mkdir(parents=True, exist_ok=True)
     return path
 

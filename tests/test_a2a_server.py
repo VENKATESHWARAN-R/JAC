@@ -58,7 +58,7 @@ def test_server_lifecycle_card_and_auth(tmp_path, monkeypatch, free_port: int):
     # Pin the project root to tmp_path so context files don't pollute the repo.
     from jac.workspace import paths
 
-    monkeypatch.setattr(paths, "find_project_root", lambda start=None: tmp_path)
+    monkeypatch.setattr(paths, "project_root", lambda start=None: tmp_path)
     if hasattr(paths.find_project_root, "cache_clear"):
         paths.find_project_root.cache_clear()
 
@@ -137,7 +137,7 @@ def test_server_unsafe_omits_auth_and_accepts_anyone(tmp_path, monkeypatch, free
     """`--unsafe` skips middleware AND omits securitySchemes from the card."""
     from jac.workspace import paths
 
-    monkeypatch.setattr(paths, "find_project_root", lambda start=None: tmp_path)
+    monkeypatch.setattr(paths, "project_root", lambda start=None: tmp_path)
     if hasattr(paths.find_project_root, "cache_clear"):
         paths.find_project_root.cache_clear()
 
@@ -182,7 +182,7 @@ def test_double_start_raises(tmp_path, monkeypatch, free_port: int):
     """Calling start twice should raise (caller bug; slash handler guards)."""
     from jac.workspace import paths
 
-    monkeypatch.setattr(paths, "find_project_root", lambda start=None: tmp_path)
+    monkeypatch.setattr(paths, "project_root", lambda start=None: tmp_path)
     if hasattr(paths.find_project_root, "cache_clear"):
         paths.find_project_root.cache_clear()
 
@@ -224,7 +224,7 @@ def test_retention_loop_starts_with_server_and_stops_with_it(tmp_path, monkeypat
     to fire (would burn an hour) — we assert task lifecycle."""
     from jac.workspace import paths
 
-    monkeypatch.setattr(paths, "find_project_root", lambda start=None: tmp_path)
+    monkeypatch.setattr(paths, "project_root", lambda start=None: tmp_path)
     if hasattr(paths.find_project_root, "cache_clear"):
         paths.find_project_root.cache_clear()
 
@@ -250,7 +250,7 @@ def test_retention_disabled_when_retention_days_zero(tmp_path, monkeypatch, free
     otherwise we'd spin a background task that does no useful work."""
     from jac.workspace import paths
 
-    monkeypatch.setattr(paths, "find_project_root", lambda start=None: tmp_path)
+    monkeypatch.setattr(paths, "project_root", lambda start=None: tmp_path)
     if hasattr(paths.find_project_root, "cache_clear"):
         paths.find_project_root.cache_clear()
 
@@ -277,7 +277,7 @@ def test_capability_accepts_and_threads_usage_tracker(tmp_path, monkeypatch, fre
     from jac.runtime.usage import BudgetLimits, UsageTracker
     from jac.workspace import paths
 
-    monkeypatch.setattr(paths, "find_project_root", lambda start=None: tmp_path)
+    monkeypatch.setattr(paths, "project_root", lambda start=None: tmp_path)
     if hasattr(paths.find_project_root, "cache_clear"):
         paths.find_project_root.cache_clear()
 
@@ -327,7 +327,7 @@ def test_inbound_file_part_lands_under_guest_uploads(tmp_path, monkeypatch, free
 
     from jac.workspace import paths
 
-    monkeypatch.setattr(paths, "find_project_root", lambda start=None: tmp_path)
+    monkeypatch.setattr(paths, "project_root", lambda start=None: tmp_path)
     if hasattr(paths.find_project_root, "cache_clear"):
         paths.find_project_root.cache_clear()
 

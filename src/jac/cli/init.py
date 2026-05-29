@@ -29,7 +29,7 @@ from jac.profiles_io import detect_old_profiles, migrate_old_profiles
 from jac.providers.registry import get_provider_registry
 from jac.secrets import SecretBackendName, get_backend
 from jac.workspace import paths
-from jac.workspace.bootstrap import ensure_user_workspace
+from jac.workspace.bootstrap import ensure_user_workspace, init_project_workspace
 
 console = Console()
 
@@ -38,6 +38,7 @@ def run_init() -> None:
     """Run the wizard. Idempotent: re-runs add or update profiles."""
     ensure_user_workspace()
     _run_pending_migrations()
+    _maybe_init_project_workspace()
     existing = list_profiles()
 
     _print_intro(existing)
@@ -51,6 +52,39 @@ def run_init() -> None:
     )
     add_or_update_profile(profile_name, profile, set_default=set_as_default)
     _print_done(profile_name, set_as_default)
+
+
+def _maybe_init_project_workspace() -> None:
+    """Offer to make the current directory a JAC project when it isn't one.
+
+    A project is any folder with ``.git`` or ``.agents/``. When neither is
+    present, JAC runs "loose" — sessions and project memory fall back to the
+    global user workspace (``~/.jac``). Most users running ``jac init`` in a
+    folder they intend to work in want a project here, so we offer to create
+    ``.agents/``. Declining is fine — JAC just stays in loose mode.
+    """
+    from pathlib import Path
+
+    if paths.in_project():
+        return
+
+    cwd = Path.cwd()
+    console.print(
+        Panel.fit(
+            "[bold]No JAC project here[/bold]\n\n"
+            f"[dim]{cwd}[/dim] has no [bold].git[/bold] or [bold].agents/[/bold], "
+            "so sessions and project memory would use your global workspace "
+            f"([bold]{paths.USER_WORKSPACE}[/bold]).\n\n"
+            "Creating [bold].agents/[/bold] here makes this a project: its "
+            "sessions, memory, and config stay with the folder.",
+            border_style="cyan",
+        )
+    )
+    if not Confirm.ask(f"Create a project workspace in {cwd}?", default=True):
+        console.print("[dim]staying in loose mode — using the global workspace.[/dim]\n")
+        return
+    created = init_project_workspace(cwd)
+    console.print(f"[green]✓[/green] created [bold]{created}[/bold]\n")
 
 
 def _run_pending_migrations() -> None:

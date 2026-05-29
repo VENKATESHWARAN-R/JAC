@@ -62,9 +62,29 @@ from jac.runtime.events import (
 # Status-line easter eggs — minion-adjacent gibberish, not always "thinking…"
 _THINKING_LABELS: tuple[str, ...] = (
     "thinking…",
+    "banana…",
     "bello…",
-    "bee do bee do…",
+    "papoi…",
+    "poopaye…",
     "gelato…",
+    "bee do bee do…",
+    "tank yu…",
+    "la boda…",
+    "underpants…",
+    "poulet tikka masala…",
+    "fluffay stuffay…",
+    "kanpai…",
+    "chasy…",
+    "stuarting…",
+    "kevin mode…",
+    "bob mode…",
+    "illumination…",
+    "gru says wait…",
+    "minionize…",
+    "honk honk…",
+    "bi-do…",
+    "me want banana…",
+    "para tú…",
 )
 
 _ARG_VALUE_TRUNCATE_AT = 300
@@ -285,7 +305,7 @@ class CliRenderer:
                 Panel(
                     f"[bold]objective:[/bold] {event.objective}",
                     title=(
-                        f"[blue]▶ sub-agent[/blue] [bold]{event.spawn_id}[/bold] "
+                        f"[blue]▶ minion[/blue] [bold]{event.spawn_id}[/bold] "
                         f"[dim]· tier={event.tier} · {event.model}[/dim]"
                     ),
                     title_align="left",
@@ -295,29 +315,31 @@ class CliRenderer:
             )
             status.start()
         elif isinstance(event, SubAgentQuestion):
+            # Message is FROM the minion → blue (minion colour).
             status.stop()
             self.console.print(
                 Panel(
                     event.question,
                     title=(
-                        f"[yellow]⏸ sub-agent → main[/yellow] "
+                        f"[blue]⏸ minion → Gru[/blue] "
                         f"[bold]{event.spawn_id}[/bold] "
                         f"[dim]· round-trip {event.round_trip}[/dim]"
                     ),
                     title_align="left",
-                    border_style="yellow",
+                    border_style="blue",
                     padding=(0, 1),
                 )
             )
             status.start()
         elif isinstance(event, SubAgentAnswer):
+            # Message is FROM Gru → yellow (Gru colour).
             status.stop()
             self.console.print(
                 Panel(
                     event.answer,
-                    title=(f"[cyan]↩ main → sub-agent[/cyan] [bold]{event.spawn_id}[/bold]"),
+                    title=(f"[yellow]↩ Gru → minion[/yellow] [bold]{event.spawn_id}[/bold]"),
                     title_align="left",
-                    border_style="cyan",
+                    border_style="yellow",
                     padding=(0, 1),
                 )
             )
@@ -325,7 +347,7 @@ class CliRenderer:
         elif isinstance(event, SubAgentCompleted):
             exit_color = "green" if event.exit_status == "ok" else "red"
             self.console.print(
-                f"[{exit_color}]✓ sub-agent[/{exit_color}] "
+                f"[{exit_color}]✓ minion[/{exit_color}] "
                 f"[bold]{event.spawn_id}[/bold] [dim]done · "
                 f"turns={event.turns_used} · exit={event.exit_status} · "
                 f"asks={event.ask_main_agent_count}[/dim]",
@@ -412,14 +434,16 @@ class CliRenderer:
         work for a later pass (it requires reshaping the deferred-tool
         call into N separate approvals at the pydantic-ai layer).
         """
-        # Title shows who's asking. ``Gru`` (the main agent) renders dim
-        # so the panel still reads as a generic approval; a ``minion-N``
-        # label renders blue to match the spawn lifecycle panels so the
-        # user can correlate "which minion is asking" at a glance.
+        # Title and border both encode who's asking.
+        # Yellow border = Gru (main agent); blue border = minion.
+        # The border colour alone is enough to tell at a glance which agent
+        # needs approval during a busy parallel-spawn session.
         if event.agent_label == "Gru":
             title = "[dim]approval needed · Gru[/dim]"
+            border_color = "yellow"
         else:
             title = f"approval needed · [blue]{event.agent_label}[/blue]"
+            border_color = "blue"
 
         self.console.print()
         if event.tool_name == "spawn_sub_agents":
@@ -427,7 +451,7 @@ class CliRenderer:
                 Panel(
                     self._build_parallel_spawn_body(event),
                     title=title,
-                    border_style="yellow",
+                    border_style=border_color,
                 )
             )
         else:
@@ -441,7 +465,7 @@ class CliRenderer:
                 if len(value_str) > _ARG_VALUE_TRUNCATE_AT:
                     value_str = value_str[: _ARG_VALUE_TRUNCATE_AT - 1] + "…"
                 body.append(f"[dim]{key}:[/dim] {value_str}")
-            self.console.print(Panel("\n".join(body), title=title, border_style="yellow"))
+            self.console.print(Panel("\n".join(body), title=title, border_style=border_color))
         try:
             choice = await asyncio.to_thread(
                 Prompt.ask,

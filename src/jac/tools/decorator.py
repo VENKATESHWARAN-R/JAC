@@ -28,6 +28,7 @@ from __future__ import annotations
 import inspect
 import typing
 from collections.abc import Callable
+from typing import overload
 
 _JAC_TOOL_MARKER = "__jac_tool__"
 _SUMMARIZABLE_MARKER = "__jac_tool_summarizable__"
@@ -82,6 +83,14 @@ def _validate_and_mark[F: Callable[..., object]](func: F, *, summarizable: bool)
     return func
 
 
+@overload
+def jac_tool[F: Callable[..., object]](func: F, /) -> F: ...
+
+
+@overload
+def jac_tool[F: Callable[..., object]](*, summarizable: bool = ...) -> Callable[[F], F]: ...
+
+
 def jac_tool[F: Callable[..., object]](
     func: F | None = None,
     /,
@@ -89,6 +98,11 @@ def jac_tool[F: Callable[..., object]](
     summarizable: bool = False,
 ) -> F | Callable[[F], F]:
     """Mark ``func`` as a JAC tool and validate its signature.
+
+    The ``@overload``s above narrow the return type per call form: bare
+    ``@jac_tool`` yields the decorated function unchanged (so callers that
+    invoke a decorated tool directly — e.g. the ``/remember`` slash —
+    type-check), while ``@jac_tool(summarizable=...)`` yields a decorator.
 
     Supports both ``@jac_tool`` (bare) and ``@jac_tool(summarizable=True)``.
     The first parameter (or first parameter after a leading ``ctx``) must be

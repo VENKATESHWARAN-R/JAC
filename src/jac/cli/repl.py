@@ -27,6 +27,7 @@ from prompt_toolkit.completion import CompleteEvent, Completer, Completion
 from prompt_toolkit.document import Document
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import FileHistory
+from prompt_toolkit.styles import Style
 from pydantic_ai import Agent, AgentRunResult
 from rich.console import Console
 
@@ -136,6 +137,13 @@ class _SlashOnlyCompleter(Completer):
                 yield Completion(candidate, start_position=-len(text))
 
 
+_TOOLBAR_STYLE = Style.from_dict({
+    # Dark canvas for the toolbar — ``noreverse`` disables prompt-toolkit's
+    # default inverted-video look; explicit bg/fg take over from there.
+    "bottom-toolbar": "noreverse bg:ansiblack fg:ansiwhite",
+})
+
+
 def _make_prompt_session(status: StatusState) -> PromptSession[str]:
     paths.USER_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
     return PromptSession(
@@ -143,6 +151,7 @@ def _make_prompt_session(status: StatusState) -> PromptSession[str]:
         auto_suggest=AutoSuggestFromHistory(),
         completer=_SlashOnlyCompleter(list(command_names())),
         bottom_toolbar=lambda: format_toolbar(status),
+        style=_TOOLBAR_STYLE,
         multiline=False,
     )
 
@@ -153,6 +162,7 @@ def _greet(
     session: Session,
     resumed: bool,
     restored_plan: list[dict[str, str]] | None = None,
+    loose: bool = False,
 ) -> None:
     # TTY + width gate: don't dump a banner into pipes / CI / cramped panes.
     # highlight=False disables Rich's auto-highlighter so the model id and
@@ -186,6 +196,13 @@ def _greet(
             f"[dim]plan:[/dim]    {len(restored_plan)} step(s) restored "
             f"[yellow]({pending} pending)[/yellow] "
             "[dim]— Gru can read it via [bold]get_plan()[/bold][/dim]",
+            highlight=False,
+        )
+    if loose:
+        console.print(
+            f"[dim]workspace:[/dim] [yellow]global[/yellow] "
+            f"[dim]({paths.USER_WORKSPACE}) — no project here. "
+            "Run [bold]jac init[/bold] to make this folder a project.[/dim]",
             highlight=False,
         )
     console.print("[dim]type 'exit' or Ctrl-D to quit[/dim]", highlight=False)
@@ -441,6 +458,7 @@ async def _repl_loop(
         session=session,
         resumed=resumed,
         restored_plan=restored_plan or None,
+        loose=not paths.in_project(),
     )
 
     # Surface the restored plan as a synthesized `PlanReplaced` event so the

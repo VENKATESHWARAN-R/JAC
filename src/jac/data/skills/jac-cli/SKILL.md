@@ -47,13 +47,28 @@ jac keys unset ANTHROPIC_API_KEY
 
 Resolution order at runtime: **process env → configured backend → fail-first**. Process env always wins.
 
+## Sessions & workspace
+
+```bash
+jac sessions                         # list (id + msg count + creation time)
+jac sessions delete <id>             # delete one (--yes / -y skips confirm)
+jac sessions prune --older-than 30d  # delete sessions older than a cutoff (w/d/h)
+```
+
+A folder is a **project** if it has `.git` or `.agents/` at/above the CWD. Outside any project, JAC runs *loose*: sessions + `usage.jsonl` go to the global workspace `~/.jac/` (not a stray `.agents/`). `jac init` in a non-project folder offers to create `.agents/` here. Project-scope memory (`scope="project"`) fails outside a project — use `scope="user"` for cross-project facts.
+
 ## In-REPL slash commands
 
 ```text
 /help                                # full slash list
-/sessions                            # list project sessions
+/sessions                            # list project sessions (id + msg count + creation time)
+/sessions delete <id>                # delete one session (not the active one)
+/sessions prune <dur> [yes]          # preview/delete sessions older than <dur> (e.g. 30d)
 /resume [ID]                         # switch session (latest if no id)
 /clear                               # new session; old kept on disk
+/memory [user|project]               # show stored remember() entries; no arg = both scopes
+/remember <scope> <category> <text>  # store memory yourself; scope=user|project
+/forget <scope> <exact text>         # remove memory yourself; scope=user|project
 /profile [NAME]                      # list or switch (rebuilds Gru, rolls back on missing keys)
 /model [PROVIDER:ID]                 # numbered picker or explicit override
 /tokens                              # detailed token counters
@@ -127,7 +142,10 @@ Secrets (bearer token, API key value, client secret) are always prompted with hi
 - ❌ `/budget extend project 1000000` — the KIND is `project_total`, not `project`.
 - ❌ `/a2a peer add NAME URL bearer TOKEN` — auth flags are `--bearer` / `--api-key` / `--oauth2`; the secret is prompted, not positional.
 - ❌ `jac a2a serve --unsafe` on a non-loopback bind — only safe for trusted networks; bearer auth is the default for a reason.
-- ❌ Treating `/clear` as deleting the prior session — it just starts a new one; the prior session stays on disk and is reachable via `/sessions` / `/resume ID`.
+- ❌ Treating `/clear` as deleting the prior session — it just starts a new one; the prior session stays on disk and is reachable via `/sessions` / `/resume ID`. To actually remove it use `/sessions delete <id>` or `jac sessions delete <id>`.
+- ❌ `/sessions prune 30d` and expecting it to delete immediately — without a trailing `yes` it only previews; run `/sessions prune 30d yes` to delete (or `jac sessions prune --older-than 30d`).
+- ❌ `jac sessions prune 30d` — the age is an option: `jac sessions prune --older-than 30d`.
+- ❌ Expecting `/remember some fact` to work — scope and category are required: `/remember project convention some fact`.
 
 ## Fallback
 

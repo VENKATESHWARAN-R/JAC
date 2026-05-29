@@ -27,6 +27,7 @@ from rich.console import Console
 from jac.cli.a2a import app as a2a_app
 from jac.cli.keys_cmd import app as keys_app
 from jac.cli.profiles_cmd import app as profiles_app
+from jac.cli.sessions_cmd import app as sessions_app
 from jac.errors import JacConfigError
 from jac.runtime.observability import setup_observability
 from jac.secrets import apply_ad_hoc_model_env, apply_profile_env
@@ -41,6 +42,7 @@ app = typer.Typer(
 app.add_typer(profiles_app, name="profiles")
 app.add_typer(keys_app, name="keys")
 app.add_typer(a2a_app, name="a2a")
+app.add_typer(sessions_app, name="sessions")
 
 console = Console()
 
@@ -120,14 +122,6 @@ def init_command() -> None:
     from jac.cli.init import run_init
 
     run_init()
-
-
-@app.command("sessions")
-def sessions_command() -> None:
-    """List sessions for this project, oldest → newest."""
-    from jac.cli.session_view import render_session_listing
-
-    render_session_listing(console, in_repl=False)
 
 
 # ---------- internal ----------

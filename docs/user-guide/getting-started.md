@@ -4,7 +4,7 @@
 
 JAC (**J**ust **A**nother **C**ompanion/CLI) is a Python CLI agent built on [Pydantic AI](https://ai.pydantic.dev/). It runs on your machine with your API keys, your files, and persistent sessions per git project.
 
-**Current release:** v0.5.0. Phase E shipped parallel sub-agents (`spawn_sub_agents`), bidirectional sub-agent ↔ main-agent comms (on by default), and `minion-N` spawn IDs. Phases A + B (context-cost controls, sequential sub-agents), Phase D (skill loader), and Phase 4 A2A (v1 scope) are also shipped — see [Implementation progress](../progress.md) for the live state.
+**Current release:** v0.6.0. Ships workspace loose-mode (`.git` and `.agents/` both recognised as project roots; state anchors to `~/.jac` when neither is present), session management (`jac sessions delete` / `prune`), memory slash commands (`/memory`, `/remember`, `/forget`), and minion-theme renderer polish. Earlier releases: v0.5.0 (parallel sub-agents, bidirectional comms), v0.4.0 (skill loader), v0.3.0 (context-cost controls + sub-agents) — see [Implementation progress](../progress.md) for the full history.
 
 ## Requirements
 
@@ -102,7 +102,7 @@ jac sessions
 
 Inside the REPL: `/sessions`, `/resume [ID]`, `/clear` — see [CLI reference](cli-reference.md).
 
-## What Gru can do in v0.5.0
+## What Gru can do in v0.6.0
 
 - Read and search the repo (`read_file`, `grep`, `glob`, `list_dir`)
 - Edit files and run shell commands **with your approval**

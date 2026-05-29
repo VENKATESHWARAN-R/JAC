@@ -39,7 +39,7 @@ def session(tmp_path, monkeypatch):
     """A real Session, anchored to tmp_path so we don't pollute the repo."""
     from jac.workspace import paths
 
-    monkeypatch.setattr(paths, "find_project_root", lambda start=None: tmp_path)
+    monkeypatch.setattr(paths, "project_root", lambda start=None: tmp_path)
     paths.find_project_root.cache_clear() if hasattr(
         paths.find_project_root, "cache_clear"
     ) else None

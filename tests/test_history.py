@@ -61,9 +61,9 @@ def _isolated_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterat
     """
     sessions = tmp_path / ".agents" / "sessions"
     sessions.mkdir(parents=True)
-    paths.find_project_root.cache_clear()  # type: ignore[attr-defined]
-    monkeypatch.setattr(paths, "project_sessions_dir", lambda: sessions)
-    monkeypatch.setattr(paths, "find_project_root", lambda start=None: tmp_path)
+    # Patch project_root so project_state_root (and thus the directly-imported
+    # project_sessions_dir in session.py / history.py) resolves under tmp_path.
+    monkeypatch.setattr(paths, "project_root", lambda start=None: tmp_path)
     set_current_session_id("test-session")
     reset_settings_cache()
     yield

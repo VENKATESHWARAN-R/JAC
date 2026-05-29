@@ -29,6 +29,7 @@ nav = [
         { "A2A operator" = "user-guide/a2a-operator.md" },
     ] },
     { "Version snapshots" = [
+        { "v0.6.0" = "snapshots/v0.6.0.md" },
         { "v0.5.0" = "snapshots/v0.5.0.md" },
         { "Template" = "snapshots/template.md" },
     ] },

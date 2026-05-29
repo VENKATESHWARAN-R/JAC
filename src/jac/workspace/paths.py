@@ -37,33 +37,81 @@ PROJECT_WORKSPACE_DIRNAME = ".agents"
 PROJECT_CONTEXT_FILENAME = "AGENTS.md"
 
 
-@cache
-def find_project_root(start: Path | None = None) -> Path:
-    """Walk up from ``start`` (default: CWD) looking for a ``.git`` directory.
+def _is_project_marker(directory: Path) -> bool:
+    """``True`` if ``directory`` looks like a JAC project root.
 
-    Returns the directory containing ``.git`` as the project root. Falls back
-    to ``start`` (resolved) if no ``.git`` is found in any ancestor.
+    Two markers, either suffices:
+
+    - ``.git`` (file or dir — git worktrees use a file) — an obvious project.
+    - ``.agents/`` directory — the explicit JAC opt-in. This is how a
+      *non-git* folder declares itself a project: create ``.agents/`` (e.g.
+      via ``jac init``) and JAC treats it as one.
+    """
+    return (directory / ".git").exists() or (directory / PROJECT_WORKSPACE_DIRNAME).is_dir()
+
+
+@cache
+def project_root(start: Path | None = None) -> Path | None:
+    """Nearest ancestor that is a JAC project (``.git`` or ``.agents``).
+
+    Returns ``None`` when neither marker is found at or above ``start``
+    (default: CWD) — i.e. JAC is running "loose" in an unrelated folder.
+    Callers that store project-scoped state consult this (via
+    :func:`project_state_root`) so we never scatter ``.agents/`` into
+    directories the user never opted in.
     """
     here = (start or Path.cwd()).resolve()
     for candidate in (here, *here.parents):
-        if (candidate / ".git").exists():
+        if _is_project_marker(candidate):
             return candidate
-    return here
+    return None
 
 
-def is_in_project_repo(start: Path | None = None) -> bool:
-    """``True`` iff a ``.git`` directory exists at or above ``start`` (default: CWD).
+@cache
+def find_project_root(start: Path | None = None) -> Path:
+    """Working root for tool execution and relative-path resolution.
 
-    Used by scope-aware code paths (e.g. project-memory writes) that need to
-    refuse to run outside a tracked repo, rather than silently anchoring to
-    whatever CWD happens to be.
+    The :func:`project_root` when one exists; otherwise the resolved
+    ``start`` (default: CWD). The fallback matters for *tools* — ``run_shell``,
+    ``grep``, and relative ``read_file`` paths must operate where the user
+    actually is, even with no project. It does **not** govern where JAC
+    writes its own state; that's :func:`project_state_root`.
     """
-    here = (start or Path.cwd()).resolve()
-    return any((candidate / ".git").exists() for candidate in (here, *here.parents))
+    return project_root(start) or (start or Path.cwd()).resolve()
+
+
+def in_project(start: Path | None = None) -> bool:
+    """``True`` iff a JAC project (``.git`` or ``.agents``) exists at/above ``start``.
+
+    Used by scope-aware code paths (e.g. project-memory writes, project
+    skill/prompt overlays) that must refuse to run outside a project rather
+    than silently anchoring to whatever CWD happens to be.
+    """
+    return project_root(start) is not None
 
 
 def project_workspace() -> Path:
+    """``<project_root>/.agents`` — the overlay-resource root (config, memory,
+    prompts, skills). In loose mode :func:`find_project_root` falls back to
+    CWD, so these resolve under ``<cwd>/.agents`` and are simply skipped if
+    absent (overlay readers tolerate missing files; project-memory *writes*
+    refuse via :func:`in_project`). State writers must use
+    :func:`project_state_root`, not this."""
     return find_project_root() / PROJECT_WORKSPACE_DIRNAME
+
+
+def project_state_root() -> Path:
+    """Directory under which JAC writes session-scoped state.
+
+    Sessions, ``usage.jsonl``, the tool-result cache, and A2A state live
+    here. In a project it's ``<project_root>/.agents`` (same as
+    :func:`project_workspace`). When **loose** (no ``.git`` / ``.agents``)
+    it's the user workspace ``~/.jac`` — so a quick ``jac`` in an unrelated
+    folder persists globally instead of dropping ``.agents/`` next to
+    whatever files happen to be there.
+    """
+    root = project_root()
+    return root / PROJECT_WORKSPACE_DIRNAME if root is not None else USER_WORKSPACE
 
 
 def project_config_file() -> Path:
@@ -85,14 +133,15 @@ def project_memory_file() -> Path:
 
 
 def project_usage_file() -> Path:
-    """``<project_root>/.agents/usage.jsonl`` — per-turn token usage log (D25).
+    """``<state_root>/usage.jsonl`` — per-turn token usage log (D25).
 
     One JSONL line is appended per completed agent turn:
     ``{session_id, ts, input_tokens, output_tokens}``. ``project_total_tokens``
     budgets sum across this file on startup; the running session's
     contributions accumulate live in :class:`jac.runtime.usage.UsageTracker`.
+    Anchored to :func:`project_state_root` so loose runs log under ``~/.jac``.
     """
-    return project_workspace() / "usage.jsonl"
+    return project_state_root() / "usage.jsonl"
 
 
 def project_a2a_dir() -> Path:
@@ -100,8 +149,9 @@ def project_a2a_dir() -> Path:
 
     Holds persisted task contexts, the inbound call audit log, and any
     other per-project A2A artifacts. Created lazily on first server start.
+    Anchored to :func:`project_state_root` (loose runs serve under ``~/.jac``).
     """
-    return project_workspace() / "a2a"
+    return project_state_root() / "a2a"
 
 
 def project_a2a_contexts_dir() -> Path:
@@ -170,7 +220,13 @@ def project_skills_dir() -> Path:
 
 
 def project_sessions_dir() -> Path:
-    return project_workspace() / "sessions"
+    """``<state_root>/sessions`` — message-history persistence.
+
+    Anchored to :func:`project_state_root` so loose runs persist under
+    ``~/.jac/sessions`` (one global pool) instead of writing ``.agents/``
+    into an unrelated folder.
+    """
+    return project_state_root() / "sessions"
 
 
 def resolve_under_project(path: str | Path) -> Path:

@@ -7,8 +7,10 @@
 | Command | Description |
 | --- | --- |
 | `jac` | Start interactive REPL (default profile unless flags set) |
-| `jac init` | Interactive setup: secrets backend, profile, credentials |
-| `jac sessions` | List sessions in current project (oldest → newest, marks latest) |
+| `jac init` | Interactive setup: secrets backend, profile, credentials. In a non-project folder, offers to create `.agents/` here |
+| `jac sessions` | List sessions (id + message count + creation time, oldest → newest, marks latest) |
+| `jac sessions delete ID` | Delete one session (`--yes`/`-y` skips confirmation) |
+| `jac sessions prune --older-than DUR` | Delete sessions older than `DUR` (`30d`, `12h`, `2w`); `--yes`/`-y` skips confirmation |
 | `jac profiles` | List profiles (same as `jac profiles list`) |
 | `jac profiles list` | List profiles, mark `default_profile` |
 | `jac profiles use NAME` | Set default profile |
@@ -30,6 +32,8 @@
 | `--session` | `-s` | Resume specific session id |
 
 Subcommands (`init`, `sessions`, `profiles`, `keys`, `a2a`) do not activate a profile or require a model.
+
+**Project vs. global workspace.** A folder is a *project* if it has `.git` or `.agents/` at or above the CWD. Outside any project, JAC runs "loose": sessions and `usage.jsonl` go to the global user workspace (`~/.jac/`) rather than creating `.agents/` in an unrelated folder. `jac init` offers to create `.agents/` to make the current folder a project.
 
 ### `jac a2a serve` flags
 
@@ -56,9 +60,12 @@ Slash lines are handled locally — they are **not** sent to the model.
 | --- | --- | --- |
 | `/help` | `/help` | List slash commands |
 | `/exit` | `/exit` | Leave REPL |
-| `/sessions` | `/sessions` | List project sessions |
+| `/sessions` | `/sessions [delete <id> \| prune <dur> [yes]]` | List sessions; or delete one / prune by age (`30d`, `12h`, `2w`). Refuses the active session; `prune` previews unless `yes` is appended |
 | `/resume` | `/resume [ID]` | Switch session (latest if omitted) |
 | `/clear` | `/clear` | New session (prior session kept on disk) |
+| `/memory` | `/memory [user\|project]` | Show stored `remember` entries by section; no arg shows both scopes |
+| `/remember` | `/remember <user\|project> <category> <text>` | Store a memory entry yourself (no model call); `category`: `convention`/`fact`/`preference`/`gotcha`/`decision` |
+| `/forget` | `/forget <user\|project> <exact text>` | Remove a memory entry yourself (match the exact text from `/memory`) |
 | `/profile` | `/profile [NAME]` | List profiles or switch |
 | `/model` | `/model [PROVIDER:ID]` | Numbered picker or explicit model |
 | `/budget` | `/budget [extend [KIND] N]` | Show token budgets vs usage; `extend` raises the limit for this session (`KIND`: `session_input`, `session_total`, `project_total`; default `session_total`) |

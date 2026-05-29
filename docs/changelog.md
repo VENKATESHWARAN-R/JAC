@@ -12,6 +12,36 @@ All notable changes to JAC are documented here. Format follows
 - Phase G — Plan Mode (D23)
 - Phase H — A2A 4.e (OIDC/GCP auth)
 
+## [0.6.0] - 2026-05-29
+
+**v0.6.0** — Workspace loose-mode, session management, memory slash commands, and minion theme polish. Pre-1.0 API.
+
+### Added
+
+- **Loose-mode workspace** — when no `.git` or `.agents/` is found, session state (sessions, `usage.jsonl`, A2A) anchors to `~/.jac` instead of creating `.agents/` in an unrelated folder. Project-scope `remember` still refuses outside a project. `jac init` offers to create `.agents/` when run in a non-project folder.
+- **`.agents/` as project marker** — `paths.project_root()` now treats a directory containing `.agents/` as a project root, alongside `.git`. Non-git projects can opt in via `jac init` or by creating `.agents/` manually. New helpers: `in_project()` (replaces `is_in_project_repo()`), `project_state_root()` (where JAC writes state), `bootstrap.init_project_workspace()`.
+- **`jac sessions delete <id>`** — delete a specific session directory; `usage.jsonl` left intact. `--yes` skips confirmation.
+- **`jac sessions prune --older-than <dur>`** — bulk-delete sessions older than a duration (`30d`, `12h`, `2w`); dry-run without `--yes`. `parse_duration()` rejects invalid inputs loudly.
+- **`/sessions delete <id>`** and **`/sessions prune <dur> [yes]`** — same from within the REPL; refuses to delete the active session.
+- **`/memory [user|project]`** — read-only view of both (or one) memory scopes, section-by-section with audit comments stripped.
+- **`/remember <scope> <category> <text>`** and **`/forget <scope> <text>`** — user-driven memory edits without a model call; the typed command is the approval. Same audited single-bullet writes as the agent-initiated tools.
+- **`Session.list_summaries()`** — lightweight per-session metadata (message count, creation time) for the session listing; `SessionSummary` dataclass. Listing now shows human-readable creation times and message counts.
+- **Atomic session saves** — `Session.save()` writes via a sibling tempfile + rename, matching memory's atomic-write pattern; a kill mid-write can no longer truncate `messages.json`.
+- **`@jac_tool` overloads** — bare-decorated tools now keep their original type signature, so slash commands that call the underlying tool function directly (e.g. `/remember` calling `remember()`) type-check correctly.
+- **Minion-theme renderer polish** — color grammar now enforced: yellow border = Gru, blue border = minion. Panel labels unified ("sub-agent" → "minion" throughout). Status bar: dark background (`noreverse bg:ansiblack`), yellow key labels, `·` segment separators, `minions:N` counter. Expanded thinking-label pool (20+ minion-adjacent phrases).
+
+### Changed
+
+- `jac sessions` promoted from a single `@app.command` to a full `sessions_cmd` Typer sub-app with `list`, `delete`, and `prune` subcommands.
+- `paths.is_in_project_repo()` renamed to `paths.in_project()` (recognises `.agents/` in addition to `.git`); callers updated.
+- `paths.project_root()` now returns `Path | None` (was always a `Path`); `paths.find_project_root()` retains the CWD-fallback behaviour for tools.
+
+### Architecture decisions
+
+- `project_state_root()` — one function owns where JAC writes its own state; callers never construct the path themselves.
+
+**Tests** — new `test_workspace_paths.py` (13), `test_memory.py` (42), `test_session.py` (17); `test_slash.py` extended for `/sessions delete|prune`, `/remember`, `/forget`; autouse `_clear_root_caches` fixture in conftest prevents `@cache` cross-test contamination.
+
 ## [0.5.0] - 2026-05-28
 
 **v0.5.0** — Phase E: parallel sub-agents + bidirectional comms. Pre-1.0 API.
@@ -159,7 +189,8 @@ First **alpha** release (Phase 1 + Phase 1.5). Pre-1.0 API; expect breaking chan
 - Python 3.13+
 - Provider API keys (via `jac init` / `jac keys` / env)
 
-[Unreleased]: https://github.com/VENKATESHWARAN-R/JAC/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/VENKATESHWARAN-R/JAC/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/VENKATESHWARAN-R/JAC/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/VENKATESHWARAN-R/JAC/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/VENKATESHWARAN-R/JAC/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/VENKATESHWARAN-R/JAC/compare/v0.2.0...v0.3.0

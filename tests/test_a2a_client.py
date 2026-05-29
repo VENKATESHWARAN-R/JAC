@@ -787,7 +787,7 @@ def test_inbound_file_part_saved_and_path_returned(tmp_path, monkeypatch):
     its path is surfaced in _jac_saved_files."""
     from jac.workspace import paths
 
-    monkeypatch.setattr(paths, "find_project_root", lambda start=None: tmp_path)
+    monkeypatch.setattr(paths, "project_root", lambda start=None: tmp_path)
     if hasattr(paths.find_project_root, "cache_clear"):
         paths.find_project_root.cache_clear()
 
@@ -809,7 +809,7 @@ def test_inbound_no_files_means_no_save_no_key(tmp_path, monkeypatch):
     """Text-only artifact: no _jac_saved_files key, no inbound-files dir."""
     from jac.workspace import paths
 
-    monkeypatch.setattr(paths, "find_project_root", lambda start=None: tmp_path)
+    monkeypatch.setattr(paths, "project_root", lambda start=None: tmp_path)
     if hasattr(paths.find_project_root, "cache_clear"):
         paths.find_project_root.cache_clear()
 
@@ -826,7 +826,7 @@ def test_inbound_sanitizes_filename_path_traversal(tmp_path, monkeypatch):
     """A malicious peer can't write outside our inbound-files/<task_id>/ box."""
     from jac.workspace import paths
 
-    monkeypatch.setattr(paths, "find_project_root", lambda start=None: tmp_path)
+    monkeypatch.setattr(paths, "project_root", lambda start=None: tmp_path)
     if hasattr(paths.find_project_root, "cache_clear"):
         paths.find_project_root.cache_clear()
 
@@ -850,7 +850,7 @@ def test_inbound_dedupes_colliding_filenames(tmp_path, monkeypatch):
     silently overwriting."""
     from jac.workspace import paths
 
-    monkeypatch.setattr(paths, "find_project_root", lambda start=None: tmp_path)
+    monkeypatch.setattr(paths, "project_root", lambda start=None: tmp_path)
     if hasattr(paths.find_project_root, "cache_clear"):
         paths.find_project_root.cache_clear()
 
@@ -874,7 +874,7 @@ def test_inbound_skips_malformed_base64(tmp_path, monkeypatch):
     """Bad base64 from peer doesn't crash the call; we just skip that part."""
     from jac.workspace import paths
 
-    monkeypatch.setattr(paths, "find_project_root", lambda start=None: tmp_path)
+    monkeypatch.setattr(paths, "project_root", lambda start=None: tmp_path)
     if hasattr(paths.find_project_root, "cache_clear"):
         paths.find_project_root.cache_clear()
 
@@ -900,7 +900,7 @@ def test_inbound_uri_only_file_part_is_skipped(tmp_path, monkeypatch):
     """v1 explicitly skips FileWithUri (no SSRF guard yet); only bytes save."""
     from jac.workspace import paths
 
-    monkeypatch.setattr(paths, "find_project_root", lambda start=None: tmp_path)
+    monkeypatch.setattr(paths, "project_root", lambda start=None: tmp_path)
     if hasattr(paths.find_project_root, "cache_clear"):
         paths.find_project_root.cache_clear()
 

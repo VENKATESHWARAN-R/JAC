@@ -159,11 +159,12 @@ def _candidate_dirs() -> list[tuple[Path, SkillSource]]:
 
     Project (``<repo>/.agents/skills``) shadows user (``~/.jac/skills``)
     shadows package (``<package>/data/skills``). We probe project only when
-    we're actually inside a git repo, mirroring the rest of JAC's "fail
-    loud outside a project" stance for project-scoped state.
+    we're actually inside a project (``.git`` or ``.agents/``), mirroring
+    the rest of JAC's "fail loud outside a project" stance for
+    project-scoped state.
     """
     dirs: list[tuple[Path, SkillSource]] = []
-    if paths.is_in_project_repo():
+    if paths.in_project():
         dirs.append((paths.project_skills_dir(), "project"))
     dirs.append((paths.USER_SKILLS_DIR, "user"))
     dirs.append((paths.package_skills_dir(), "package"))

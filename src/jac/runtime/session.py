@@ -23,8 +23,10 @@ when D23 ships the file renames to ``tasks.json`` as part of the bundle.
 from __future__ import annotations
 
 import json
+import re
+import shutil
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +37,29 @@ from jac.errors import JacConfigError
 from jac.workspace.paths import project_sessions_dir
 
 _TIMESTAMP_FMT = "%Y-%m-%dT%H-%M-%S"
+_DURATION_RE = re.compile(r"^\s*(\d+)\s*([wdh])\s*$", re.IGNORECASE)
+_DURATION_UNITS = {"w": "weeks", "d": "days", "h": "hours"}
+
+
+def parse_duration(text: str) -> timedelta:
+    """Parse a short retention string like ``30d`` / ``12h`` / ``2w``.
+
+    Supported units: ``w`` (weeks), ``d`` (days), ``h`` (hours). Used by
+    ``jac sessions prune --older-than``. Raises :class:`ValueError` with an
+    actionable message on anything else, so the CLI fails loud rather than
+    pruning an unexpected window.
+    """
+    match = _DURATION_RE.match(text)
+    if not match:
+        raise ValueError(
+            f"invalid duration {text!r}; use a number followed by w/d/h (e.g. 30d, 12h, 2w)."
+        )
+    value, unit = int(match.group(1)), match.group(2).lower()
+    if value == 0:
+        raise ValueError("duration must be greater than zero.")
+    return timedelta(**{_DURATION_UNITS[unit]: value})
+
+
 _MESSAGES_FILENAME = "messages.json"
 _PLAN_FILENAME = "plan.json"
 _PLAN_SCHEMA_VERSION = 1
@@ -44,6 +69,22 @@ _VALID_PLAN_STATUSES = frozenset({"pending", "in_progress", "completed"})
 def _new_session_id() -> str:
     """Timestamp-style session id, filesystem-friendly (no colons)."""
     return datetime.now().strftime(_TIMESTAMP_FMT)
+
+
+@dataclass(frozen=True)
+class SessionSummary:
+    """Lightweight metadata for one session, for listing without a full load.
+
+    ``message_count`` is taken from the length of the top-level JSON array
+    in ``messages.json`` — cheap, no schema validation. ``None`` when the
+    file is unreadable. ``created`` is parsed from the timestamp id;
+    ``None`` if the id isn't in the expected format (e.g. a hand-renamed
+    directory).
+    """
+
+    session_id: str
+    message_count: int | None
+    created: datetime | None
 
 
 @dataclass
@@ -71,10 +112,19 @@ class Session:
         return self.session_dir / _PLAN_FILENAME
 
     def save(self, messages: list[ModelMessage]) -> None:
-        """Persist ``messages`` to disk. Overwrites the existing file."""
+        """Persist ``messages`` to disk. Overwrites the existing file.
+
+        Written atomically via a sibling tempfile + rename so a kill
+        mid-write can't truncate ``messages.json`` and strand the session.
+        ``Path.replace`` is atomic within a filesystem, which holds here:
+        the tempfile is created in the same session dir as the target.
+        """
         self.session_dir.mkdir(parents=True, exist_ok=True)
         self.message_history = messages
-        self.messages_file.write_bytes(ModelMessagesTypeAdapter.dump_json(messages, indent=2))
+        payload = ModelMessagesTypeAdapter.dump_json(messages, indent=2)
+        tmp = self.messages_file.with_name(self.messages_file.name + ".tmp")
+        tmp.write_bytes(payload)
+        tmp.replace(self.messages_file)
 
     def load_plan(self) -> tuple[list[dict[str, str]], str | None]:
         """Load the persisted plan checklist (D27).
@@ -169,3 +219,64 @@ class Session:
             for child in sessions_dir.iterdir()
             if child.is_dir() and (child / _MESSAGES_FILENAME).is_file()
         )
+
+    @classmethod
+    def list_summaries(cls) -> list[SessionSummary]:
+        """Return a :class:`SessionSummary` per session, oldest → newest.
+
+        Reads each ``messages.json`` only to count its top-level entries —
+        no full :class:`ModelMessage` validation, so listing stays cheap
+        even with many sessions. An unreadable or malformed file yields a
+        ``None`` count rather than dropping the session from the list.
+        """
+        sessions_dir = project_sessions_dir()
+        summaries: list[SessionSummary] = []
+        for sid in cls.list_ids():
+            messages_file = sessions_dir / sid / _MESSAGES_FILENAME
+            try:
+                data = json.loads(messages_file.read_text(encoding="utf-8"))
+                count = len(data) if isinstance(data, list) else None
+            except (OSError, json.JSONDecodeError):
+                count = None
+            try:
+                created = datetime.strptime(sid, _TIMESTAMP_FMT)
+            except ValueError:
+                created = None
+            summaries.append(SessionSummary(session_id=sid, message_count=count, created=created))
+        return summaries
+
+    @classmethod
+    def delete(cls, session_id: str) -> None:
+        """Delete one session's directory (messages, plan, compacted slices).
+
+        The token-usage ledger (``usage.jsonl``) is **not** touched — those
+        tokens were genuinely spent and still count toward ``project_total``.
+
+        Raises:
+            JacConfigError: if no session with that id exists.
+        """
+        session_dir = project_sessions_dir() / session_id
+        if not (session_dir / _MESSAGES_FILENAME).is_file():
+            raise JacConfigError(
+                f"no session {session_id!r} to delete. Run `jac sessions` to see ids."
+            )
+        shutil.rmtree(session_dir)
+
+    @classmethod
+    def prune_older_than(cls, max_age: timedelta, *, now: datetime | None = None) -> list[str]:
+        """Delete sessions created more than ``max_age`` ago. Returns deleted ids.
+
+        Age is read from the timestamp id (creation time). Sessions whose id
+        isn't a parseable timestamp (hand-renamed dirs) are **skipped**, never
+        deleted — we won't guess an age we can't read. Leaves ``usage.jsonl``
+        intact, like :meth:`delete`.
+        """
+        cutoff = (now or datetime.now()) - max_age
+        deleted: list[str] = []
+        for summary in cls.list_summaries():
+            if summary.created is None:
+                continue
+            if summary.created < cutoff:
+                cls.delete(summary.session_id)
+                deleted.append(summary.session_id)
+        return deleted

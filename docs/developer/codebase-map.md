@@ -1,6 +1,6 @@
 # Codebase map
 
-> **Audience:** contributors navigating `src/jac/` as built in **v0.5.0**.
+> **Audience:** contributors navigating `src/jac/` as built in **v0.6.0**.
 
 Package root: `src/jac/`. Console entry: `jac.cli.app:main` (`pyproject.toml`).
 
@@ -10,7 +10,7 @@ For the rules behind this layout — what goes where, slash-vs-capability, when 
 
 ```text
 src/jac/
-├── __init__.py              # __version__ = "0.5.0"
+├── __init__.py              # __version__ = "0.6.0"
 ├── __main__.py              # python -m jac
 ├── config.py                # Settings, CompactionSettings, BudgetSettings
 ├── errors.py                # JacConfigError
@@ -181,6 +181,8 @@ History compaction is not a tool — `make_history_capability` registers a `Proc
 | `jac a2a serve` | `cli/a2a.py` |
 
 ## On-disk artifacts (project)
+
+Paths below show the in-project case (`<repo>/.agents/`). In **loose mode** (no `.git`/`.agents/`), the *state writers* — sessions, `usage.jsonl`, tool-result cache, A2A — anchor under `~/.jac/` instead via `paths.project_state_root()`; `memory.md` (project scope) and `AGENTS.md` have no loose-mode equivalent.
 
 | Path | Writer |
 | --- | --- |

@@ -155,6 +155,8 @@ Optional `a2a:` section on each profile — see [A2A operator](a2a-operator.md).
 | `<repo>/.agents/config.yaml` | Project overrides (compaction, budget) |
 | `<repo>/.agents/usage.jsonl` | Per-turn token log for project budgets |
 
+A folder counts as a *project* when it has `.git` or `.agents/`. Outside any project, state-writing paths (sessions, `usage.jsonl`, tool-result cache, A2A) fall back to the global user workspace `~/.jac/` instead of creating `.agents/` in place — see [Sessions & memory](sessions-and-memory.md#where-state-lives-projects-vs-the-global-workspace).
+
 Paths are defined in `jac.workspace.paths` — see [Sessions & memory](sessions-and-memory.md) for memory and session paths.
 
 ## Environment template

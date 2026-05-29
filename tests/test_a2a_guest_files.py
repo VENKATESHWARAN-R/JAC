@@ -48,7 +48,7 @@ def _pin_root(tmp_path: Path, monkeypatch) -> None:
     """Point JAC's project root at tmp_path for the test."""
     from jac.workspace import paths
 
-    monkeypatch.setattr(paths, "find_project_root", lambda start=None: tmp_path)
+    monkeypatch.setattr(paths, "project_root", lambda start=None: tmp_path)
     if hasattr(paths.find_project_root, "cache_clear"):
         paths.find_project_root.cache_clear()
 

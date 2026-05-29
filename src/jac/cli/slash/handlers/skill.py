@@ -219,7 +219,7 @@ def _display_skill_path(path: Path) -> str:
         return f"~/.jac/skills/{rel.as_posix()}"
     except ValueError:
         pass
-    if paths.is_in_project_repo():
+    if paths.in_project():
         try:
             rel = resolved.relative_to(paths.project_skills_dir().resolve())
             return f".agents/skills/{rel.as_posix()}"

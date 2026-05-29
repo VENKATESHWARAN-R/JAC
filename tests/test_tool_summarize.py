@@ -32,7 +32,7 @@ def anyio_backend() -> str:
 @pytest.fixture(autouse=True)
 def _isolated_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     paths.find_project_root.cache_clear()  # type: ignore[attr-defined]
-    monkeypatch.setattr(paths, "find_project_root", lambda start=None: tmp_path)
+    monkeypatch.setattr(paths, "project_root", lambda start=None: tmp_path)
     set_current_session_id("test-session")
     set_summarizer_model(None)
     reset_summarizer_stats()

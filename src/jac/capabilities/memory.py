@@ -241,6 +241,41 @@ def ensure_memory_file(scope: MemoryScope) -> Path:
     return path
 
 
+def read_memory_entries(scope: MemoryScope) -> tuple[Path, dict[str, list[str]]]:
+    """Return ``(path, {section_title: [prose, ...]})`` for a scope's memory.
+
+    Read-only — never creates the file (so it's safe to call for display
+    before the user has stored anything). When the file is absent every
+    section maps to an empty list. Bullet prose is stripped of its audit
+    comment, ready to feed straight back to :func:`forget`. The section
+    order matches :data:`_SECTIONS` so callers render consistently.
+
+    Used by the ``/memory`` slash command. ``scope="project"`` is allowed
+    outside a git repo here (unlike ``remember``) — we just resolve the
+    path and report it empty rather than refusing a read.
+    """
+    if scope == "project":
+        path = paths.project_memory_file()
+    elif scope == "user":
+        path = paths.USER_MEMORY_FILE
+    else:
+        raise ValueError(f"unknown scope {scope!r}; must be one of {list(get_args(MemoryScope))}")
+
+    sections: dict[str, list[str]] = {title: [] for title in _SECTIONS.values()}
+    if not path.is_file():
+        return path, sections
+
+    text = path.read_text(encoding="utf-8")
+    for title in _SECTIONS.values():
+        body = _extract_section(text, title)
+        if body is None:
+            continue
+        sections[title] = [
+            _strip_bullet_metadata(raw) for raw in body.splitlines() if raw.strip().startswith("- ")
+        ]
+    return path, sections
+
+
 # ---------- internals ---------------------------------------------------
 
 
@@ -264,10 +299,11 @@ def _memory_path_for_scope(scope: MemoryScope) -> Path:
     if scope == "user":
         return paths.USER_MEMORY_FILE
     if scope == "project":
-        if not paths.is_in_project_repo():
+        if not paths.in_project():
             raise JacConfigError(
-                'scope="project" requires a git repository; none found at or '
-                "above the current directory. Either `cd` into a tracked repo, "
+                'scope="project" requires a project (a `.git` or `.agents/` '
+                "directory at or above the current directory); none found. "
+                "Either `cd` into a project, run `jac init` here to create one, "
                 'or use scope="user" for cross-project facts.'
             )
         return paths.project_memory_file()

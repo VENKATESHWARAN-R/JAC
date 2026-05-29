@@ -8,6 +8,8 @@ so later code never has to guess whether a directory exists.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from . import paths
 
 _USER_SKELETON_DIRS = (
@@ -64,6 +66,27 @@ _USER_CONTEXT_TEMPLATE = """\
 <!-- e.g. "I prefer explicit types over Any.",
          "I write commit messages in imperative mood." -->
 """
+
+
+def init_project_workspace(root: Path | None = None) -> Path:
+    """Create ``<root>/.agents/`` so ``root`` is recognised as a JAC project.
+
+    This is the explicit opt-in for **non-git** folders: once ``.agents/``
+    exists, :func:`jac.workspace.paths.project_root` treats the directory as
+    a project and session/memory state anchors here instead of the global
+    user workspace. ``root`` defaults to the current working directory.
+
+    Only the ``.agents/`` directory is created — sub-directories (``sessions/``,
+    ``cache/``, …) are still made lazily by the code that writes them.
+    Idempotent: a no-op if the directory already exists. The cached
+    project-root resolution is cleared so the new project is visible
+    immediately within the same process.
+    """
+    target = (root or Path.cwd()) / paths.PROJECT_WORKSPACE_DIRNAME
+    target.mkdir(parents=True, exist_ok=True)
+    paths.project_root.cache_clear()
+    paths.find_project_root.cache_clear()
+    return target
 
 
 def ensure_user_workspace() -> bool:

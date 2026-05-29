@@ -3,7 +3,7 @@
 Renders one line at the bottom of the prompt-toolkit prompt, always
 visible, showing:
 
-    profile:claude  tier:medium (sonnet-4-5)  branch:main*  ctx:34%/200k  session:20260523T14-30-00
+    profile:claude  ·  tier:medium (sonnet-4-5)  ·  branch:main*  ·  ctx:34%/200k  ·  session:...
 
 The toolbar is a pure function of :class:`StatusState`, which the REPL
 mutates whenever something interesting changes (turn completed, slash
@@ -15,12 +15,21 @@ Git branch + dirty status is shelled out, but debounced to once every
 5 seconds via :func:`_branch_segment` — shelling out per keystroke would
 be wasteful and would visibly stutter when a key is held down.
 
-Context percentage colors mirror the compaction ladder:
+The dark background is set via a ``Style`` override in the REPL (the
+``bottom-toolbar`` class with ``noreverse bg:ansiblack``). The HTML here
+only sets foreground colours against that dark canvas:
 
-- ``< warn_pct``      — neutral
-- ``warn_pct..auto``  — yellow
-- ``auto..refuse``    — orange
-- ``>= refuse_pct``   — red
+- Key labels           — ansiyellow  (Gru's colour; warm against dark bg)
+- Normal values        — ansiwhite
+- Secondary info       — ansibrightblack  (model short-name, session ID)
+- Threshold escalation — ansiyellow → ansired  (ctx and budget warnings)
+
+Context percentage thresholds:
+
+- ``< warn_pct``      — ansiwhite (neutral)
+- ``warn_pct..auto``  — ansiyellow (warning)
+- ``auto..refuse``    — ansibrightred (urgent)
+- ``>= refuse_pct``   — ansired (critical)
 """
 
 from __future__ import annotations
@@ -44,6 +53,9 @@ be wasteful and stutter; 5s is plenty for a status indicator."""
 _branch_last_checked: float = -1.0
 _branch_value: str = ""
 _branch_dirty: bool = False
+
+# Subtle dot separator between toolbar segments — dimmed so it recedes.
+_SEP = '  <style fg="ansibrightblack">·</style>  '
 
 
 def _branch_status() -> tuple[str, bool]:
@@ -157,14 +169,21 @@ def _format_ctx_segment(used: int, budget: int) -> str:
     pct = int((used / budget) * 100) if budget > 0 else 0
     color = _ctx_color(pct)
     budget_k = budget // 1000
-    return f'<style fg="ansicyan">ctx:</style><style fg="{color}">{pct}%/{budget_k}k</style>'
+    return (
+        f'<style fg="ansiyellow">ctx:</style>'
+        f'<style fg="{color}">{pct}%/{budget_k}k</style>'
+    )
 
 
 def _format_branch_segment(branch: str, dirty: bool) -> str:
     if not branch:
         return ""
     dirty_mark = '<style fg="ansiyellow">*</style>' if dirty else ""
-    return f'  <style fg="ansicyan">branch:</style>{escape(branch)}{dirty_mark}'
+    return (
+        f'<style fg="ansiyellow">branch:</style>'
+        f'<style fg="ansiwhite">{escape(branch)}</style>'
+        f"{dirty_mark}"
+    )
 
 
 def _budget_color(pct: int) -> str:
@@ -182,11 +201,11 @@ def _format_budget_segment(pct: int | None) -> str:
     if pct is None:
         return ""
     color = _budget_color(pct)
-    return f'  <style fg="ansicyan">bud:</style><style fg="{color}">{pct}%</style>'
+    return f'<style fg="ansiyellow">bud:</style><style fg="{color}">{pct}%</style>'
 
 
 def _format_spawns_segment() -> str:
-    """Show ``spawns:N`` when any bidirectional sub-agent is parked
+    """Show ``minions:N`` when any bidirectional sub-agent is parked
     (D41). Hidden when nothing is in flight so the toolbar stays quiet
     in the common case.
 
@@ -197,7 +216,7 @@ def _format_spawns_segment() -> str:
     count = len(_pending_channels)
     if count == 0:
         return ""
-    return f'  <style fg="ansicyan">spawns:</style><style fg="ansiyellow">{count}</style>'
+    return f'<style fg="ansiyellow">minions:</style><style fg="ansiyellow">{count}</style>'
 
 
 def _format_model_segment(state: StatusState) -> str:
@@ -205,36 +224,47 @@ def _format_model_segment(state: StatusState) -> str:
     tier = tier_for_model(state.profile, state.model_id)
     if tier:
         return (
-            f'<style fg="ansicyan">tier:</style>{escape(tier)} '
+            f'<style fg="ansiyellow">tier:</style>'
+            f'<style fg="ansiwhite">{escape(tier)}</style> '
             f'<style fg="ansibrightblack">({short})</style>'
         )
     # No matching tier — either ad-hoc /model PROVIDER:ID or no profile.
-    return f'<style fg="ansicyan">model:</style>{short}'
+    return f'<style fg="ansiyellow">model:</style><style fg="ansiwhite">{short}</style>'
 
 
 def _format_profile_segment(state: StatusState) -> str:
     if not state.profile_name:
         return ""
-    return f'<style fg="ansicyan">profile:</style>{escape(state.profile_name)}  '
+    return (
+        f'<style fg="ansiyellow">profile:</style>'
+        f'<style fg="ansiwhite">{escape(state.profile_name)}</style>'
+    )
 
 
 def format_toolbar(state: StatusState) -> HTML:
-    """Render the bottom toolbar as a prompt-toolkit ``HTML`` blob."""
+    """Render the bottom toolbar as a prompt-toolkit ``HTML`` blob.
+
+    Each segment function returns its content with no leading/trailing
+    spaces — all spacing is handled here via ``_SEP``. Empty segments
+    (hidden when their data is absent) are filtered before joining so
+    separators never appear adjacent to nothing.
+    """
     budget = get_settings().compaction.max_context_tokens
     used = estimate_tokens(state.message_history)
     branch, dirty = _branch_status()
 
-    parts = [
-        " ",
+    session_seg = (
+        f'<style fg="ansiyellow">session:</style>'
+        f'<style fg="ansibrightblack">{escape(state.session_id) or "?"}</style>'
+    )
+    segments = [
         _format_profile_segment(state),
         _format_model_segment(state),
         _format_branch_segment(branch, dirty),
-        "  ",
         _format_ctx_segment(used, budget),
         _format_budget_segment(state.budget_pct),
         _format_spawns_segment(),
-        "  ",
-        f'<style fg="ansicyan">session:</style>'
-        f'<style fg="ansibrightblack">{escape(state.session_id) or "?"}</style>',
+        session_seg,
     ]
-    return HTML("".join(parts))
+    active = [s for s in segments if s]
+    return HTML(" " + _SEP.join(active) + " ")
