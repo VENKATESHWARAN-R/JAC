@@ -1,0 +1,84 @@
+:root {
+    --jac-minion-yellow: #ffd43b;
+    --jac-minion-blue: #2f80ed;
+    --jac-goggle-silver: #c9d1d9;
+    --jac-lab-dark: #101522;
+    --jac-banana-soft: #fff3b0;
+  }
+  
+  /* Header: subtle lab/denim feel */
+  /* .md-header {
+    background: linear-gradient(90deg, #111827 0%, #1f3b73 55%, #ffd43b 160%);
+  } */
+  
+  /* Make active nav feel like a small Minion signal light */
+  .md-tabs__link--active,
+  .md-nav__link--active {
+    color: var(--jac-minion-yellow);
+    font-weight: 700;
+  }
+  
+  /* Hero/title pages: playful but still readable */
+  .md-content h1 {
+    letter-spacing: -0.03em;
+  }
+  
+  .md-content h1::after {
+    content: "  🍌";
+    opacity: 0.8;
+    font-size: 0.75em;
+  }
+  
+  /* Code blocks = Gru lab terminal */
+  .highlight,
+  .md-typeset pre {
+    border: 1px solid rgba(255, 212, 59, 0.25);
+    border-radius: 14px;
+    box-shadow: 0 8px 24px rgba(16, 21, 34, 0.12);
+  }
+  
+  /* Admonitions: make tips look like minion notes */
+  .md-typeset .admonition.tip,
+  .md-typeset details.tip {
+    border-color: var(--jac-minion-yellow);
+  }
+  
+  .md-typeset .tip > .admonition-title,
+  .md-typeset .tip > summary {
+    background: rgba(255, 212, 59, 0.15);
+  }
+  
+  /* Cards/grids: soft banana lab cards */
+  .md-typeset .grid.cards > ul > li {
+    border-radius: 18px;
+    transition: transform 160ms ease, box-shadow 160ms ease;
+  }
+  
+  .md-typeset .grid.cards > ul > li:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 28px rgba(47, 128, 237, 0.16);
+  }
+  
+  /* Search highlight: banana marker */
+  .md-search-result mark {
+    background-color: var(--jac-banana-soft);
+    color: #111827;
+  }
+  
+  /* Footer: quieter Gru lab ending */
+  .md-footer {
+    background: #101522;
+  }
+
+  /* Header logo — Material defaults to ~1.2rem (24px) */
+.md-header__button.md-logo {
+    margin-top: 0;
+    margin-bottom: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+  .md-header__button.md-logo img,
+  .md-header__button.md-logo svg {
+    height: 2.0rem;   /* try 2.4–3.2rem */
+    width: auto;    /* keeps the tall minion proportional */
+  }

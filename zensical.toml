@@ -13,6 +13,8 @@ repo_name = "VENKATESHWARAN-R/JAC"
 edit_uri = "edit/main/docs/"
 copyright = "Copyright &copy; 2026 Venkateshwaran R"
 
+extra_css = ["stylesheets/minion-lab.css"]
+
 docs_dir = "docs"
 site_dir = "site"
 
@@ -79,14 +81,21 @@ features = [
     "navigation.tracking",
     "search.highlight",
 ]
+logo = "assets/jac-minion-logo-christmas.png"
+favicon = "assets/jac-favicon.png"
+custom_dir = "docs/overrides"
 
 [[project.theme.palette]]
 scheme = "default"
+primary = "yellow"
+accent = "blue"
 toggle.icon = "lucide/sun"
 toggle.name = "Switch to dark mode"
 
 [[project.theme.palette]]
 scheme = "slate"
+primary = "yellow"
+accent = "blue"
 toggle.icon = "lucide/moon"
 toggle.name = "Switch to light mode"
 
@@ -122,3 +131,5 @@ combine_header_slug = true
 [project.markdown_extensions.pymdownx.tasklist]
 custom_checkbox = true
 [project.markdown_extensions.pymdownx.tilde]
+[project.extra]
+homepage = "https://venkateshwaran-r.github.io/JAC/"
