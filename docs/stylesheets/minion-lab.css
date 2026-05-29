@@ -66,9 +66,9 @@
   }
   
   /* Footer: quieter Gru lab ending */
-  .md-footer {
+  /* .md-footer {
     background: #101522;
-  }
+  } */
 
   /* Header logo — Material defaults to ~1.2rem (24px) */
 .md-header__button.md-logo {
