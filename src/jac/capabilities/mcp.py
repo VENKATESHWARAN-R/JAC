@@ -28,8 +28,7 @@ exists" is already our stance (CLAUDE.md anti-patterns).
 
 The optional ``jac`` block carries JAC-specific per-server knobs
 (:class:`MCPServerKnobs`); it's a *sibling* of ``mcpServers`` so the file
-stays a valid standard catalog (``load_mcp_toolsets`` ignores unknown
-top-level keys).
+stays a valid standard catalog (a plain ``mcpServers`` reader ignores it).
 
 **Layering.** ``<repo>/.agents/mcp.json`` shadows ``~/.jac/mcp.json``
 **per server name**, mirroring the skill / prompt overlay precedence.
@@ -57,6 +56,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -69,6 +70,10 @@ from jac.tools import summarizing_wrap
 from jac.workspace import paths
 
 logger = logging.getLogger(__name__)
+
+_ENV_VAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(:-([^}]*))?\}")
+"""Match ``${VAR}`` and ``${VAR:-default}`` for env expansion in catalog
+values — same syntax pydantic-ai / Claude Desktop accept."""
 
 MCPSource = Literal["project", "user"]
 """Where a server entry came from. Project shadows user on name collision."""
@@ -110,8 +115,9 @@ class LoadedMCPServer:
 
     name: str
     raw: dict[str, Any]
-    """The standard ``mcpServers`` entry, verbatim (env unexpanded). Handed
-    to ``load_mcp_toolsets`` via the resolved temp catalog."""
+    """The standard ``mcpServers`` entry, verbatim (env unexpanded). Env
+    vars are expanded at build time, per enabled server — see
+    :func:`_build_server_toolset`."""
     knobs: MCPServerKnobs
     source: MCPSource
 
@@ -212,20 +218,29 @@ def load_mcp_catalog() -> MCPCatalog:
     return MCPCatalog(servers=servers, parse_errors=errors)
 
 
-def _write_resolved(enabled: dict[str, LoadedMCPServer]) -> Path:
-    """Write the enabled servers as a standard ``mcpServers`` catalog.
+def _expand_env(value: Any) -> Any:
+    """Recursively expand ``${VAR}`` / ``${VAR:-default}`` in a JSON value.
 
-    pydantic-ai's ``load_mcp_toolsets`` owns env expansion + transport
-    selection + prefixing; it only reads a file path, so we hand it a
-    freshly-materialised catalog of just the enabled servers (disabled ones
-    omitted, so their — possibly undefined — env vars never expand and can't
-    abort the load).
+    Raises ``KeyError`` (with the missing name) when a referenced variable
+    is unset and no default is given — so a server with a missing secret is
+    skipped with a clear message rather than silently misconfigured.
     """
-    target = paths.mcp_resolved_file()
-    target.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"mcpServers": {name: srv.raw for name, srv in enabled.items()}}
-    target.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    return target
+    if isinstance(value, str):
+
+        def _sub(m: re.Match[str]) -> str:
+            name, _, default = m.group(1), m.group(2), m.group(3)
+            if name in os.environ:
+                return os.environ[name]
+            if default is not None:
+                return default
+            raise KeyError(name)
+
+        return _ENV_VAR_RE.sub(_sub, value)
+    if isinstance(value, dict):
+        return {k: _expand_env(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_expand_env(v) for v in value]
+    return value
 
 
 def _always_approve_filter(_ctx: Any, _tool_def: Any, _args: Any) -> bool:
@@ -233,41 +248,79 @@ def _always_approve_filter(_ctx: Any, _tool_def: Any, _args: Any) -> bool:
     return True
 
 
+def _build_server_toolset(name: str, raw: dict[str, Any], log_dir: Path) -> Any:
+    """Build the bare (unwrapped) ``MCPToolset`` for one server entry.
+
+    We build the transport ourselves rather than calling
+    ``load_mcp_toolsets`` so we can **redirect stdio stderr to a log file**.
+    Left on the inherited terminal, a Node-based server (chrome-devtools,
+    playwright) can flip the TTY into raw mode and freeze the approval
+    prompt — see :mod:`jac.cli.terminal`. Env vars are expanded here (per
+    enabled server only, so a disabled server's missing secret never trips
+    the others).
+
+    Raises:
+        KeyError: an env var referenced in the entry is unset (no default).
+        ValueError: the entry has neither ``command`` (stdio) nor ``url``.
+    """
+    from pydantic_ai.mcp import MCPToolset
+
+    raw = _expand_env(raw)
+    if "command" in raw:
+        from fastmcp.client.transports import StdioTransport
+
+        log_dir.mkdir(parents=True, exist_ok=True)
+        transport = StdioTransport(
+            command=str(raw["command"]),
+            args=[str(a) for a in raw.get("args", [])],
+            env=raw.get("env"),
+            cwd=str(raw["cwd"]) if raw.get("cwd") else None,
+            log_file=log_dir / f"{name}.log",
+        )
+        return MCPToolset(transport, id=name)
+    url = raw.get("url")
+    if url:
+        return MCPToolset(str(url), id=name, headers=raw.get("headers"))
+    raise ValueError("server entry has neither 'command' (stdio) nor 'url' (http/sse)")
+
+
 def build_mcp_toolsets(catalog: MCPCatalog) -> tuple[list[Any], str | None]:
     """Build the wrapped toolset list for every enabled server.
 
-    Returns ``(toolsets, error)``. On any build failure (missing env var,
-    schema mismatch, fastmcp not installed) returns ``([], message)`` — the
-    REPL keeps running with no MCP tools and surfaces the message via
-    ``/mcp list``.
+    Each enabled server is composed
+    ``MCPToolset → .prefixed(name) → .defer_loading() → summarizing_wrap →
+    .approval_required()``. Build is **per-server isolated**: one server's
+    failure (missing env var, malformed entry, fastmcp missing) is collected
+    into the returned error string and the rest still load. The REPL surfaces
+    that string via ``/mcp list`` and keeps running.
     """
     enabled = catalog.enabled
     if not enabled:
         return [], None
 
-    try:
-        from pydantic_ai.mcp import load_mcp_toolsets
-    except ImportError as exc:  # pragma: no cover - extra is declared in pyproject
-        return [], f"MCP support unavailable (install the 'mcp' extra): {exc}"
-
-    resolved = _write_resolved(enabled)
-    try:
-        raw_toolsets = load_mcp_toolsets(resolved)
-    except Exception as exc:
-        return [], f"failed to load MCP servers: {exc}"
-
-    # load_mcp_toolsets iterates mcpServers in insertion order, one prefixed
-    # toolset per server — same order as our ``enabled`` dict, so zip is safe.
+    log_dir = paths.mcp_log_dir()
     wrapped: list[Any] = []
-    for srv, toolset in zip(enabled.values(), raw_toolsets, strict=True):
-        ts = toolset
+    errors: list[str] = []
+    for name, srv in enabled.items():
+        try:
+            ts = _build_server_toolset(name, srv.raw, log_dir)
+        except KeyError as exc:
+            errors.append(f"{name}: environment variable {exc.args[0]!r} is not set")
+            continue
+        except ImportError as exc:  # pragma: no cover - extra declared in pyproject
+            errors.append(f"{name}: MCP support unavailable (install the 'mcp' extra): {exc}")
+            continue
+        except Exception as exc:
+            errors.append(f"{name}: {exc}")
+            continue
+        ts = ts.prefixed(name)
         if srv.knobs.defer:
             ts = ts.defer_loading()
         ts = summarizing_wrap(ts, summarize_all=True)
         if srv.knobs.requires_approval:
             ts = ts.approval_required(_always_approve_filter)
         wrapped.append(ts)
-    return wrapped, None
+    return wrapped, ("; ".join(errors) if errors else None)
 
 
 # --- capability --------------------------------------------------------

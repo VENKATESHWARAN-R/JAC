@@ -229,6 +229,8 @@ Today `clarify(reason, question, options[2-8])` is single-select only. Surfaced 
 
 **Also this round (UX):** HITL approval prompt now **defaults to approve** — bare Enter means yes (D47). Ctrl-C / EOF still deny.
 
+**Terminal hardening (2026-05-29, after first real MCP test):** a Node-based stdio server (chrome-devtools / playwright) inheriting JAC's TTY flipped it into raw mode (ICANON/ICRNL/ISIG off), freezing the approval prompt (`^M` on Enter, dead Ctrl-C). Fixed at the root: stdio MCP servers are now **self-built** (`_build_server_toolset`) with `StdioTransport(log_file=…)` so their stderr goes to `<state>/cache/mcp/logs/<name>.log`, not the terminal — they no longer hold the TTY (this also removed the now-needless resolved-catalog temp file and gave per-server build-error isolation + our own `${VAR}` expansion). Belt-and-suspenders: [`jac/cli/terminal.py`](../src/jac/cli/terminal.py) `cooked_mode()` forces canonical mode around every `rich` prompt.
+
 **Deferred (unchanged):** programmatic tool calling / Monty code mode stays v2 (D43) — conflicts with per-tool HITL; sub-agents already capture most of the "keep intermediate results out of main context" benefit.
 
 ---

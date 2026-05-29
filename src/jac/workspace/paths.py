@@ -234,17 +234,17 @@ def project_mcp_file() -> Path:
     return project_workspace() / "mcp.json"
 
 
-def mcp_resolved_file() -> Path:
-    """``<state_root>/cache/mcp/resolved.json`` — the merged+filtered catalog.
+def mcp_log_dir() -> Path:
+    """``<state_root>/cache/mcp/logs/`` — per-server stdio stderr logs.
 
-    The MCP loader writes the *enabled* servers from the merged user+project
-    catalogs here (standard ``mcpServers`` shape, ``jac`` knobs stripped) and
-    hands the path to pydantic-ai's ``load_mcp_toolsets`` — which owns env
-    expansion, transport selection, and per-server prefixing. Regenerated on
-    every load / reload. Anchored to :func:`project_state_root` so loose runs
-    keep it under ``~/.jac``.
+    MCP stdio subprocesses get their stderr redirected here
+    (``<name>.log``) instead of inheriting JAC's terminal. This keeps the
+    REPL clean **and** prevents a misbehaving server (e.g. a Node-based one)
+    from holding the controlling TTY and flipping it into raw mode mid-prompt.
+    Anchored to :func:`project_state_root` so loose runs keep logs under
+    ``~/.jac``.
     """
-    return project_state_root() / "cache" / "mcp" / "resolved.json"
+    return project_state_root() / "cache" / "mcp" / "logs"
 
 
 def project_sessions_dir() -> Path:

@@ -23,6 +23,7 @@ from rich.panel import Panel
 from rich.prompt import IntPrompt, Prompt
 from rich.table import Table
 
+from jac.cli.terminal import cooked_mode
 from jac.runtime.events import (
     A2AInboundCall,
     A2AInboundCompleted,
@@ -101,6 +102,19 @@ _PLAN_GLYPH: dict[PlanStepStatus, str] = {
 
 def _thinking_label() -> str:
     return f"[dim]{random.choice(_THINKING_LABELS)}[/dim]"
+
+
+def _ask_cooked(fn: Any, *args: Any, **kwargs: Any) -> Any:
+    """Run a blocking ``rich`` prompt with the TTY forced into cooked mode.
+
+    Guards every interactive prompt against a subprocess (e.g. an MCP stdio
+    server) having left the terminal in raw mode — see
+    :func:`jac.cli.terminal.cooked_mode`. Always invoked via
+    ``asyncio.to_thread`` so the blocking read + the termios fix happen off
+    the event loop.
+    """
+    with cooked_mode():
+        return fn(*args, **kwargs)
 
 
 def _summarize_tool_args(args: dict[str, Any]) -> str:
@@ -376,6 +390,7 @@ class CliRenderer:
         choices = [str(i) for i in range(1, free_text_index + 1)]
         try:
             picked = await asyncio.to_thread(
+                _ask_cooked,
                 IntPrompt.ask,
                 "Pick one",
                 choices=choices,
@@ -398,6 +413,7 @@ class CliRenderer:
         """Collect a free-text answer for the clarify prompt (D26)."""
         try:
             raw = await asyncio.to_thread(
+                _ask_cooked,
                 Prompt.ask,
                 "Your answer",
                 default="",
@@ -473,6 +489,7 @@ class CliRenderer:
             self.console.print(Panel("\n".join(body), title=title, border_style=border_color))
         try:
             choice = await asyncio.to_thread(
+                _ask_cooked,
                 Prompt.ask,
                 "[bold yellow]Y[/bold yellow]es / [bold yellow]n[/bold yellow]o / "
                 "[bold yellow]r[/bold yellow]edirect with feedback [dim](Enter = yes)[/dim]",
@@ -555,6 +572,7 @@ class CliRenderer:
         """
         try:
             raw = await asyncio.to_thread(
+                _ask_cooked,
                 Prompt.ask,
                 "Tell Gru what to do instead",
                 default="",

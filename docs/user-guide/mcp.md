@@ -101,11 +101,26 @@ Sub-agents inherit the same MCP servers, deferred-loaded — so a spawned
 minion can search for and use an MCP tool, and its bulky output stays in the
 minion's isolated context.
 
+## Server logs & the terminal
+
+A stdio MCP server's **stderr is redirected to a log file**, not your
+terminal: `<.agents-or-~/.jac>/cache/mcp/logs/<server>.log`. This keeps the
+REPL clean *and* prevents a misbehaving server (notably Node-based ones like
+chrome-devtools / playwright) from holding the controlling terminal and
+flipping it into raw mode mid-prompt. If a server misbehaves, read its log
+file for the raw output. As a second layer of defence, JAC also forces the
+terminal back into a sane line-editing mode each time it shows an approval
+prompt — so even a rogue server can't freeze the `y/n/r` prompt.
+
+> If a terminal ever does end up wedged (e.g. from an older build or an
+> unrelated tool), `stty sane` or `reset` in that shell restores it.
+
 ## Troubleshooting
 
-- **`/mcp list` shows a load error.** Usually a missing env var (`${X} is not
-  defined`) or an unreachable URL. Fix the catalog / environment and `/mcp
-  reload`. A broken catalog never crashes JAC — it just loads no MCP tools.
+- **`/mcp list` shows a load error.** Usually a missing env var
+  (`environment variable 'X' is not set`) or an unreachable URL. Errors are
+  **per-server** — one bad server doesn't stop the others. Fix the catalog /
+  environment and `/mcp reload`. A broken catalog never crashes JAC.
 - **Gru doesn't use an MCP tool.** With `defer` on, Gru must *search* for it
   first. Make sure the server is `enabled` (`/mcp list`) and that its tool
   names/descriptions match what you're asking for.

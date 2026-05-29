@@ -17,7 +17,6 @@ from typing import Any, cast
 
 import pytest
 from pydantic_ai.tools import DeferredToolRequests, RunContext, ToolCallPart
-from pydantic_ai.toolsets import FunctionToolset
 
 from jac.capabilities import mcp as mcp_mod
 from jac.capabilities.mcp import (
@@ -155,51 +154,39 @@ def test_set_enabled_unknown_server_returns_false(isolated_mcp: Path) -> None:
 # ---------- toolset building + wrapping ----------
 
 
-def _fake_load(_path: str | Path) -> list[Any]:
-    # One bare toolset per server, in the order load_mcp_toolsets would yield.
-    return [FunctionToolset(tools=[]), FunctionToolset(tools=[])]
-
-
-def test_build_wraps_defer_summarize_approval(
-    isolated_mcp: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_build_wraps_defer_summarize_approval(isolated_mcp: Path) -> None:
+    # Real (never-connected) entries — construction doesn't spawn anything.
     _write_catalog(
         paths.USER_MCP_FILE,
-        {"gated": _HTTP, "trusted": _HTTP},
+        {"gated": _STDIO, "trusted": _HTTP},
         jac={"trusted": {"requires_approval": False}},
     )
-    monkeypatch.setattr("pydantic_ai.mcp.load_mcp_toolsets", _fake_load)
     toolsets, error = build_mcp_toolsets(load_mcp_catalog())
     assert error is None
     assert len(toolsets) == 2
     # gated → approval is outermost; trusted → summarizing is outermost.
     from pydantic_ai.toolsets.approval_required import ApprovalRequiredToolset
 
-    assert isinstance(toolsets[0], ApprovalRequiredToolset)
-    assert isinstance(toolsets[1], SummarizingToolset)
-    assert toolsets[1].summarize_all is True
+    by_outer = {type(ts).__name__ for ts in toolsets}
+    assert "ApprovalRequiredToolset" in by_outer
+    assert "SummarizingToolset" in by_outer
+    gated = next(ts for ts in toolsets if isinstance(ts, ApprovalRequiredToolset))
+    trusted = next(ts for ts in toolsets if isinstance(ts, SummarizingToolset))
+    assert isinstance(gated, ApprovalRequiredToolset)
+    assert trusted.summarize_all is True
 
 
-def test_build_writes_only_enabled_to_resolved(
-    isolated_mcp: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_build_skips_disabled_with_missing_env(isolated_mcp: Path) -> None:
+    # The disabled server references an undefined env var; because only
+    # enabled servers are built (and expanded), it must not error or build.
     _write_catalog(
         paths.USER_MCP_FILE,
         {"on": _HTTP, "off": {"command": "secret", "args": ["${UNDEFINED_VAR}"]}},
         jac={"off": {"enabled": False}},
     )
-    captured: dict[str, Any] = {}
-
-    def _capture(path: str | Path) -> list[Any]:
-        captured["payload"] = json.loads(Path(path).read_text())
-        return [FunctionToolset(tools=[])]
-
-    monkeypatch.setattr("pydantic_ai.mcp.load_mcp_toolsets", _capture)
     toolsets, error = build_mcp_toolsets(load_mcp_catalog())
     assert error is None
     assert len(toolsets) == 1
-    # The disabled server (with the undefined env var) is omitted entirely.
-    assert set(captured["payload"]["mcpServers"]) == {"on"}
 
 
 def test_build_no_enabled_servers_returns_empty(isolated_mcp: Path) -> None:
@@ -209,19 +196,29 @@ def test_build_no_enabled_servers_returns_empty(isolated_mcp: Path) -> None:
     assert error is None
 
 
-def test_build_surfaces_load_error_without_raising(
+def test_build_isolates_per_server_error(
     isolated_mcp: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _write_catalog(paths.USER_MCP_FILE, {"weather": _HTTP})
-
-    def _boom(_path: str | Path) -> list[Any]:
-        raise ValueError("Environment variable ${X} is not defined")
-
-    monkeypatch.setattr("pydantic_ai.mcp.load_mcp_toolsets", _boom)
+    # One enabled server has a missing env var; the other still builds, and
+    # the error names the broken server (per-server isolation).
+    monkeypatch.delenv("MISSING_TOK", raising=False)
+    _write_catalog(
+        paths.USER_MCP_FILE,
+        {"good": _HTTP, "bad": {"command": "x", "env": {"T": "${MISSING_TOK}"}}},
+    )
     toolsets, error = build_mcp_toolsets(load_mcp_catalog())
-    assert toolsets == []
+    assert len(toolsets) == 1
     assert error is not None
-    assert "failed to load MCP servers" in error
+    assert "bad" in error
+    assert "MISSING_TOK" in error
+
+
+def test_build_expands_env(isolated_mcp: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MCP_TEST_URL", "https://expanded.example.com/mcp")
+    _write_catalog(paths.USER_MCP_FILE, {"s": {"type": "http", "url": "${MCP_TEST_URL}"}})
+    toolsets, error = build_mcp_toolsets(load_mcp_catalog())
+    assert error is None
+    assert len(toolsets) == 1
 
 
 # ---------- capability get_toolset / get_instructions ----------
@@ -232,11 +229,8 @@ def test_get_toolset_none_when_empty(isolated_mcp: Path) -> None:
     assert cap.get_toolset() is None
 
 
-def test_get_toolset_combines_when_multiple(
-    isolated_mcp: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_get_toolset_combines_when_multiple(isolated_mcp: Path) -> None:
     _write_catalog(paths.USER_MCP_FILE, {"a": _HTTP, "b": _HTTP})
-    monkeypatch.setattr("pydantic_ai.mcp.load_mcp_toolsets", _fake_load)
     cap = MCPCapability()
     from pydantic_ai.toolsets import CombinedToolset
 
