@@ -207,6 +207,44 @@ def test_render_packet_skips_empty_optional_sections() -> None:
     assert "## Expected output shape" not in rendered
 
 
+def test_render_packet_omits_project_context_when_none() -> None:
+    """No AGENTS.md → no Project context section (the default 2-arg path)."""
+    packet = SubAgentTaskPacket(objective="X")
+    rendered = _render_packet(packet, "BASE", None)
+    assert "# Project context" not in rendered
+
+
+def test_render_packet_places_agents_context_before_task_packet() -> None:
+    """AGENTS.md context is orientation: it must precede the task packet so
+    the minion reads conventions first, the specific job second."""
+    packet = SubAgentTaskPacket(objective="Summarize foo.py")
+    rendered = _render_packet(packet, "BASE", "Use uv, not pip.")
+    assert "# Project context" in rendered
+    assert "Use uv, not pip." in rendered
+    assert rendered.index("# Project context") < rendered.index("# Task packet")
+
+
+def test_load_agents_context_excludes_memory(tmp_path, monkeypatch) -> None:
+    """AGENTS.md is injected into minions; JAC-managed memory.md is not —
+    memory grows unbounded and is Gru's to curate into the packet."""
+    from jac.workspace import context as ctx
+
+    user_agents = tmp_path / "user_AGENTS.md"
+    user_agents.write_text("user convention: use uv", encoding="utf-8")
+    user_mem = tmp_path / "user_memory.md"
+    user_mem.write_text("- a user memory entry", encoding="utf-8")
+    monkeypatch.setattr(ctx.paths, "USER_CONTEXT_FILE", user_agents)
+    monkeypatch.setattr(ctx.paths, "USER_MEMORY_FILE", user_mem)
+    # No project files in tmp_path → project loaders return None.
+    monkeypatch.setattr(ctx.paths, "project_context_file", lambda: tmp_path / "missing_AGENTS.md")
+    monkeypatch.setattr(ctx.paths, "project_memory_file", lambda: tmp_path / "missing_memory.md")
+
+    out = ctx.load_agents_context()
+    assert out is not None
+    assert "use uv" in out
+    assert "a user memory entry" not in out
+
+
 # ---------- budget rollup ----------
 
 
@@ -1507,7 +1545,7 @@ def test_statusbar_spawns_segment_visible_when_parked() -> None:
 
     _pending_channels["abc12345"] = SubAgentChannel(spawn_id="abc12345")
     segment = _format_spawns_segment()
-    assert "spawns:" in segment
+    assert "minions:" in segment
     assert "1" in segment
 
 

@@ -137,11 +137,13 @@ class _SlashOnlyCompleter(Completer):
                 yield Completion(candidate, start_position=-len(text))
 
 
-_TOOLBAR_STYLE = Style.from_dict({
-    # Dark canvas for the toolbar — ``noreverse`` disables prompt-toolkit's
-    # default inverted-video look; explicit bg/fg take over from there.
-    "bottom-toolbar": "noreverse bg:ansiblack fg:ansiwhite",
-})
+_TOOLBAR_STYLE = Style.from_dict(
+    {
+        # Dark canvas for the toolbar — ``noreverse`` disables prompt-toolkit's
+        # default inverted-video look; explicit bg/fg take over from there.
+        "bottom-toolbar": "noreverse bg:ansiblack fg:ansiwhite",
+    }
+)
 
 
 def _make_prompt_session(status: StatusState) -> PromptSession[str]:

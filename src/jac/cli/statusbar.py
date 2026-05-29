@@ -169,10 +169,7 @@ def _format_ctx_segment(used: int, budget: int) -> str:
     pct = int((used / budget) * 100) if budget > 0 else 0
     color = _ctx_color(pct)
     budget_k = budget // 1000
-    return (
-        f'<style fg="ansiyellow">ctx:</style>'
-        f'<style fg="{color}">{pct}%/{budget_k}k</style>'
-    )
+    return f'<style fg="ansiyellow">ctx:</style><style fg="{color}">{pct}%/{budget_k}k</style>'
 
 
 def _format_branch_segment(branch: str, dirty: bool) -> str:

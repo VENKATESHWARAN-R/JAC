@@ -75,6 +75,8 @@ JAC loads four context sources into Gru's instructions every run:
 
 Load order in the prompt: user AGENTS → user memory → project AGENTS → project memory (newest facts last).
 
+**Sub-agents (minions) get a narrower slice:** only `AGENTS.md` (user + project), so a spawned worker respects the same repo conventions and safety rules Gru does. They do **not** receive the JAC-managed `memory.md` files (memory grows unbounded and is often irrelevant to a bounded task — if a specific fact matters, Gru puts it in the task packet) or the parent conversation history (isolation is the point of delegation). When the session has bidirectional comms enabled, a minion can pull a missing fact from Gru via `ask_main_agent`.
+
 ### AGENTS.md
 
 Community convention files you edit yourself. JAC **never** modifies them. Use for stable project or personal instructions.

@@ -91,6 +91,38 @@ def load_project_memory() -> str | None:
     return _read_or_none(mem, _PROJECT_MEM_HEADER_FMT.format(mem))
 
 
+def load_agents_context() -> str | None:
+    """User + project ``AGENTS.md`` only — for sub-agent context injection.
+
+    Deliberately narrower than :func:`load_session_context`. A spawned
+    sub-agent (minion) gets the repo's conventions and safety rules so it
+    acts correctly when it touches the project — but **not** the JAC-managed
+    ``memory.md`` files, the date line, or any conversation history:
+
+    - ``memory.md`` (user + project) is excluded because it grows unbounded
+      and is often irrelevant to a bounded delegated task; re-paying it on
+      every (frequently cheap, frequently parallel) spawn cuts against the
+      whole reason sub-agents are context-isolated. If a specific memory
+      matters, Gru puts it in the task packet, where it's scoped on purpose.
+    - The date line is dropped — minions are short-lived and the packet
+      carries any time-sensitivity. Omitting it also keeps the rendered
+      packet maximally cache-stable across sibling spawns.
+    - Conversation history never crosses into a sub-agent — that isolation
+      is the point. ``ask_main_agent`` covers "I need something only Gru
+      knows".
+
+    Returns ``user AGENTS.md`` then ``project AGENTS.md`` (each wrapped in
+    its provenance header), joined by blank lines, or ``None`` when neither
+    file is present.
+    """
+    parts: list[str] = []
+    for loader in (load_user_context, load_project_context):
+        chunk = loader()
+        if chunk:
+            parts.append(chunk)
+    return "\n\n".join(parts) if parts else None
+
+
 def load_session_context() -> str:
     """All context injected at session start.
 

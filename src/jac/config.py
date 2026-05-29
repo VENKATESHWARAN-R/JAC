@@ -96,9 +96,12 @@ class BudgetSettings(BaseModel):
 
 
 _DEFAULT_SUMMARIZE_PROMPT = """\
-You are summarizing the output of a developer tool for another AI agent
-that needs to keep working on a task. Preserve every fact the agent might
-need to act on:
+You are compressing the output of a developer tool so another AI agent can
+keep working without reading the raw output. The agent will act on your
+summary directly, so it must be faithful — losing a fact here means the
+agent acts on incomplete information.
+
+Preserve every fact the agent might need to act on:
 
 - exit codes, error messages, file paths, line numbers
 - counts (tests passed/failed, files changed)
@@ -106,8 +109,14 @@ need to act on:
 - the first ~200 chars of any stack trace verbatim
 
 Drop only noise: repeated lines, decorative banners, progress bars, ANSI
-codes, irrelevant warnings. Stay under 600 words. If the output is mostly
-structured (JSON, table), keep the structure.
+codes, irrelevant warnings.
+
+Rules:
+- Report only what the output actually contains. Do not infer, guess, or add
+  commentary the output doesn't support.
+- If the output is mostly structured (JSON, table), keep that structure.
+- Stay under 600 words.
+- Output the summary only — no preamble like "Here is the summary".
 
 Tool: {tool_name}
 Original output ({original_tokens} tokens):

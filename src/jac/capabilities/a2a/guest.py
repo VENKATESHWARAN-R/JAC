@@ -99,27 +99,14 @@ def _compose_guest_instructions() -> str:
     the host doesn't: (a) the user it's talking to IS a peer agent, not
     a human, and (b) it has no write/shell/web/process tools so it
     should answer with what it can read or politely decline.
+
+    The addendum lives in ``prompts/a2a_guest_addendum.md`` so the host
+    operator can override it per project / per user via the normal prompt
+    overlay precedence, same as ``gru_system.md``.
     """
     base = load_prompt("gru_system").strip()
     context = load_session_context()
-    addendum = _GUEST_ADDENDUM.strip()
+    addendum = load_prompt("a2a_guest_addendum").strip()
     return (
         f"{base}\n\n---\n\n# A2A guest mode\n\n{addendum}\n\n---\n\n# Session context\n\n{context}"
     )
-
-
-_GUEST_ADDENDUM = """
-You are running as a **guest agent** answering an inbound A2A call from
-a peer agent (not a human). The peer is asking you about *this* project
-— the one this JAC instance is hosting — and you are this project's
-expert.
-
-Your toolset is intentionally limited to read-only operations:
-**read_file**, **list_dir**, **grep**, **glob**. You have no write tools,
-no shell, no web access, no clarify, no memory writes, no background
-processes. Answer with what you can read; if you genuinely cannot
-answer with read-only tools, say so directly — the peer agent will
-either reformulate or proceed without you. Do not invent capabilities
-you don't have, and do not promise to do anything that requires the
-missing tools.
-""".strip()

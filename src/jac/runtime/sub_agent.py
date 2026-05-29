@@ -47,6 +47,7 @@ from jac.runtime.events import (
     SubAgentSpawned,
 )
 from jac.tools import jac_tool
+from jac.workspace.context import load_agents_context
 
 # ---------- models ----------
 
@@ -413,14 +414,28 @@ def _reset_pending_channels() -> None:
 # ---------- packet → prompt rendering ----------
 
 
-def _render_packet(packet: SubAgentTaskPacket, base_prompt: str) -> str:
+def _render_packet(
+    packet: SubAgentTaskPacket,
+    base_prompt: str,
+    agents_context: str | None = None,
+) -> str:
     """Compose the sub-agent's system instructions from base + packet.
 
     Stable across calls (no clocks, no random ids) — the sub-agent runs
     short-lived so prompt caching is less critical than for Gru, but
     keeping it stable costs nothing.
+
+    ``agents_context`` is the project/user ``AGENTS.md`` block from
+    :func:`jac.workspace.context.load_agents_context` (``None`` when neither
+    file exists). It's placed *before* the task packet so the minion reads
+    the repo's conventions as orientation, then the specific job. Memory and
+    conversation history are deliberately not included — see
+    :func:`load_agents_context`.
     """
-    sections: list[str] = [base_prompt.strip(), "", "---", "", "# Task packet"]
+    sections: list[str] = [base_prompt.strip()]
+    if agents_context:
+        sections += ["", "---", "", "# Project context", "", agents_context]
+    sections += ["", "---", "", "# Task packet"]
 
     sections.append(f"\n## Objective\n\n{packet.objective}")
     if packet.success_criteria:
@@ -488,7 +503,7 @@ async def _run_sub_agent(
     if spawn_id is not None:
         label_token = _current_agent_label.set(spawn_id)
 
-    instructions = _render_packet(packet, cap.base_prompt)
+    instructions = _render_packet(packet, cap.base_prompt, load_agents_context())
     sub_agent: Agent[None, str] = Agent(
         resolved.model,
         instructions=instructions,
