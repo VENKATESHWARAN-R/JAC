@@ -134,6 +134,23 @@ class ApprovalResponse:
 
 
 @dataclass(frozen=True, slots=True)
+class ModeAutoDecision(JacEvent):
+    """A gated tool call was resolved by the active mode without prompting.
+
+    Emitted by the approval handler when Plan Mode auto-denies a mutating
+    call (``decision="deny"``) or Accept-Edits auto-approves a file edit
+    (``decision="allow"``). Purely informational — the renderer prints a
+    one-line marker so the user can see the mode acted on their behalf.
+    ``agent_label`` mirrors :class:`ApprovalRequest` (``"Gru"`` / ``"minion-N"``).
+    """
+
+    tool_name: str
+    decision: Literal["allow", "deny"]
+    mode: str
+    agent_label: str = "Gru"
+
+
+@dataclass(frozen=True, slots=True)
 class ClarifyRequest(JacEvent):
     """The agent needs the user to pick between explicit options.
 
@@ -250,6 +267,22 @@ class CompactionRefused(JacEvent):
     The user is told to ``/clear`` or otherwise free space.
     """
 
+    usage_pct: int
+
+
+@dataclass(frozen=True, slots=True)
+class ContextOverflow(JacEvent):
+    """The ``sliding`` strategy dropped the oldest turns to fit the budget.
+
+    Unlike :class:`CompactionTriggered` nothing was summarized — the slice is
+    simply omitted from what's *sent* to the model this turn (the on-disk
+    session keeps everything). ``dropped_count`` is how many messages were
+    trimmed; ``usage_pct`` is the pre-trim fill level so the user sees how far
+    over they were. The status bar also shows a persistent red marker while a
+    sliding session is over budget.
+    """
+
+    dropped_count: int
     usage_pct: int
 
 
@@ -474,6 +507,8 @@ type JacEventT = (
     | CompactionWarning
     | CompactionTriggered
     | CompactionRefused
+    | ContextOverflow
+    | ModeAutoDecision
     | BudgetWarning
     | BudgetHardStop
     | A2AServerStarted

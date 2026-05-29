@@ -263,3 +263,142 @@ def test_settings_env_override_works(monkeypatch: pytest.MonkeyPatch) -> None:
     reset_settings_cache()
     settings = get_settings()
     assert settings.compaction.max_context_tokens == 500000
+
+
+def test_default_budget_is_256k() -> None:
+    from jac.config import get_settings
+
+    assert get_settings().compaction.max_context_tokens == 256_000
+
+
+def test_ceiling_rejects_oversized_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    from jac.config import get_settings
+
+    monkeypatch.setenv("JAC_COMPACTION__MAX_CONTEXT_TOKENS", "600000")  # > 512k
+    reset_settings_cache()
+    with pytest.raises(Exception):  # pydantic ValidationError surfaced at load
+        get_settings()
+
+
+# ---------- budget resolution ----------
+
+
+def test_resolve_context_budget_session_override_wins(monkeypatch: pytest.MonkeyPatch) -> None:
+    from jac.config import resolve_context_budget, set_session_context_budget
+
+    monkeypatch.setenv("JAC_COMPACTION__MAX_CONTEXT_TOKENS", "256000")
+    reset_settings_cache()
+    assert resolve_context_budget() == 256_000
+    set_session_context_budget(400_000)
+    try:
+        assert resolve_context_budget() == 400_000
+    finally:
+        set_session_context_budget(None)
+    assert resolve_context_budget() == 256_000
+
+
+def test_resolve_context_budget_per_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    from jac.config import resolve_context_budget
+
+    monkeypatch.setenv("JAC_MODEL", "anthropic:test-model")
+    monkeypatch.setenv("JAC_COMPACTION__MODEL_CONTEXT_TOKENS", '{"anthropic:test-model": 384000}')
+    reset_settings_cache()
+    assert resolve_context_budget("anthropic:test-model") == 384_000
+    # A model with no entry falls back to the default.
+    assert resolve_context_budget("anthropic:other") == 256_000
+
+
+def test_session_budget_override_clamped_to_ceiling() -> None:
+    from jac.config import MAX_CONTEXT_CEILING, set_session_context_budget
+
+    try:
+        stored = set_session_context_budget(9_000_000)
+        assert stored == MAX_CONTEXT_CEILING
+    finally:
+        set_session_context_budget(None)
+
+
+# ---------- strategy branching ----------
+
+
+@pytest.fixture
+def sliding_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("JAC_COMPACTION__STRATEGY", "sliding")
+    monkeypatch.setenv("JAC_COMPACTION__MAX_CONTEXT_TOKENS", "1000")
+    monkeypatch.setenv("JAC_COMPACTION__WARN_PCT", "60")
+    monkeypatch.setenv("JAC_COMPACTION__AUTO_COMPACT_PCT", "70")
+    monkeypatch.setenv("JAC_COMPACTION__TARGET_PCT_AFTER_COMPACT", "40")
+    reset_settings_cache()
+
+
+@pytest.fixture
+def manual_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("JAC_COMPACTION__STRATEGY", "manual")
+    monkeypatch.setenv("JAC_COMPACTION__MAX_CONTEXT_TOKENS", "1000")
+    monkeypatch.setenv("JAC_COMPACTION__WARN_PCT", "60")
+    monkeypatch.setenv("JAC_COMPACTION__AUTO_COMPACT_PCT", "70")
+    reset_settings_cache()
+
+
+async def test_sliding_drops_without_summary_and_emits_overflow(
+    sliding_budget: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jac.runtime.events import ContextOverflow
+
+    async def boom(msgs, summarizer_model):  # must NOT be called in sliding mode
+        raise AssertionError("sliding strategy must not summarize")
+
+    monkeypatch.setattr(hist, "_summarize", boom)
+
+    bus = EventBus()
+    # summarizer_model set but should be ignored by the sliding path.
+    cap = make_history_capability(bus=bus, summarizer_model="fake:model")
+    msgs: list = []
+    for _ in range(7):
+        msgs.extend(_exchange("u" * 240, "a" * 240))  # ~1120 tokens > 70% of 1000
+
+    result = await cap.processor(msgs)
+    assert len(result) < len(msgs)
+    # No synthetic summary inserted — pure drop.
+    first_content = result[0].parts[0].content if result[0].parts else ""
+    assert "<<conversation_summary>>" not in first_content
+    events = _drain(bus)
+    overflow = [e for e in events if isinstance(e, ContextOverflow)]
+    assert len(overflow) == 1
+    assert overflow[0].dropped_count > 0
+
+
+async def test_manual_never_compacts_but_warns(manual_budget: None) -> None:
+    bus = EventBus()
+    cap = make_history_capability(bus=bus, summarizer_model="fake:model")
+    msgs: list = []
+    for _ in range(7):
+        msgs.extend(_exchange("u" * 240, "a" * 240))  # well over auto threshold
+
+    result = await cap.processor(msgs)
+    assert result == msgs  # untouched in manual mode
+    events = _drain(bus)
+    assert any(isinstance(e, CompactionWarning) for e in events)
+
+
+async def test_force_compact_summarizes_regardless_of_fill(
+    small_budget: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jac.capabilities.history import force_compact
+
+    async def fake_summarize(msgs, summarizer_model):
+        return "forced summary"
+
+    monkeypatch.setattr(hist, "_summarize", fake_summarize)
+
+    # ~600 tokens: 60% of the 1000 budget — below the 70% auto threshold, so
+    # the auto processor would NOT fire, but /compact should still shrink it.
+    msgs: list = []
+    for _ in range(6):
+        msgs.extend(_exchange("u" * 150, "a" * 150))  # ~100 tokens each
+
+    new_history, dropped, summary_tokens = await force_compact(msgs, "fake:model")
+    assert dropped > 0
+    assert summary_tokens > 0
+    assert len(new_history) < len(msgs)
+    assert "forced summary" in new_history[0].parts[0].content

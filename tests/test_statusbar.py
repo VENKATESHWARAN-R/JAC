@@ -199,7 +199,7 @@ def test_format_toolbar_shows_profile_tier_and_short_model(
     assert "tier:" in rendered and "medium" in rendered
     assert "claude-sonnet-4-5" in rendered  # short model
     assert "branch:" in rendered and "main" in rendered
-    assert "ctx:" in rendered and "0%/200k" in rendered
+    assert "ctx:" in rendered and "0%/256k" in rendered
     assert "session:" in rendered and "20260523T20-00-00" in rendered
 
 

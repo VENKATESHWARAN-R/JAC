@@ -23,6 +23,7 @@ from jac.cli.slash.registry import (
     register,
 )
 from jac.cli.slash.result import (
+    CompactNow,
     Exit,
     Handled,
     InjectUserText,
@@ -36,6 +37,7 @@ from jac.cli.slash.result import (
 
 __all__ = [
     "SLASH_COMMANDS",
+    "CompactNow",
     "Exit",
     "Handled",
     "InjectUserText",

@@ -14,11 +14,21 @@ secrets:
   backend: keyring
 
 compaction:
-  # Useful context budget Gru runs against — NOT the model's published window.
-  # Recent models advertise 1M+ but quality typically degrades past ~200-300k.
-  # Bump if you trust your model with more; lower for cheaper models.
-  max_context_tokens: 200000
-  # Thresholds as percent of max_context_tokens.
+  # How to stay within budget:
+  #   auto    — summarize the oldest slice at auto_compact_pct (also via /compact)
+  #   sliding — drop oldest turns from what's *sent* (on-disk session untouched);
+  #             status bar shows a red overflow marker while trimming
+  #   manual  — never compact automatically; /compact is the only lever
+  strategy: auto
+  # Default useful context budget Gru runs against — NOT the model's published
+  # window. Recent models advertise 1M+ but quality typically degrades past
+  # ~200-300k. 256k = 2^8 thousand; the ceiling is 512k (2^9 thousand).
+  max_context_tokens: 256000
+  # Optional per-model overrides (win over max_context_tokens for that model):
+  #   model_context_tokens:
+  #     anthropic:claude-opus-4-8: 400000
+  model_context_tokens: {}
+  # Thresholds as percent of the resolved budget.
   warn_pct: 60
   auto_compact_pct: 70
   refuse_pct: 85

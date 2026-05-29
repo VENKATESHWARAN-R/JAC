@@ -35,6 +35,7 @@ from jac.capabilities.web import WebCapability
 from jac.config import get_settings
 from jac.errors import JacConfigError
 from jac.runtime.events import EventBus
+from jac.runtime.modes import prompt_addendum as mode_prompt_addendum
 from jac.workspace.paths import load_prompt
 
 
@@ -68,6 +69,14 @@ def _default_tool_capabilities(
         # The tool is gated by the same flag below; we never tell the model
         # about a tool it doesn't have.
         base_prompt = base_prompt + "\n\n" + load_prompt("gru_bidirectional").strip()
+    if include_spawn:
+        # Mode addendum (D23): when Plan / Accept-Edits is active, tell the
+        # model so it behaves accordingly. Switching mode triggers a Gru
+        # rebuild (RefreshToolsets) so this is re-read. Main agent only —
+        # sub-agents get the behaviour via the shared approval handler.
+        mode_note = mode_prompt_addendum()
+        if mode_note:
+            base_prompt = base_prompt + "\n\n" + mode_note
 
     caps: list[Any] = [
         Instrumentation(),

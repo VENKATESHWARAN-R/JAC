@@ -15,10 +15,13 @@ from __future__ import annotations
 from jac.cli.slash.handlers import a2a as _a2a  # noqa: F401
 from jac.cli.slash.handlers import budget as _budget  # noqa: F401
 from jac.cli.slash.handlers import clear as _clear  # noqa: F401
+from jac.cli.slash.handlers import compact as _compact  # noqa: F401
+from jac.cli.slash.handlers import context as _context  # noqa: F401
 from jac.cli.slash.handlers import mcp as _mcp  # noqa: F401
 from jac.cli.slash.handlers import memory as _memory  # noqa: F401
 from jac.cli.slash.handlers import memory_edit as _memory_edit  # noqa: F401
 from jac.cli.slash.handlers import meta as _meta  # noqa: F401
+from jac.cli.slash.handlers import mode as _mode  # noqa: F401
 from jac.cli.slash.handlers import model as _model  # noqa: F401
 from jac.cli.slash.handlers import profile as _profile  # noqa: F401
 from jac.cli.slash.handlers import resume as _resume  # noqa: F401

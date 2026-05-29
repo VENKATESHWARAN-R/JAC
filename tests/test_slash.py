@@ -522,3 +522,87 @@ def test_completer_silent_after_first_word_completes() -> None:
 
 def test_completer_silent_on_empty_input() -> None:
     assert _complete("") == []
+
+
+# ---------- /mode, /compact, /context (v0.7.0) ----------
+
+
+@pytest.fixture
+def _reset_session_policy() -> Iterator[None]:
+    from jac.config import set_session_context_budget
+    from jac.runtime import modes
+
+    modes.reset_mode()
+    set_session_context_budget(None)
+    yield
+    modes.reset_mode()
+    set_session_context_budget(None)
+
+
+def test_mode_no_args_shows_current(ctx: SlashContext, _reset_session_policy: None) -> None:
+    result = dispatch("/mode", ctx)
+    assert isinstance(result, Handled)
+    assert "normal" in ctx.console.export_text()
+
+
+def test_mode_switch_to_plan_rebuilds(ctx: SlashContext, _reset_session_policy: None) -> None:
+    from jac.cli.slash import RefreshToolsets
+    from jac.runtime import modes
+
+    result = dispatch("/mode plan", ctx)
+    assert isinstance(result, RefreshToolsets)
+    assert modes.get_mode() == "plan"
+
+
+def test_mode_unknown_is_rejected(ctx: SlashContext, _reset_session_policy: None) -> None:
+    from jac.runtime import modes
+
+    result = dispatch("/mode bogus", ctx)
+    assert isinstance(result, Handled)
+    assert "unknown mode" in ctx.console.export_text()
+    assert modes.get_mode() == "normal"
+
+
+def test_compact_returns_compactnow(ctx: SlashContext) -> None:
+    from jac.cli.slash import CompactNow
+
+    assert isinstance(dispatch("/compact", ctx), CompactNow)
+
+
+def test_context_no_args_shows_budget(ctx: SlashContext, _reset_session_policy: None) -> None:
+    result = dispatch("/context", ctx)
+    assert isinstance(result, Handled)
+    assert "context budget" in ctx.console.export_text()
+
+
+def test_context_sets_session_override(ctx: SlashContext, _reset_session_policy: None) -> None:
+    from jac.config import get_session_context_override
+
+    result = dispatch("/context 400k", ctx)
+    assert isinstance(result, Handled)
+    assert get_session_context_override() == 400_000
+
+
+def test_context_reset_clears_override(ctx: SlashContext, _reset_session_policy: None) -> None:
+    from jac.config import get_session_context_override
+
+    dispatch("/context 400k", ctx)
+    dispatch("/context reset", ctx)
+    assert get_session_context_override() is None
+
+
+def test_context_clamps_to_ceiling(ctx: SlashContext, _reset_session_policy: None) -> None:
+    from jac.config import MAX_CONTEXT_CEILING, get_session_context_override
+
+    dispatch("/context 9m", ctx)
+    assert get_session_context_override() == MAX_CONTEXT_CEILING
+    assert "clamped" in ctx.console.export_text()
+
+
+def test_context_rejects_junk(ctx: SlashContext, _reset_session_policy: None) -> None:
+    from jac.config import get_session_context_override
+
+    result = dispatch("/context wat", ctx)
+    assert isinstance(result, Handled)
+    assert get_session_context_override() is None
+    assert "could not parse" in ctx.console.export_text()

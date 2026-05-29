@@ -84,23 +84,36 @@ Defaults from `defaults.yaml`:
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `max_context_tokens` | `200000` | Budget Gru measures against |
+| `strategy` | `auto` | How to stay within budget — `auto` / `sliding` / `manual` (see below) |
+| `max_context_tokens` | `256000` | Default budget Gru measures against (256k = 2⁸ thousand; ceiling **512k**) |
+| `model_context_tokens` | `{}` | Optional per-model overrides keyed by model id; win over `max_context_tokens` for that model |
 | `warn_pct` | `60` | Status bar / warning event |
-| `auto_compact_pct` | `70` | Auto-summarize oldest history (profile's **small** tier model) |
-| `refuse_pct` | `85` | Block next user turn until space freed (`/clear` or config change) |
-| `target_pct_after_compact` | `50` | Target size after auto-compaction |
+| `auto_compact_pct` | `70` | Auto-summarize (or, under `sliding`, drop) the oldest history |
+| `refuse_pct` | `85` | Block next user turn until space freed (`auto`/`manual` only; `sliding` never refuses) |
+| `target_pct_after_compact` | `50` | Target size after compaction |
+
+### Strategies
+
+- **`auto`** (default) — at `auto_compact_pct` the oldest slice is summarized via the profile's **small** tier model and replaced with one synthetic message.
+- **`sliding`** — never summarizes (no model call, no cost) and never refuses. At `auto_compact_pct` the oldest turns are *dropped* to fit `target_pct_after_compact`; the status bar shows a red **⚠ ctx overflow** marker while trimming. Cheapest mode; forgets old context rather than compressing it.
+- **`manual`** — JAC never compacts on its own (it still warns from `warn_pct`). `/compact` is the only compaction lever; `refuse_pct` still applies.
+
+`/compact` forces a summarizing compaction on demand in any strategy.
+
+Budget resolution precedence (highest first): the `/context <N>` session override → a matching `model_context_tokens` entry → `max_context_tokens`. Any configured budget above the **512k** ceiling is rejected at load; `/context` clamps to it.
 
 Example project override in `<repo>/.agents/config.yaml`:
 
 ```yaml
 compaction:
-  max_context_tokens: 150000
+  strategy: sliding
+  max_context_tokens: 256000
+  model_context_tokens:
+    anthropic:claude-opus-4-8: 400000
   refuse_pct: 80
 ```
 
-Dropped slices are archived under `<session>/compacted/<n>.json` for debugging.
-
-There is **no** `/compact` slash command — compaction runs automatically inside the history processor.
+Dropped slices are archived under `<session>/compacted/<n>.json` for debugging — in every strategy, including `sliding`.
 
 ## Token budgets (D25)
 

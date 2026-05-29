@@ -43,7 +43,7 @@ from prompt_toolkit.formatted_text import HTML
 from pydantic_ai.messages import ModelMessage
 
 from jac.capabilities.history import estimate_tokens
-from jac.config import get_settings
+from jac.config import get_settings, resolve_context_budget
 from jac.profiles import Profile
 
 _BRANCH_DEBOUNCE_S = 5.0
@@ -120,6 +120,11 @@ class StatusState:
     means no budget is configured — the toolbar hides the ``bud:`` segment.
     The REPL refreshes this after every turn via
     :meth:`jac.runtime.usage.UsageTracker.status_pct`."""
+    exact_context_tokens: int | None = None
+    """Provider-reported input tokens of the last turn — the *exact* current
+    context size. Set by the REPL from ``UsageTracker.last_input_tokens``. When
+    ``None`` (no turn yet this session) the ``ctx:`` segment falls back to the
+    chars/token estimate over ``message_history``."""
 
 
 # ---------- pure helpers ----------
@@ -165,11 +170,38 @@ def _ctx_color(pct: int) -> str:
     return "ansiwhite"
 
 
-def _format_ctx_segment(used: int, budget: int) -> str:
+def _format_ctx_segment(used: int, budget: int, *, exact: bool) -> str:
     pct = int((used / budget) * 100) if budget > 0 else 0
     color = _ctx_color(pct)
     budget_k = budget // 1000
-    return f'<style fg="ansiyellow">ctx:</style><style fg="{color}">{pct}%/{budget_k}k</style>'
+    # A leading '~' flags the chars/token estimate; dropped once the first
+    # turn gives us the provider's exact input-token count.
+    prefix = "" if exact else "~"
+    return (
+        f'<style fg="ansiyellow">ctx:</style><style fg="{color}">{prefix}{pct}%/{budget_k}k</style>'
+    )
+
+
+def _format_mode_segment() -> str:
+    """Show the active interaction mode (D23). Hidden in Normal mode."""
+    from jac.runtime.modes import status_segment
+
+    seg = status_segment()
+    if seg is None:
+        return ""
+    label, color = seg
+    return f'<style fg="ansiyellow">mode:</style><style fg="{color}">{label}</style>'
+
+
+def _format_overflow_segment(pct: int) -> str:
+    """Loud red marker when the ``sliding`` strategy is actively over budget.
+
+    Sliding never refuses — it silently drops the oldest turns — so this is the
+    only persistent signal that context is being lost. Hidden otherwise."""
+    s = get_settings().compaction
+    if s.strategy != "sliding" or pct < s.auto_compact_pct:
+        return ""
+    return '<style fg="ansired"><b>⚠ ctx overflow</b></style>'
 
 
 def _format_branch_segment(branch: str, dirty: bool) -> str:
@@ -246,8 +278,14 @@ def format_toolbar(state: StatusState) -> HTML:
     (hidden when their data is absent) are filtered before joining so
     separators never appear adjacent to nothing.
     """
-    budget = get_settings().compaction.max_context_tokens
-    used = estimate_tokens(state.message_history)
+    budget = resolve_context_budget(state.model_id or None)
+    # Prefer the provider's exact last-turn input count; fall back to the
+    # chars/token estimate until the first turn lands.
+    if state.exact_context_tokens is not None:
+        used, exact = state.exact_context_tokens, True
+    else:
+        used, exact = estimate_tokens(state.message_history), False
+    pct = int((used / budget) * 100) if budget > 0 else 0
     branch, dirty = _branch_status()
 
     session_seg = (
@@ -255,10 +293,12 @@ def format_toolbar(state: StatusState) -> HTML:
         f'<style fg="ansibrightblack">{escape(state.session_id) or "?"}</style>'
     )
     segments = [
+        _format_mode_segment(),
         _format_profile_segment(state),
         _format_model_segment(state),
         _format_branch_segment(branch, dirty),
-        _format_ctx_segment(used, budget),
+        _format_ctx_segment(used, budget, exact=exact),
+        _format_overflow_segment(pct),
         _format_budget_segment(state.budget_pct),
         _format_spawns_segment(),
         session_seg,

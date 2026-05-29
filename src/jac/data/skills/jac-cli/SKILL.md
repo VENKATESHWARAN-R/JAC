@@ -73,6 +73,9 @@ A folder is a **project** if it has `.git` or `.agents/` at/above the CWD. Outsi
 /model [PROVIDER:ID]                 # numbered picker or explicit override
 /tokens                              # detailed token counters
 /budget [extend [KIND] N]            # see Budget composition below
+/compact                             # summarize oldest history now (any strategy)
+/context [N|reset]                   # show/set session context budget (e.g. 400k; ceiling 512k)
+/mode [normal|plan|accept-edits]     # see Mode composition below
 /skill list|use NAME|reload          # see Skill composition below
 /mcp list|reload|enable NAME|disable NAME   # see MCP composition below
 /spawns                              # list parked bidirectional sub-agents
@@ -92,6 +95,32 @@ A folder is a **project** if it has `.git` or `.agents/` at/above the CWD. Outsi
 ```
 
 Valid KIND values: `session_input`, `session_total`, `project_total`. Default is `session_total`.
+
+## Mode composition
+
+```text
+/mode                     # show the active mode + the choices
+/mode plan                # read-only: every state-changing tool call is blocked
+/mode accept-edits        # file writes/edits auto-apply; shell + rest still prompt
+/mode normal              # default HITL — everything risky prompts
+```
+
+Plan Mode auto-denies write/edit/delete/shell/spawn/remember so Gru plans instead
+of acting (it uses the `plan`/`update_plan` checklist and presents the plan); switch
+back to `normal` to execute. There is **no YOLO mode** — per the locked design it
+ships only with sandboxing (v2). Switching mode rebuilds Gru in place.
+
+## Context-budget composition
+
+```text
+/context                  # show the resolved budget + where it comes from
+/context 400k             # session override (k/m suffixes ok); clamped to 512k
+/context 256000           # raw token count also works
+/context reset            # drop the session override
+```
+
+Resolution precedence: session override (`/context`) → per-model
+`compaction.model_context_tokens` → `compaction.max_context_tokens` (default 256k).
 
 ## Skill composition
 

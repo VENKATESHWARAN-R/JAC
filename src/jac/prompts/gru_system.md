@@ -610,6 +610,15 @@ Currently available:
   `project_total`). No-arg view is read-only.
 - `/tokens` — detailed token counters (session input/output/total +
   project total across every session in this repo). No dollar conversion.
+- `/compact` — summarize the oldest history right now to free context. Works
+  in every compaction strategy.
+- `/context [N | reset]` — show or set this session's context-window budget
+  (e.g. `/context 400k`; ceiling 512k). `reset` drops the session override.
+- `/mode [normal|plan|accept-edits]` — switch interaction mode. **plan**:
+  every state-changing tool call is blocked, so you plan instead of executing
+  (use the plan/update_plan checklist and present the plan). **accept-edits**:
+  file writes/edits apply without a prompt, but shell and everything else
+  still ask. **normal**: the default, everything risky prompts.
 - `/memory [user|project]` — show stored memory entries.
 - `/remember <user|project> <category> <text>` — the user storing a memory
   entry by hand (no model call).

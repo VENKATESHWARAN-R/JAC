@@ -43,7 +43,7 @@ from rich.console import Console
 from jac import __version__
 from jac.capabilities.a2a import make_a2a_capability
 from jac.capabilities.clarify import make_clarify_capability
-from jac.capabilities.history import estimate_text_tokens, estimate_tokens
+from jac.capabilities.history import estimate_text_tokens, estimate_tokens, force_compact
 from jac.capabilities.mcp import make_mcp_capability
 from jac.capabilities.plan import make_plan_capability
 from jac.capabilities.process import make_process_capability
@@ -51,6 +51,7 @@ from jac.capabilities.skills import make_skills_capability
 from jac.cli._a2a_banner import print_server_started_banner
 from jac.cli.renderer import CliRenderer
 from jac.cli.slash import (
+    CompactNow,
     Exit,
     InjectUserText,
     RebuildGru,
@@ -64,7 +65,7 @@ from jac.cli.slash import (
     dispatch,
 )
 from jac.cli.statusbar import StatusState, format_toolbar
-from jac.config import get_settings
+from jac.config import get_settings, resolve_context_budget, set_session_context_budget
 from jac.errors import JacConfigError
 from jac.profiles import Profile
 from jac.profiles_crud import get_profile
@@ -80,6 +81,7 @@ from jac.runtime.events import (
 )
 from jac.runtime.gru import build_gru, sub_agent_capabilities
 from jac.runtime.hooks import make_hooks
+from jac.runtime.modes import reset_mode
 from jac.runtime.session import Session
 from jac.runtime.sub_agent import (
     SubAgentCapability,
@@ -627,6 +629,7 @@ async def _repl_loop(
                     status.session_id = session.session_id
                     status.message_history = message_history
                     status.budget_pct = usage_tracker.status_pct()
+                    status.exact_context_tokens = None  # fresh session, no turn yet
                 elif isinstance(result, RebuildGru):
                     rebuilt = _rebuild_gru(
                         new_model_id=result.new_model_id,
@@ -688,6 +691,35 @@ async def _repl_loop(
                     await _handle_start_a2a(a2a_capability, result)
                 elif isinstance(result, StopA2AServer):
                     await _handle_stop_a2a(a2a_capability)
+                elif isinstance(result, CompactNow):
+                    before = estimate_tokens(message_history)
+                    summarizer = _resolve_summarizer_model(profile_name)
+                    new_history, dropped, summary_tokens = await force_compact(
+                        message_history, summarizer
+                    )
+                    if dropped == 0:
+                        console.print("[dim]nothing to compact — history is already minimal[/dim]")
+                    else:
+                        message_history = new_history
+                        status.message_history = message_history
+                        # Last-turn exact count is now stale (pre-compaction);
+                        # fall back to the estimate over the shrunken history
+                        # until the next real turn refreshes it.
+                        status.exact_context_tokens = None
+                        after = estimate_tokens(message_history)
+                        try:
+                            session.save(message_history)
+                        except OSError as exc:
+                            console.print(f"[yellow]warning:[/yellow] session save failed: {exc}")
+                        note = (
+                            f"summarized {dropped} message(s) into ~{summary_tokens:,} tokens"
+                            if summary_tokens
+                            else f"dropped {dropped} message(s) (no summarizer available)"
+                        )
+                        console.print(
+                            f"[green]✓ compacted[/green] — {note}; "
+                            f"context ~{before:,} → ~{after:,} tokens"
+                        )
                 elif isinstance(result, InjectUserText):
                     # Fall through into the normal turn flow with the
                     # synthesized text — budget checks + persistence apply
@@ -702,6 +734,7 @@ async def _repl_loop(
                     )
                     status.message_history = message_history
                     status.budget_pct = usage_tracker.status_pct()
+                    status.exact_context_tokens = usage_tracker.last_input_tokens
                     try:
                         session.save(message_history)
                     except OSError as exc:
@@ -716,6 +749,7 @@ async def _repl_loop(
             message_history = await _run_turn(gru, bus, text, message_history, usage_tracker)
             status.message_history = message_history
             status.budget_pct = usage_tracker.status_pct()
+            status.exact_context_tokens = usage_tracker.last_input_tokens
             # Persist after every completed turn so kills mid-turn don't lose prior turns.
             try:
                 session.save(message_history)
@@ -735,6 +769,9 @@ async def _repl_loop(
             await a2a_capability.shutdown()
         except Exception as exc:
             console.print(f"[yellow]warning:[/yellow] a2a shutdown: {exc}")
+        # Reset session-scoped policy so a fresh REPL starts in a clean state.
+        reset_mode()
+        set_session_context_budget(None)
 
 
 async def _handle_start_a2a(cap, request: StartA2AServer) -> None:
@@ -798,7 +835,11 @@ async def _refuse_if_over_budget(bus: EventBus, message_history: list, user_text
     message, and return ``True``. The caller skips the model call.
     """
     settings = get_settings().compaction
-    budget = settings.max_context_tokens
+    # Sliding strategy never refuses — it drops oldest turns at send time and
+    # flags the overflow in the status bar. Refusing would defeat the point.
+    if settings.strategy == "sliding":
+        return False
+    budget = resolve_context_budget()
     if budget <= 0:
         return False
     projected = estimate_tokens(message_history) + estimate_text_tokens(user_text)
@@ -808,8 +849,9 @@ async def _refuse_if_over_budget(bus: EventBus, message_history: list, user_text
     await bus.emit(CompactionRefused(usage_pct=pct))
     console.print(
         f"[red]context at {pct}% of {budget:,}-token budget[/red] — refusing the turn.\n"
-        "[dim]free up context with [bold]/clear[/bold] (start fresh in place) or "
-        "raise [bold]compaction.max_context_tokens[/bold] in your config.[/dim]"
+        "[dim]free up context with [bold]/compact[/bold] (summarize now), "
+        "[bold]/clear[/bold] (start fresh), [bold]/context <N>[/bold] (raise the "
+        "budget), or switch [bold]compaction.strategy[/bold] to sliding.[/dim]"
     )
     return True
 

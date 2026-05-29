@@ -120,6 +120,19 @@ class InjectUserText:
     text: str
 
 
+@dataclass(frozen=True)
+class CompactNow:
+    """REPL should force a summarizing compaction of the live history now.
+
+    Returned by ``/compact``. The handler can't do the work itself — the
+    message history lives in the REPL loop and summarization is async — so it
+    defers to the REPL, which runs :func:`jac.capabilities.history.force_compact`
+    against the active history, swaps in the result, persists it, and reports
+    how many messages were folded into the summary. A no-op (nothing old
+    enough to drop) is reported as such; the history is left untouched.
+    """
+
+
 SlashResult = (
     Handled
     | Exit
@@ -129,4 +142,5 @@ SlashResult = (
     | StartA2AServer
     | StopA2AServer
     | InjectUserText
+    | CompactNow
 )

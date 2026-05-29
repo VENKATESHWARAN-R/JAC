@@ -147,6 +147,12 @@ class UsageTracker:
     """Dedup set so each ``(kind, warn)`` event fires at most once."""
     _stopped: set[BudgetKind] = field(default_factory=set)
     """Dedup set so each ``(kind, hardstop)`` event fires at most once."""
+    last_input_tokens: int = 0
+    """Input tokens of the most recent main-agent turn — the provider's exact
+    count of everything sent (system prompt + history + new prompt), i.e. the
+    *current* context size. Set by :meth:`record`; the status bar prefers it
+    over the chars/token heuristic for the ``ctx:`` segment. ``0`` until the
+    first turn completes (heuristic is used until then)."""
 
     @property
     def project_total_tokens(self) -> int:
@@ -184,6 +190,9 @@ class UsageTracker:
         self.counters.output_tokens += max(0, output_tokens)
         self.counters.cache_read_tokens += max(0, cache_read_tokens)
         self.counters.cache_write_tokens += max(0, cache_write_tokens)
+        # Latest request's input = the current context size (exact, provider-
+        # reported). The status bar reads this instead of estimating.
+        self.last_input_tokens = max(0, input_tokens)
         self._append_jsonl(input_tokens, output_tokens, kind="session")
         await self._check_thresholds()
 

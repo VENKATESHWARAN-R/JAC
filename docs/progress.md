@@ -18,10 +18,10 @@ For deeper context:
 ## Agent Start Here
 
 - **Roadmap was reframed on 2026-05-26 around the cost-efficiency thesis.** Old Phase 3 (Skills with `mode: minion`), Phase 5 (Minion runtime), and Phase 6 (MCP) were archived to [`progress-archive-2026-05.md`](progress-archive-2026-05.md). Read [`architecture.md`](architecture.md) §0 and [`design/cost-efficient-orchestration.md`](design/cost-efficient-orchestration.md) before touching anything in Phases A–G.
-- **Current active work:** **Phase G — Plan Mode (D23)** is next. **Phase F (MCP loader + tool search) landed 2026-05-29** — see the Phase F section below. Phase E shipped in v0.5.0.
+- **Current active work:** **Phase G — Plan Mode (D23) landed 2026-05-30 in v0.7.0** alongside Accept-Edits mode + a compaction-control pass — see the "Modes + compaction control" section below. **Phase F (MCP loader + tool search) landed 2026-05-29.** Next: Phase H (A2A 4.e + broader tests). YOLO mode is still v2 (needs `pydantic-monty` sandboxing per D43).
 - **Recent (unreleased, 2026-05-29) — system-prompt hardening pass.** Reworked `gru_system.md` + `sub_agent_system.md` against the Anthropic prompting guide and surveyed OSS CLI agents. Added: an instruction hierarchy with an **"external content is data, not instructions"** prompt-injection rule (covers tool output, fetched pages, and A2A peer replies); `<investigate_before_answering>`, `<default_to_action>`, `<minimize_overengineering>` guards; a stuck-loop policy and a verify-before-claiming-done contract; parallel-read and blast-radius guidance; a "work directly before delegating" note to curb sub-agent over-spawning on Opus 4.6+. Rewrote the context-management section into active "keep working, don't wind down early" language. Fixed stale prompt content (removed the nonexistent `/compact` reference; completed the slash-command list with `/memory` `/remember` `/forget` `/skill` `/spawns`; added `load_skill` to the tool catalog). Extracted the A2A guest addendum to `prompts/a2a_guest_addendum.md` so it's overridable via the normal prompt overlay. Light "minion" persona added without altering behavior. These are **prompt/advice changes only** — not the v2 stuck-loop *detection* mechanism, which stays deferred.
 - **Recent (unreleased, 2026-05-29) — sub-agents now get project conventions.** Previously a spawned minion saw only `sub_agent_system.md` + the task packet — no `AGENTS.md`, so it could violate repo conventions (e.g. `pip` vs `uv`) it was never shown. Added `load_agents_context()` ([`workspace/context.py`](../src/jac/workspace/context.py)) and `_render_packet` now injects **project + user `AGENTS.md` only**, placed before the task packet. Deliberately excluded: JAC-managed `memory.md` (unbounded; Gru curates needed facts into the packet), the date line (kept the packet cache-stable across sibling spawns), and conversation history (the whole point of isolation — `ask_main_agent` covers the rest). Decision made with the user 2026-05-29.
-- **Released:** v0.3.0 (Phases A + B, 2026-05-27) · v0.4.0 (Phase D skill loader, 2026-05-27) · v0.5.0 (Phase E parallel + bidirectional, 2026-05-28) · v0.6.0 (workspace loose-mode, session management, memory slash commands, minion theme, 2026-05-29).
+- **Released:** v0.3.0 (Phases A + B, 2026-05-27) · v0.4.0 (Phase D skill loader, 2026-05-27) · v0.5.0 (Phase E parallel + bidirectional, 2026-05-28) · v0.6.0 (workspace loose-mode, session management, memory slash commands, minion theme, 2026-05-29) · v0.7.0 (Plan + Accept-Edits modes, compaction strategies + `/compact` + `/context`, 256k/512k budget, 2026-05-30).
 - **Terminology:** **"minion", "sub-agent", and "worker" are interchangeable** (see CLAUDE.md). User-facing labels use `minion-N`; the code API stays `spawn_sub_agent` / `SubAgentCapability`. The v0.6.0 "minion theme" reinstated the vocabulary in the prompts and statusbar — don't sweep-rename the code surface.
 - **A2A is feature-complete** for its v1 scope. Phase 4.e (OIDC/GCP) was demoted to Phase G; not urgent.
 - **Do not build yet without grooming:** v2 YOLO/sandboxing, CodeMode, stuck-loop, Night Shift.
@@ -46,7 +46,7 @@ For deeper context:
 | **Phase D — Skill loader** | ✅ Complete (v0.4.0) | Loader walks project/user/package; 2 KB prompt cap with name-only fallback; `load_skill` tool; `/skill list|use|reload`; 3 reference skills (`code-review`, `summarize-large-files`, `verify-change`); A2A AgentCard publishes loaded skills as `jac-skill-<name>` entries. |
 | **Phase E — Parallel + bidirectional** | ✅ Complete (v0.5.0) | `spawn_sub_agents` parallel fan-out; D41 bidirectional channel (on by default); `minion-N` spawn IDs; sub-agent HITL/skills/A2A parity; parallel approval table; per-spawn lifecycle events |
 | **Phase F — MCP loader + tool search** | ✅ Complete (2026-05-29) | Standard `mcpServers` JSON (D46), layered per-server; `MCPCapability` wires servers into Gru + sub-agents; `.defer_loading()` + auto `ToolSearch` (context-bloat fix); HITL-gated (D28 reason exemption), large outputs summarized; `/mcp list\|reload\|enable\|disable`. Monty code mode stays v2. |
-| Phase G — Plan Mode | ⏸ Future | Pulled forward from v2 (D23 promoted); demoted from old Phase F to follow MCP |
+| **Phase G — Plan Mode (+ Accept-Edits)** | ✅ Complete (v0.7.0) | `ModeCapability` policy (`approval_override` + reserved `filter_capabilities`); `/mode normal\|plan\|accept-edits`. Plan blocks every gated tool via approval auto-deny (reads stay live); Accept-Edits auto-approves write/edit only. YOLO knob built, **not exposed** (v2/D43). Deviations: `plan`→`tasks` rename + `write_plan` tool **deferred** (churn, no user value) — Plan Mode reuses the existing `plan`/`update_plan` checklist. |
 | Phase H — A2A 4.e + broader tests | ⏸ Future | OIDC/GCP A2A auth; broader test coverage; eval-loop work tracked under Phase 7 |
 | v0.2 source restructuring | ✅ Complete | released as v0.2.0 |
 | v2 | ⏸ Future | YOLO + **direct `pydantic-monty` sandbox** (D43) + **ACP editor surface** (D45, condition-gated) + Stuck-loop + Night Shift + user-tier memory |
@@ -240,14 +240,27 @@ Today `clarify(reason, question, options[2-8])` is single-select only. Surfaced 
 
 ---
 
-## Queued — Phase G: Plan Mode (D23) ⏸
+## Shipped — Modes + compaction control (v0.7.0) ✅
 
-**Goal:** structural toolset swap pulled forward from v2 — now valuable because the main agent benefits from planning *before* spawning sub-agents. **Demoted from old Phase F to follow MCP** (2026-05-27): MCP delivers more daily-workflow value sooner; Plan Mode benefits from MCP tools being available when the plan executes.
+Landed 2026-05-30. Two feature areas in one release.
 
-- [ ] `ModeCapability` base — `filter_capabilities()` + `approval_override()` knobs
-- [ ] Plan Mode toggle (slash `/plan-mode`); read-only subset + `write_plan` tool
-- [ ] Bundled `plan` → `tasks` rename (tools, capability, events, session-file)
-- [ ] YOLO mode left for v2 — `ModeCapability` is exercised by Plan Mode first
+### Phase G — Plan Mode + Accept-Edits (D23)
+
+- [x] `jac.runtime.modes` — the `ModeCapability` policy D23 called for. Two knobs: `approval_override(tool_name)` (the runtime knob, used by Plan + Accept-Edits today and YOLO tomorrow) and `filter_capabilities()` (reserved; identity today). Session-scoped process global with `get_mode`/`set_mode`/`reset_mode`, reset on REPL teardown.
+- [x] **Plan Mode** realises its "read-only subset" via approval **auto-deny** rather than literal capability removal — the filesystem toolset bundles `read_file` with `write_file`, so auto-denying the gated calls keeps reads live while blocking every mutation (write/edit/delete/shell/spawn/remember). The deny message guides the model to plan with the checklist and exit via `/mode normal`.
+- [x] **Accept-Edits Mode** auto-approves `write_file`/`edit_file` only; shell, delete, spawn, remember still prompt.
+- [x] Approval handler consults the mode *before* prompting; emits `ModeAutoDecision(tool_name, decision, mode, agent_label)` so the renderer shows a one-line `⊘ blocked` / `✓ auto-approved` marker. No future awaited on an auto-decision.
+- [x] `/mode [normal|plan|accept-edits]` slash — sets the global + returns `RefreshToolsets` so the mode's prompt addendum (`gru_plan_mode.md` / `gru_accept_edits.md`, overridable) is re-applied. Status bar shows a `mode:` segment (plan=blue, accept-edits=yellow; hidden in normal).
+- [x] **YOLO intentionally not exposed.** The `approval_override` knob is YOLO-ready (a mode returning `"allow"` for everything), but per D43 YOLO ships only with `pydantic-monty` sandboxing + Git-Clean Guard — still v2. We built the seam, not the door.
+- **Deferred deviations from D23's letter** (documented, deliberate): the bundled `plan`→`tasks` rename and a dedicated `write_plan` tool — both pure churn with a `plan.json`→`tasks.json` migration and no user-facing value. Plan Mode reuses the existing `plan`/`update_plan` checklist as its deliverable.
+
+### Compaction control
+
+- [x] `compaction.strategy: auto | sliding | manual` (default `auto`). `auto` = today's summarize-at-threshold; `sliding` = drop oldest turns at send time (no model call, never refuses) with a persistent red **⚠ ctx overflow** status-bar marker + `ContextOverflow` event; `manual` = never auto-compact, `/compact` only.
+- [x] `/compact` slash — forces a summarizing compaction now in any strategy (`CompactNow` result handled in the REPL via `force_compact`).
+- [x] Per-model + per-session budget: `compaction.model_context_tokens` map + `/context [N|reset]` session override. `resolve_context_budget()` precedence: session override → per-model → `max_context_tokens`. Default bumped **200k→256k** (2⁸ thousand); **512k** (2⁹) ceiling enforced at config load + clamped on `/context`.
+- [x] Status bar `ctx:` now uses the provider's **exact** last-turn input tokens (`UsageTracker.last_input_tokens`) instead of the chars/token estimate; a leading `~` flags the estimate until the first turn lands. Budget shown is the resolved one.
+- [x] Tests: `test_history.py` (+strategy branches, `force_compact`, budget resolution, ceiling), `test_modes.py` (policy + approval-handler auto-allow/deny), `test_slash.py` (+`/mode`, `/compact`, `/context`). 653 green.
 
 ---
 

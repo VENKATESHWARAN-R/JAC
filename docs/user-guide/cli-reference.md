@@ -70,6 +70,9 @@ Slash lines are handled locally — they are **not** sent to the model.
 | `/model` | `/model [PROVIDER:ID]` | Numbered picker or explicit model |
 | `/budget` | `/budget [extend [KIND] N]` | Show token budgets vs usage; `extend` raises the limit for this session (`KIND`: `session_input`, `session_total`, `project_total`; default `session_total`) |
 | `/tokens` | `/tokens` | Detailed token counters; shows a separate `a2a guest` line when inbound calls have consumed model tokens (counts toward `project_total` only) |
+| `/compact` | `/compact` | Summarize the oldest history now to free context. Works in every `compaction.strategy` |
+| `/context` | `/context [N \| reset]` | Show or set this session's context-window budget (`/context 400k`; accepts `k`/`m` suffixes; ceiling 512k). `reset` drops the session override |
+| `/mode` | `/mode [normal\|plan\|accept-edits]` | Switch interaction mode. **plan**: state-changing tools blocked (Gru plans); **accept-edits**: file writes/edits auto-apply, shell + rest still prompt; **normal**: default HITL |
 | `/skill` | `/skill list\|use NAME\|reload` | Manage loaded skills — list active/shadowed, inject a skill body, or re-scan skill directories |
 | `/mcp` | `/mcp list\|reload\|enable NAME\|disable NAME` | Manage external MCP tool servers — list status/transport/source, re-scan catalogs, toggle a server (persists + rebuilds Gru). See [MCP servers](mcp.md) |
 | `/spawns` | `/spawns` | List currently-active bidirectional sub-agent channels (only populated when `cost.sub_agent_bidirectional` is on) |

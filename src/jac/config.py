@@ -19,7 +19,7 @@ from __future__ import annotations
 from functools import cache
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -29,6 +29,26 @@ from pydantic_settings import (
 from jac.workspace.config_loader import jac_config_sources
 
 SecretBackendName = Literal["keyring", "dotenv", "env-only"]
+
+CompactionStrategy = Literal["auto", "sliding", "manual"]
+"""How JAC keeps the context within budget.
+
+- ``auto`` — at ``auto_compact_pct`` the oldest slice is summarized via the
+  small-tier model and replaced with a synthetic summary message. ``/compact``
+  is also available to force this early.
+- ``sliding`` — never summarizes automatically. When the history exceeds the
+  budget, the oldest user/model turns are dropped from what's *sent* to the
+  model (the on-disk session is untouched — it's a send-time window only).
+  The status bar shows a red overflow marker while trimming is active.
+- ``manual`` — JAC never compacts on its own. ``/compact`` is the only lever;
+  the REPL still refuses a turn at ``refuse_pct`` so you can't silently blow
+  past the budget.
+"""
+
+MAX_CONTEXT_CEILING = 512_000
+"""Hard ceiling for any context budget (the 512k "power of two" easter egg —
+512 = 2⁹ in thousands). Configured budgets above this raise; ``/context``
+overrides clamp down to it with a notice."""
 
 
 class SecretsSettings(BaseModel):
@@ -43,13 +63,28 @@ class CompactionSettings(BaseModel):
     Compaction operates against a **user-configurable budget**, not the
     model's published context window — recent models advertise 1M+ but
     quality typically degrades past ~200-300k. ``max_context_tokens``
-    defaults to a conservative 200k; bump it if you trust your model with
-    more, or lower it for cheaper models. Pcts apply against that budget.
+    defaults to 256k (2⁸ thousand); bump it per-model via
+    ``model_context_tokens`` up to the 512k ceiling, or lower it for cheaper
+    models. Pcts apply against the *resolved* budget (see
+    :func:`resolve_context_budget`).
     """
 
-    max_context_tokens: int = 200_000
-    """The "useful" context budget Gru runs against. Compaction ladder is
-    measured as a percentage of this — not the model's raw window."""
+    strategy: CompactionStrategy = "auto"
+    """How to keep within budget: ``auto`` (summarize), ``sliding`` (drop
+    oldest turns at send time), or ``manual`` (only ``/compact``). See
+    :data:`CompactionStrategy`."""
+
+    max_context_tokens: int = 256_000
+    """The default "useful" context budget Gru runs against, when the active
+    model has no entry in :attr:`model_context_tokens`. The compaction ladder
+    is measured as a percentage of the *resolved* budget — not the model's
+    raw window."""
+
+    model_context_tokens: dict[str, int] = Field(default_factory=dict)
+    """Optional per-model budget overrides keyed by model id (e.g.
+    ``{"anthropic:claude-opus-4-8": 400000}``). When the active model has an
+    entry it wins over :attr:`max_context_tokens`. Nothing is hardcoded — this
+    is purely opt-in user config. Values are capped at the 512k ceiling."""
 
     warn_pct: int = 60
     """At this percent of the budget, emit a :class:`CompactionWarning`."""
@@ -64,6 +99,27 @@ class CompactionSettings(BaseModel):
     target_pct_after_compact: int = 50
     """Auto-compaction shrinks the kept history until estimated size ≤ this
     percent of the budget, then stops."""
+
+    @field_validator("max_context_tokens")
+    @classmethod
+    def _check_ceiling(cls, v: int) -> int:
+        if v > MAX_CONTEXT_CEILING:
+            raise ValueError(
+                f"max_context_tokens={v} exceeds the {MAX_CONTEXT_CEILING} ceiling "
+                f"(512k). Quality degrades well before this on every current model."
+            )
+        return v
+
+    @field_validator("model_context_tokens")
+    @classmethod
+    def _check_model_ceiling(cls, v: dict[str, int]) -> dict[str, int]:
+        for model, tokens in v.items():
+            if tokens > MAX_CONTEXT_CEILING:
+                raise ValueError(
+                    f"model_context_tokens[{model!r}]={tokens} exceeds the "
+                    f"{MAX_CONTEXT_CEILING} ceiling (512k)."
+                )
+        return v
 
 
 class BudgetSettings(BaseModel):
@@ -248,3 +304,48 @@ def get_settings() -> Settings:
 def reset_settings_cache() -> None:
     """Drop the cached Settings — useful in tests after changing the env."""
     get_settings.cache_clear()
+
+
+# ---------- session-scoped context budget override (``/context <N>``) ----------
+
+_session_context_override: int | None = None
+"""Per-session budget set via ``/context``. Beats config; reset on session end.
+Module-level (not on the cached Settings singleton, which we never mutate)."""
+
+
+def set_session_context_budget(tokens: int | None) -> int | None:
+    """Set (or clear, with ``None``) the session context budget override.
+
+    Returns the value actually stored — clamped to the 512k ceiling so a
+    fat-fingered ``/context 9000000`` lands somewhere sane. The caller reports
+    the clamp to the user (we never silently swallow it)."""
+    global _session_context_override
+    if tokens is None:
+        _session_context_override = None
+        return None
+    _session_context_override = min(tokens, MAX_CONTEXT_CEILING)
+    return _session_context_override
+
+
+def get_session_context_override() -> int | None:
+    """Return the active session budget override, or ``None`` if unset."""
+    return _session_context_override
+
+
+def resolve_context_budget(model_id: str | None = None) -> int:
+    """Resolve the effective context budget, highest precedence first:
+
+    1. session override (``/context <N>``),
+    2. per-model entry in ``compaction.model_context_tokens``,
+    3. ``compaction.max_context_tokens`` default.
+
+    ``model_id`` defaults to the active ``settings.model``."""
+    if _session_context_override is not None:
+        return _session_context_override
+    settings = get_settings()
+    model = model_id if model_id is not None else settings.model
+    if model:
+        per_model = settings.compaction.model_context_tokens.get(model)
+        if per_model:
+            return per_model
+    return settings.compaction.max_context_tokens

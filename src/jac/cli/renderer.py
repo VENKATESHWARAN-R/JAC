@@ -39,8 +39,10 @@ from jac.runtime.events import (
     CompactionRefused,
     CompactionTriggered,
     CompactionWarning,
+    ContextOverflow,
     EventBus,
     JacEvent,
+    ModeAutoDecision,
     ModelRequestStarted,
     PlanReplaced,
     PlanStepStatus,
@@ -245,15 +247,39 @@ class CliRenderer:
                 f"exited [dim](code={event.exit_code})[/dim]"
             )
         elif isinstance(event, CompactionWarning):
-            self.console.print(
-                f"[yellow]context at {event.usage_pct}%[/yellow] "
-                "[dim]— auto-compact triggers at 70%[/dim]"
-            )
+            from jac.config import get_settings
+
+            s = get_settings().compaction
+            if s.strategy == "manual":
+                tail = "— /compact to summarize (manual strategy)"
+            elif s.strategy == "sliding":
+                tail = f"— oldest turns drop at {s.auto_compact_pct}% (sliding)"
+            else:
+                tail = f"— auto-compact triggers at {s.auto_compact_pct}%"
+            self.console.print(f"[yellow]context at {event.usage_pct}%[/yellow] [dim]{tail}[/dim]")
         elif isinstance(event, CompactionTriggered):
             self.console.print(
                 f"[green]✦ compacted[/green] {event.dropped_count} messages "
                 f"[dim](~{event.summary_tokens} summary tokens; "
                 f"context now {event.usage_pct}%)[/dim]"
+            )
+        elif isinstance(event, ModeAutoDecision):
+            who = "" if event.agent_label == "Gru" else f" · {event.agent_label}"
+            if event.decision == "deny":
+                self.console.print(
+                    f"[blue]⊘ {event.tool_name} blocked[/blue] [dim]({event.mode} mode{who})[/dim]"
+                )
+            else:
+                self.console.print(
+                    f"[yellow]✓ {event.tool_name} auto-approved[/yellow] "
+                    f"[dim]({event.mode} mode{who})[/dim]"
+                )
+        elif isinstance(event, ContextOverflow):
+            self.console.print(
+                f"[bold red]⚠ context overflow[/bold red] "
+                f"[dim]— dropped {event.dropped_count} oldest message(s) at "
+                f"{event.usage_pct}% (sliding; archived to the session's "
+                f"compacted/ folder)[/dim]"
             )
         elif isinstance(event, CompactionRefused):
             # The REPL prints its own actionable message; this lets future

@@ -27,7 +27,15 @@ from pydantic_ai.tools import (
     ToolDenied,
 )
 
-from jac.runtime.events import ApprovalRequest, ApprovalResponse, EventBus
+from jac.runtime.events import (
+    ApprovalRequest,
+    ApprovalResponse,
+    EventBus,
+    ModeAutoDecision,
+)
+from jac.runtime.modes import approval_override as mode_approval_override
+from jac.runtime.modes import deny_message as mode_deny_message
+from jac.runtime.modes import get_mode
 
 
 def _coerce_args(raw: Any) -> dict[str, Any]:
@@ -80,6 +88,25 @@ def make_approval_handler(bus: EventBus) -> HandleDeferredToolCalls[Any]:
 
         approvals: dict[str, bool | ToolApproved | ToolDenied] = {}
         for call in requests.approvals:
+            # Mode override (D23) runs before any prompt. Plan Mode auto-denies
+            # every gated call; Accept-Edits auto-approves file writes/edits.
+            # A one-line marker keeps the user informed; no future is awaited.
+            override = mode_approval_override(call.tool_name)
+            if override is not None:
+                await bus.emit(
+                    ModeAutoDecision(
+                        tool_name=call.tool_name,
+                        decision=override,
+                        mode=get_mode(),
+                        agent_label=agent_label,
+                    )
+                )
+                if override == "allow":
+                    approvals[call.tool_call_id] = True
+                else:
+                    approvals[call.tool_call_id] = ToolDenied(message=mode_deny_message())
+                continue
+
             args = _coerce_args(call.args)
             reason = args.get("reason")
             # JAC tools structurally always carry ``reason: str`` (the
