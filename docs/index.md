@@ -4,65 +4,61 @@
 
 ```mermaid
 flowchart LR
-    you["👤 you<br/><small>'jac, do the thing.'</small>"]
+    you["👤 you<br/>'jac, do the thing.'"]
 
-    %% Home machine
     subgraph local["💻 your machine · $ jac"]
-        gru["🤖 Gru@local<br/><small>'A2A radio on. Who wants chaos?'</small>"]
+        gru["🤖 Gru@local<br/>'A2A radio on. Who wants chaos?'"]
 
-        minionTests["🍌 minion-tests<br/><small>'bee do bee do... pytest!'</small>"]
-        minionFiles["🍌 minion-files<br/><small>'para tu! checking files.'</small>"]
+        minionTests["🍌 minion-tests<br/>'bee do bee do... pytest!'"]
+        minionFiles["🍌 minion-files<br/>'para tu! checking files.'"]
 
-        sibling["🤖 Gru@different-project<br/><small>'same laptop, different evil plan.'</small>"]
+        sibling["🤖 Gru@different-project<br/>'same laptop, different evil plan.'"]
 
         gru -. "spawns" .-> minionTests
         gru -. "spawns" .-> minionFiles
         gru <-->|"A2A · local handshake"| sibling
     end
 
-    %% Remote server
-    subgraph remote["🖥️ remote server"]
-        remoteAgent["🧰 ops-agent<br/><small>'I have logs, boss.'</small>"]
+    subgraph cloud["☁️ cloud"]
+        researchAgent["🚀 research-agent<br/>'I asked three APIs. Two lied. One had bananas.'"]
     end
 
-    %% Cloud
-    subgraph cloud["☁️ cloud"]
-        cloudAgent["🚀 research-agent<br/><small>'I searched 8 APIs and found one banana.'</small>"]
+    subgraph remote["🖥️ remote server"]
+        opsAgent["🧰 ops-agent<br/>'I brought logs. One smells banana.'"]
     end
 
     you -->|"$ jac"| gru
 
-    %% A2A links
-    gru <-->|"A2A · over network"| remoteAgent
-    gru <-->|"A2A · cloud call"| cloudAgent
+    gru <-->|"A2A · cloud call"| researchAgent
+    gru <-->|"A2A · over network"| opsAgent
 
-    %% Node styles
-    classDef human fill:#111827,stroke:#9ca3af,stroke-width:1.5px,color:#f9fafb;
-    classDef gru fill:#1e293b,stroke:#ffd43b,stroke-width:3px,color:#ffffff;
-    classDef minion fill:#3b2f0b,stroke:#ffd43b,stroke-width:2px,color:#fff7cc;
-    classDef localAgent fill:#1e3a5f,stroke:#60a5fa,stroke-width:2px,color:#eaf4ff;
-    classDef remoteAgent fill:#172554,stroke:#38bdf8,stroke-width:2px,color:#e0f2fe;
-    classDef cloudAgent fill:#2e1065,stroke:#c084fc,stroke-width:2px,color:#f5f3ff;
+    %% Node styles: Let the theme handle fills and text colors. We just set the borders.
+    classDef human stroke:#64748b,stroke-width:2px;
+    classDef gruNode stroke:#eab308,stroke-width:3px;
+    classDef minionNode stroke:#f59e0b,stroke-width:2px;
+    classDef localAgentNode stroke:#2563eb,stroke-width:2px;
+    classDef cloudNode stroke:#7c3aed,stroke-width:2px;
+    classDef opsNode stroke:#0891b2,stroke-width:2px;
 
     class you human;
-    class gru gru;
-    class minionTests,minionFiles minion;
-    class sibling localAgent;
-    class remoteAgent remoteAgent;
-    class cloudAgent cloudAgent;
+    class gru gruNode;
+    class minionTests,minionFiles minionNode;
+    class sibling localAgentNode;
+    class researchAgent cloudNode;
+    class opsAgent opsNode;
 
-    %% Subgraph zone styles
-    style local fill:#111827,stroke:#ffd43b,stroke-width:1.5px,color:#f9fafb;
-    style remote fill:#0f172a,stroke:#38bdf8,stroke-width:1.5px,color:#e0f2fe;
-    style cloud fill:#1e1b4b,stroke:#c084fc,stroke-width:1.5px,color:#f5f3ff;
+    %% Zone styles: Transparent fills so the base theme background shows through
+    style local fill:transparent,stroke:#eab308,stroke-width:2px;
+    style cloud fill:transparent,stroke:#7c3aed,stroke-width:2px;
+    style remote fill:transparent,stroke:#0891b2,stroke-width:2px;
 
-    %% Link styling
-    linkStyle 0 stroke:#ffd43b,stroke-width:2px,stroke-dasharray: 5 5;
-    linkStyle 1 stroke:#ffd43b,stroke-width:2px,stroke-dasharray: 5 5;
-    linkStyle 2 stroke:#60a5fa,stroke-width:2px;
-    linkStyle 3 stroke:#9ca3af,stroke-width:2px;
-    linkStyle 4 stroke:#38bdf8,stroke-width:2px;
-    linkStyle 5 stroke:#c084fc,stroke-width:2px;
+    %% Link styles
+    linkStyle 0 stroke:#eab308,stroke-width:2px,stroke-dasharray: 5 5;
+    linkStyle 1 stroke:#eab308,stroke-width:2px,stroke-dasharray: 5 5;
+    linkStyle 2 stroke:#2563eb,stroke-width:2px;
+    linkStyle 3 stroke:#64748b,stroke-width:2px;
+    linkStyle 4 stroke:#7c3aed,stroke-width:2px;
+    linkStyle 5 stroke:#0891b2,stroke-width:2px;
 ```
 
 JAC is a Python CLI that gives you a local coding companion with tools, memory,
