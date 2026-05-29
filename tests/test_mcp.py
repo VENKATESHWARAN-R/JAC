@@ -221,6 +221,23 @@ def test_build_expands_env(isolated_mcp: Path, monkeypatch: pytest.MonkeyPatch) 
     assert len(toolsets) == 1
 
 
+def test_resilient_wrapper_degrades_failed_connection() -> None:
+    # A server whose connection raises must contribute zero tools, not raise.
+    from pydantic_ai.toolsets import FunctionToolset
+
+    class _BoomToolset(FunctionToolset):
+        async def __aenter__(self) -> Any:
+            raise RuntimeError("Client failed to connect")
+
+    resilient = mcp_mod._ResilientMCPToolset(wrapped=_BoomToolset(tools=[]), server_name="boom")
+
+    async def go() -> dict:
+        async with resilient as r:
+            return await r.get_tools(None)
+
+    assert _run(go()) == {}
+
+
 # ---------- capability get_toolset / get_instructions ----------
 
 
@@ -302,6 +319,27 @@ def test_jac_tool_reason_is_preserved() -> None:
     )
     reason = _run(_capture_approval_reason(call))
     assert reason == "save the report"
+
+
+# ---------- MCP tool error → result (no run-crash) ----------
+
+
+def test_mcp_error_to_result_returns_string_on_failure() -> None:
+    async def _boom(_name: str, _args: dict[str, Any]) -> Any:
+        raise RuntimeError("server blew up")
+
+    out = _run(mcp_mod._mcp_error_to_result(None, _boom, "navigate", {"url": "x"}))
+    assert isinstance(out, str)
+    assert "navigate" in out
+    assert "server blew up" in out
+
+
+def test_mcp_error_to_result_passes_through_success() -> None:
+    async def _ok(_name: str, args: dict[str, Any]) -> Any:
+        return {"echo": args}
+
+    out = _run(mcp_mod._mcp_error_to_result(None, _ok, "echo", {"a": 1}))
+    assert out == {"echo": {"a": 1}}
 
 
 # ---------- module export sanity ----------

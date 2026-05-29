@@ -63,6 +63,20 @@ server you don't list gets the defaults.
 | `enabled` | `true` | Attach this server's tools. Toggle at runtime with `/mcp enable\|disable`. |
 | `defer` | `true` | Hide the tools behind **tool search** until needed (recommended). Turn off only for a tiny, always-used server. |
 | `requires_approval` | `true` | HITL-gate every call into the server. Set `false` for trusted / read-only servers. |
+| `init_timeout` | `30.0` | Seconds to wait for the server's connection + `initialize` handshake. Browser-launching servers (playwright, chrome-devtools) need well over pydantic-ai's 5s default. Raise it for heavier servers. |
+
+Example with knobs:
+
+```json
+{
+  "mcpServers": {
+    "playwright": { "command": "npx", "args": ["@playwright/mcp@latest"] }
+  },
+  "jac": {
+    "playwright": { "init_timeout": 60, "requires_approval": false }
+  }
+}
+```
 
 ## Why this won't bloat your context
 
@@ -115,10 +129,30 @@ prompt — so even a rogue server can't freeze the `y/n/r` prompt.
 > If a terminal ever does end up wedged (e.g. from an older build or an
 > unrelated tool), `stty sane` or `reset` in that shell restores it.
 
+## Failure handling
+
+MCP servers are external code, so JAC contains their failures rather than
+letting them take down a turn:
+
+- **A tool that errors** comes back to the model as a normal result
+  (`MCP tool 'x' failed: …`), not an exception. The model can retry with
+  different arguments or report the failure; the session stays alive. (The
+  full server output is in the log file.)
+- **A server that fails to connect** (bad command, crash, handshake timeout)
+  is logged and **skipped for the session** — it contributes zero tools while
+  every other server and the agent keep working. Fix it and `/mcp reload`.
+- **If a turn does hit a hard error**, JAC preserves the conversation: your
+  message and the work so far survive into the next turn (no more "Gru forgot
+  everything"). You can just say "try again".
+
 ## Troubleshooting
 
+- **`Failed to initialize server session`.** The server didn't complete its
+  handshake in time (default 30s) or crashed at startup. For a browser server,
+  raise `init_timeout` in the `jac` block (e.g. `60`). Check
+  `cache/mcp/logs/<server>.log` for the real cause.
 - **`/mcp list` shows a load error.** Usually a missing env var
-  (`environment variable 'X' is not set`) or an unreachable URL. Errors are
+  (`environment variable 'X' is not set`) or a malformed entry. Errors are
   **per-server** — one bad server doesn't stop the others. Fix the catalog /
   environment and `/mcp reload`. A broken catalog never crashes JAC.
 - **Gru doesn't use an MCP tool.** With `defer` on, Gru must *search* for it

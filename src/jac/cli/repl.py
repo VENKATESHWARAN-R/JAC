@@ -28,7 +28,16 @@ from prompt_toolkit.document import Document
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.styles import Style
-from pydantic_ai import Agent, AgentRunResult
+from pydantic_ai import Agent, AgentRunResult, capture_run_messages
+from pydantic_ai.messages import (
+    ModelRequest,
+    ModelResponse,
+    RetryPromptPart,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from rich.console import Console
 
 from jac import __version__
@@ -224,15 +233,26 @@ async def _run_turn(
     On successful completion, records the turn's input / output token
     counts into ``usage_tracker`` (D25). The tracker handles JSONL
     persistence and threshold-crossing events; we just hand it the deltas.
+
+    On a **hard failure** (a tool exhausting retries, an MCP server failing
+    to connect, a model error) we don't silently discard the turn — that
+    wiped the user's message and made Gru "forget" the conversation. Instead
+    we persist the messages captured up to the crash (via
+    ``capture_run_messages``), closing any dangling tool calls so the history
+    stays resumable on the next turn.
     """
     renderer = CliRenderer(console)
+    captured: list = []
 
     async def run_agent_and_signal() -> AgentRunResult[str]:
-        try:
-            result = await gru.run(text, message_history=message_history)
-        except Exception as exc:
-            await bus.emit(RunFailed(error=str(exc)))
-            raise
+        nonlocal captured
+        with capture_run_messages() as msgs:
+            try:
+                result = await gru.run(text, message_history=message_history)
+            except Exception as exc:
+                captured = list(msgs)
+                await bus.emit(RunFailed(error=str(exc)))
+                raise
         await bus.emit(RunCompleted(output=str(result.output)))
         return result
 
@@ -242,9 +262,11 @@ async def _run_turn(
     try:
         result = await agent_task
     except Exception:
-        # The renderer already captured the error from the bus event.
+        # The renderer already rendered the error from the bus event. Keep
+        # the conversation alive: persist what we captured (sanitized) so the
+        # next turn still has context instead of starting from a blank slate.
         renderer.print_final()
-        return message_history
+        return _recover_failed_history(message_history, captured, text)
 
     renderer.print_final()
     if usage_tracker is not None:
@@ -256,6 +278,61 @@ async def _run_turn(
             cache_write_tokens=getattr(usage, "cache_write_tokens", 0),
         )
     return result.all_messages()
+
+
+def _close_open_tool_calls(messages: list) -> list:
+    """Append synthetic returns for any tool call left unanswered by a crash.
+
+    pydantic-ai refuses to resume a history that ends with an unprocessed
+    tool call ("Cannot provide a new user prompt when the message history
+    contains unprocessed tool calls"). A run that died mid-tool (retries
+    exhausted, server disconnected) leaves exactly that. We pair every open
+    ``ToolCallPart`` with a ``ToolReturnPart`` marking it aborted so the next
+    turn can continue.
+    """
+    answered: set[str] = set()
+    calls: dict[str, str] = {}
+    for msg in messages:
+        for part in getattr(msg, "parts", []):
+            if isinstance(part, ToolCallPart):
+                calls[part.tool_call_id] = part.tool_name
+            elif isinstance(part, ToolReturnPart | RetryPromptPart):
+                tcid = getattr(part, "tool_call_id", None)
+                if tcid:
+                    answered.add(tcid)
+    open_calls = [(cid, name) for cid, name in calls.items() if cid not in answered]
+    if not open_calls:
+        return list(messages)
+    returns = [
+        ToolReturnPart(
+            tool_name=name,
+            content="(tool call aborted: the turn failed before it returned)",
+            tool_call_id=cid,
+        )
+        for cid, name in open_calls
+    ]
+    return [*messages, ModelRequest(parts=returns)]
+
+
+def _recover_failed_history(original: list, captured: list, text: str) -> list:
+    """Build a resumable history after a turn crashed.
+
+    Prefers the messages captured during the failed run (they include the
+    user's prompt + whatever the model/tools produced), with dangling tool
+    calls closed. If nothing was captured (the run died before recording the
+    turn — e.g. an MCP server that failed to connect at run start), we
+    synthesize the user turn plus a short failure note onto the prior history
+    so the user's message and context survive.
+    """
+    if captured:
+        return _close_open_tool_calls(captured)
+    return [
+        *original,
+        ModelRequest(parts=[UserPromptPart(content=text)]),
+        ModelResponse(
+            parts=[TextPart(content="(the previous turn failed before it could complete)")]
+        ),
+    ]
 
 
 async def _repl_loop(

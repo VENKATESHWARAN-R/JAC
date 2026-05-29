@@ -65,6 +65,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.toolsets import WrapperToolset
 
 from jac.tools import summarizing_wrap
 from jac.workspace import paths
@@ -107,6 +108,12 @@ class MCPServerKnobs(BaseModel):
     requires_approval: bool = True
     """HITL-gate every call into this server. Set ``False`` for trusted /
     read-only servers whose calls don't need per-call approval."""
+
+    init_timeout: float = 30.0
+    """Seconds to wait for the server's connection + ``initialize`` handshake.
+    pydantic-ai's default is 5s, which a browser-launching server (playwright,
+    chrome-devtools) routinely exceeds — yielding "Failed to initialize server
+    session". 30s is a safer default; raise it for heavier servers."""
 
 
 @dataclass(frozen=True)
@@ -248,7 +255,61 @@ def _always_approve_filter(_ctx: Any, _tool_def: Any, _args: Any) -> bool:
     return True
 
 
-def _build_server_toolset(name: str, raw: dict[str, Any], log_dir: Path) -> Any:
+@dataclass
+class _ResilientMCPToolset(WrapperToolset[Any]):
+    """Make a single MCP server's connection failure non-fatal.
+
+    A server's connection + ``initialize`` handshake happens when the agent
+    *enters* the toolset at the start of a run — before any tool is called.
+    If that raises (server crash, bad command, init timeout), it aborts the
+    **whole turn**, so one broken server would make the agent unusable. This
+    wrapper catches the failure, logs it, and degrades the server to zero
+    tools for the session — the other servers and the agent keep working.
+    Safe to hold state: ``MCPToolset`` doesn't override ``for_run``, so the
+    run loop reuses this instance rather than ``replace()``-ing it.
+    """
+
+    server_name: str = ""
+
+    def __post_init__(self) -> None:
+        self._broken = False
+
+    async def __aenter__(self) -> Any:
+        try:
+            await self.wrapped.__aenter__()
+        except Exception as exc:
+            self._broken = True
+            logger.warning(
+                "MCP server %r failed to connect; skipping its tools this session: %s",
+                self.server_name,
+                exc,
+            )
+        return self
+
+    async def __aexit__(self, *args: Any) -> bool | None:
+        if getattr(self, "_broken", False):
+            return False
+        try:
+            return await self.wrapped.__aexit__(*args)
+        except Exception:
+            return False
+
+    async def get_tools(self, ctx: Any) -> Any:
+        if getattr(self, "_broken", False):
+            return {}
+        try:
+            return await self.wrapped.get_tools(ctx)
+        except Exception as exc:
+            self._broken = True
+            logger.warning(
+                "MCP server %r failed while listing tools; skipping: %s", self.server_name, exc
+            )
+            return {}
+
+
+def _build_server_toolset(
+    name: str, raw: dict[str, Any], log_dir: Path, *, init_timeout: float
+) -> Any:
     """Build the bare (unwrapped) ``MCPToolset`` for one server entry.
 
     We build the transport ourselves rather than calling
@@ -258,6 +319,13 @@ def _build_server_toolset(name: str, raw: dict[str, Any], log_dir: Path) -> Any:
     prompt — see :mod:`jac.cli.terminal`. Env vars are expanded here (per
     enabled server only, so a disabled server's missing secret never trips
     the others).
+
+    A failing tool call is turned into a normal tool *result* carrying the
+    error text (``tool_error_behavior='error'`` + :func:`_mcp_error_to_result`)
+    rather than raised: a server error (e.g. a bad navigate) would otherwise
+    exhaust pydantic-ai's retry budget and raise ``UnexpectedModelBehavior``
+    out of the whole run, killing the turn. Surfacing it to the model lets it
+    adapt or report, and keeps the session alive.
 
     Raises:
         KeyError: an env var referenced in the entry is unset (no default).
@@ -277,22 +345,55 @@ def _build_server_toolset(name: str, raw: dict[str, Any], log_dir: Path) -> Any:
             cwd=str(raw["cwd"]) if raw.get("cwd") else None,
             log_file=log_dir / f"{name}.log",
         )
-        return MCPToolset(transport, id=name)
+        return MCPToolset(
+            transport,
+            id=name,
+            init_timeout=init_timeout,
+            tool_error_behavior="error",
+            process_tool_call=_mcp_error_to_result,
+        )
     url = raw.get("url")
     if url:
-        return MCPToolset(str(url), id=name, headers=raw.get("headers"))
+        return MCPToolset(
+            str(url),
+            id=name,
+            headers=raw.get("headers"),
+            init_timeout=init_timeout,
+            tool_error_behavior="error",
+            process_tool_call=_mcp_error_to_result,
+        )
     raise ValueError("server entry has neither 'command' (stdio) nor 'url' (http/sse)")
+
+
+async def _mcp_error_to_result(
+    ctx: Any, call_tool: Any, name: str, tool_args: dict[str, Any]
+) -> Any:
+    """Run an MCP tool call, converting a server-side failure into a result.
+
+    Without this, a tool that errors raises out of pydantic-ai's tool loop;
+    after the retry budget is spent the run dies with ``UnexpectedModel
+    Behavior`` and the turn (and its context) is lost. We return the error
+    text as the tool's result instead, so the model sees it as ordinary tool
+    output and can retry with different arguments or report the failure. The
+    full server stderr is in the per-server log file either way.
+    """
+    try:
+        return await call_tool(name, tool_args)
+    except Exception as exc:
+        return f"MCP tool {name!r} failed: {exc}"
 
 
 def build_mcp_toolsets(catalog: MCPCatalog) -> tuple[list[Any], str | None]:
     """Build the wrapped toolset list for every enabled server.
 
     Each enabled server is composed
-    ``MCPToolset → .prefixed(name) → .defer_loading() → summarizing_wrap →
-    .approval_required()``. Build is **per-server isolated**: one server's
-    failure (missing env var, malformed entry, fastmcp missing) is collected
-    into the returned error string and the rest still load. The REPL surfaces
-    that string via ``/mcp list`` and keeps running.
+    ``MCPToolset → _ResilientMCPToolset → .prefixed(name) → .defer_loading()
+    → summarizing_wrap → .approval_required()``. Build is **per-server
+    isolated**: a build-time failure (missing env var, malformed entry,
+    fastmcp missing) is collected into the returned error string and the rest
+    still load. A *connection*-time failure is absorbed at run time by
+    :class:`_ResilientMCPToolset` (that server contributes zero tools rather
+    than aborting the turn). The REPL surfaces build errors via ``/mcp list``.
     """
     enabled = catalog.enabled
     if not enabled:
@@ -303,7 +404,9 @@ def build_mcp_toolsets(catalog: MCPCatalog) -> tuple[list[Any], str | None]:
     errors: list[str] = []
     for name, srv in enabled.items():
         try:
-            ts = _build_server_toolset(name, srv.raw, log_dir)
+            base = _build_server_toolset(
+                name, srv.raw, log_dir, init_timeout=srv.knobs.init_timeout
+            )
         except KeyError as exc:
             errors.append(f"{name}: environment variable {exc.args[0]!r} is not set")
             continue
@@ -313,7 +416,7 @@ def build_mcp_toolsets(catalog: MCPCatalog) -> tuple[list[Any], str | None]:
         except Exception as exc:
             errors.append(f"{name}: {exc}")
             continue
-        ts = ts.prefixed(name)
+        ts = _ResilientMCPToolset(wrapped=base, server_name=name).prefixed(name)
         if srv.knobs.defer:
             ts = ts.defer_loading()
         ts = summarizing_wrap(ts, summarize_all=True)
