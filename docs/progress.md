@@ -49,7 +49,7 @@ For deeper context:
 | **Phase F — MCP loader + tool search** | ✅ Complete (2026-05-29) | Standard `mcpServers` JSON (D46), layered per-server; `MCPCapability` wires servers into Gru + sub-agents; `.defer_loading()` + auto `ToolSearch` (context-bloat fix); HITL-gated (D28 reason exemption), large outputs summarized; `/mcp list\|reload\|enable\|disable`. Monty code mode stays v2. |
 | **Phase G — Plan Mode (+ Accept-Edits)** | ✅ Complete (v0.7.0) | `ModeCapability` policy (`approval_override` + reserved `filter_capabilities`); `/mode normal\|plan\|accept-edits`. Plan blocks every gated tool via approval auto-deny (reads stay live); Accept-Edits auto-approves write/edit only. YOLO knob built, **not exposed** (v2/D43). Deviations: `plan`→`tasks` rename + `write_plan` tool **deferred** (churn, no user value) — Plan Mode reuses the existing `plan`/`update_plan` checklist. |
 | Phase H — A2A 4.e + broader tests | ⏸ Future | OIDC/GCP A2A auth; broader test coverage; eval-loop work tracked under Phase 7 |
-| **Web surface (D48) — Slice 1** | ✅ Control panel shipped (2026-05-31) | `src/jac/web/` (Starlette + HTMX, zero new deps), `jac web serve`. Local-first, single-user, loopback-bound. Manages profiles / providers-keys / secrets / sessions, all reusing existing CRUD. Renderer over `jac.sdk` — **not** a runtime mode. Slice 2 (streaming chat + HITL over SSE/WS) and Slice 3 (minion dashboard) queued. Design: [`design/web-surface.md`](design/web-surface.md). |
+| **Web surface (D48) — Slices 1 + 2** | ✅ Control panel + chat shipped (2026-05-31) | `src/jac/web/` (Starlette + HTMX + SSE, zero new deps), `jac web serve`. Local-first, single-user, loopback-bound. Slice 1: profiles / providers-keys / secrets / sessions panel. Slice 2: streaming chat + HITL over SSE, driving the **shared** `build_session_runtime` engine (extracted from the REPL). Renderer over `jac.sdk` — **not** a runtime mode. Slice 3 (minion dashboard) queued. Design: [`design/web-surface.md`](design/web-surface.md). |
 | v0.2 source restructuring | ✅ Complete | released as v0.2.0 |
 | v2 | ⏸ Future | YOLO + **direct `pydantic-monty` sandbox** (D43) + **ACP editor surface** (D45, condition-gated) + Stuck-loop + Night Shift + user-tier memory |
 
@@ -266,7 +266,7 @@ Landed 2026-05-30. Two feature areas in one release.
 
 ---
 
-## Shipped — Web surface (D48): Slice 1 control panel ✅ (2026-05-31)
+## Shipped — Web surface (D48): Slices 1 + 2 ✅ (2026-05-31)
 
 **Goal:** a third surface — a local-first browser UI for users who'd rather manage JAC from a panel than the CLI. **Charter (locked): single-user, local-first, never multi-tenant.** It binds `127.0.0.1`; the loopback boundary *is* the access control (no accounts). A non-loopback `--host` is allowed but warns loudly because the settings panel reads/writes API keys in the clear.
 
@@ -284,7 +284,7 @@ Landed 2026-05-30. Two feature areas in one release.
 - [x] Jinja templates + dark minion-yellow CSS; sidebar nav with a "Chat · soon" placeholder.
 - [x] 697 existing tests green; new surface smoke-tested via Starlette `TestClient`.
 
-**Slice 2 (next):** streaming chat — a `WebRenderer` consuming the `EventBus` over SSE, a WebSocket carrying approval responses (resolve the `ApprovalRequest` future), a `SessionManager` owning the one live `(bus, gru, driver)` tuple. Risks scoped in the design doc (HITL disconnect → deny; single-session by charter). **Slice 3:** minion dashboard (live sub-agent cards from `_pending_spawns`, file-change feed).
+**Slice 2 (done):** streaming chat. The REPL's inline bootstrap was extracted to [`runtime/bootstrap.py`](../src/jac/runtime/bootstrap.py) (`build_session_runtime`) so the CLI and web build the **identical** engine (behavior-preserving move — 709 tests stayed green, live REPL smoke clean). [`web/chat.py`](../src/jac/web/chat.py)'s `WebChatManager` drives one live session: a persistent consumer drains the `EventBus` into a per-session queue, an SSE endpoint (`/chat/stream`, `sse-starlette`) streams JSON frames, and [`static/chat.js`](../src/jac/web/static/chat.js) renders token deltas / tool lifecycle / plan / minion lines. HITL approval + clarify resolve the awaiting `asyncio.Future` via browser POSTs (same future the CLI resolves at a prompt). Live-verified end-to-end against a real model (`SessionStarted → UserMessage → TextDelta → RunCompleted → TurnDone`). **Slice 3 (next):** minion dashboard (live sub-agent cards from `_pending_spawns`, file-change feed) — and the home for the themed/animated minion polish.
 
 ---
 

@@ -178,7 +178,7 @@ Secrets (bearer token, API key value, client secret) are always prompted with hi
 
 ## Web UI composition
 
-A local-first, single-user browser control panel for profiles, keys, and sessions (chat is a later slice):
+A local-first, single-user browser surface: a streaming chat (same engine + tools + HITL as the CLI) plus a control panel for profiles, keys, and sessions:
 
 ```bash
 jac web serve                        # http://127.0.0.1:8770, opens browser
@@ -186,7 +186,7 @@ jac web serve --port 9000 --no-open
 jac web serve --host 0.0.0.0         # WARNS — non-loopback exposes API keys; single-user, no auth
 ```
 
-Loopback is the security boundary (no accounts). Which sessions it shows depends on the launch directory: inside a project → that project's sessions; loose folder → the global `~/.jac` pool. It is **not** a hosted/multi-tenant service.
+Loopback is the security boundary (no accounts). The chat binds the **default profile's** model — set one up in the panel or via `jac init` if the chat reports no model is bound. Which sessions it shows depends on the launch directory: inside a project → that project's sessions; loose folder → the global `~/.jac` pool. It is **not** a hosted/multi-tenant service.
 
 ## Common composition mistakes to avoid
 

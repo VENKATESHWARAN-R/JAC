@@ -12,11 +12,11 @@
       <div class="brand">JAC</div>
       <div class="brand-sub">web · v{{ version }}</div>
       <nav>
+        <a href="/chat" class="{{ 'on' if active == 'chat' }}">Chat</a>
         <a href="/" class="{{ 'on' if active == 'overview' }}">Overview</a>
         <a href="/profiles" class="{{ 'on' if active == 'profiles' }}">Profiles</a>
         <a href="/keys" class="{{ 'on' if active == 'keys' }}">Keys &amp; secrets</a>
         <a href="/sessions" class="{{ 'on' if active == 'sessions' }}">Sessions</a>
-        <span class="nav-soon" title="Coming in Slice 2">Chat &middot; soon</span>
       </nav>
       <div class="sidebar-foot">
         local-first &middot; single-user<br>

@@ -69,13 +69,15 @@ src/jac/
 │               └── peer.py      # /a2a peer add|remove
 ├── web/                     # Local-first web UI surface (D48) — mirrors cli/
 │   ├── app.py               # Typer `jac web serve` + uvicorn launch + loopback guard
-│   ├── server.py            # create_app() — Starlette app, routes, Jinja2 wiring
+│   ├── server.py            # create_app() — Starlette app, panel + chat routes, Jinja2
 │   ├── panel.py             # Read-side: view-model assembly from management APIs
 │   ├── actions.py           # Write-side: form POST handlers → profiles_crud/secrets/Session
-│   ├── templates/           # Jinja2: base + overview/profiles/keys/sessions
-│   └── static/jac.css       # Panel styling (dark, minion-yellow)
+│   ├── chat.py              # WebChatManager (Slice 2) — drives a live session; bus→SSE; HITL
+│   ├── templates/           # Jinja2: base + overview/profiles/keys/sessions/chat
+│   └── static/              # jac.css + chat.js (EventSource client)
 ├── runtime/
 │   ├── gru.py               # build_gru, _default_tool_capabilities, sub_agent_capabilities
+│   ├── bootstrap.py         # build_session_runtime — shared engine wiring (CLI + web), D48
 │   ├── driver.py            # SessionDriver — surface-agnostic turn pipeline + budget guards (R5)
 │   ├── session.py           # Session persistence, plan.json, delete/prune
 │   ├── events.py            # Typed JacEvent union + EventBus

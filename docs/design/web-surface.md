@@ -1,7 +1,7 @@
 # Web surface — local-first UI (design)
 
-> **Status:** Slice 1 (control panel) landing. Slice 2 (chat + HITL) and Slice 3
-> (minion dashboard) are designed here but not yet built.
+> **Status:** Slice 1 (control panel) and Slice 2 (streaming chat + HITL) shipped.
+> Slice 3 (minion dashboard) is designed here but not yet built.
 > **Decision:** [`architecture.md`](../architecture.md) §5 **D48**.
 
 JAC has two surfaces today: the **CLI** (interactive REPL) and **A2A** (a
@@ -117,11 +117,20 @@ always knows what they're looking at.
 src/jac/web/
   __init__.py
   app.py        # Typer `jac web serve` command + uvicorn launch + loopback guard
-  server.py     # create_app() — Starlette app, routes, Jinja2 wiring
+  server.py     # create_app() — Starlette app, routes (panel + chat), Jinja2 wiring
   panel.py      # pure read-side: assemble view models from the management APIs
   actions.py    # write-side: form POST handlers calling profiles_crud / secrets / Session
-  templates/    # Jinja2: base.html + overview/profiles/keys/sessions
-  static/        # jac.css (+ vendored htmx.min.js from Slice 2)
+  chat.py       # WebChatManager — drives one live session; bus→SSE; HITL futures
+  templates/    # Jinja2: base.html + overview/profiles/keys/sessions/chat
+  static/        # jac.css + chat.js
+```
+
+The chat surface reuses the shared engine bootstrap (extracted from the REPL in
+Slice 2):
+
+```
+src/jac/runtime/bootstrap.py   # build_session_runtime() — the engine half of a
+                               # session, shared by cli/repl.py and web/chat.py
 ```
 
 `create_app()` is the embeddable entry point (testable without a running
@@ -129,17 +138,30 @@ server). `app.py` is the thin CLI wrapper, parallel to `cli/a2a.py`.
 
 ## Slices
 
-1. **Slice 1 — control panel (this change).** Pure CRUD over profiles,
+1. **Slice 1 — control panel (shipped).** Pure CRUD over profiles,
    providers/keys, secrets, and sessions, plus an overview card (workspace
    scope, default profile, secrets backend, model, token totals). No agent
    driving, no streaming, no concurrency concerns. Highest reuse, lowest risk.
    Useful on its own as a GUI for `jac init` / `profiles` / `keys` / `sessions`.
-2. **Slice 2 — streaming chat + HITL.** A `WebRenderer` consuming the `EventBus`
-   over SSE; a WebSocket carrying approval responses (resolve the
-   `ApprovalRequest` future). Drives one live session via the SDK bootstrap.
-   This is where the real engineering lives (see Risks).
-3. **Slice 3 — minion dashboard.** Live sub-agent cards, file-change feed, token
-   meter — built on the Slice 2 event feed. Optional richer frontend here.
+2. **Slice 2 — streaming chat + HITL (shipped).** [`web/chat.py`](../../src/jac/web/chat.py)
+   drives one live session through the **shared engine**: the REPL's bootstrap
+   was extracted to [`runtime/bootstrap.py`](../../src/jac/runtime/bootstrap.py)
+   (`build_session_runtime`) so the CLI and the web build the *identical* Gru +
+   capabilities + driver — no duplication, no drift. A persistent consumer task
+   drains the `EventBus` into a per-session queue; an SSE endpoint
+   (`/chat/stream`, via `sse-starlette`) streams JSON frames to the browser
+   ([`static/chat.js`](../../src/jac/web/static/chat.js) dispatches them — token
+   deltas, tool lifecycle, plan, sub-agent/minion lines). HITL approval +
+   clarify are resolved by browser POSTs that complete the `asyncio.Future` the
+   approval handler is awaiting — the same future the CLI resolves at a terminal
+   prompt. One turn at a time (single-user charter); the consumer is decoupled
+   from the SSE connection so a tab refresh doesn't stall an in-flight approval.
+   Because `jac web serve` doesn't activate a profile at boot, the chat resolves
+   the default profile lazily on first message and fails *gracefully* (an error
+   frame) when none is configured.
+3. **Slice 3 — minion dashboard (next).** Live sub-agent cards, file-change
+   feed, token meter — built on the Slice 2 event feed. Optional richer frontend
+   here, and the natural home for the themed/animated minion polish.
 
 ## Risks & how we scope around them
 

@@ -17,13 +17,14 @@ from urllib.parse import quote
 
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import RedirectResponse, Response
+from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 from starlette.templating import Jinja2Templates
 
 from jac import __version__
 from jac.web import actions, panel
+from jac.web.chat import get_manager
 
 _HERE = Path(__file__).parent
 _TEMPLATES_DIR = _HERE / "templates"
@@ -112,6 +113,52 @@ async def session_delete(request: Request) -> Response:
     return _redirect("/sessions", result)
 
 
+# ---------- chat (Slice 2) ----------
+
+
+async def chat_page(request: Request) -> Response:
+    return _render(request, "chat.html", "chat", {"resume": request.query_params.get("session")})
+
+
+async def chat_stream(request: Request) -> Response:
+    # Lazy import: sse-starlette is only needed when the chat surface is used.
+    from sse_starlette.sse import EventSourceResponse
+
+    manager = get_manager()
+    await manager.ensure_started(session_id=request.query_params.get("session"))
+    return EventSourceResponse(manager.sse_events())
+
+
+async def chat_send(request: Request) -> Response:
+    data = await request.json()
+    return JSONResponse(await get_manager().send(str(data.get("text", ""))))
+
+
+async def chat_approve(request: Request) -> Response:
+    data = await request.json()
+    ok = get_manager().resolve_approval(
+        str(data.get("id", "")),
+        bool(data.get("approved")),
+        data.get("feedback"),
+    )
+    return JSONResponse({"ok": ok})
+
+
+async def chat_clarify(request: Request) -> Response:
+    data = await request.json()
+    idx = data.get("index")
+    ok = get_manager().resolve_clarify(
+        selected_index=int(idx) if idx is not None else None,
+        selected_text=data.get("text"),
+        free_text=bool(data.get("free_text")),
+    )
+    return JSONResponse({"ok": ok})
+
+
+async def chat_new(request: Request) -> Response:
+    return JSONResponse(await get_manager().new_session())
+
+
 def create_app() -> Starlette:
     """Build the JAC web-UI ASGI app (Slice 1 control panel)."""
     routes = [
@@ -125,6 +172,12 @@ def create_app() -> Starlette:
         Route("/keys/unset", key_unset, methods=["POST"]),
         Route("/sessions", sessions, name="sessions"),
         Route("/sessions/delete", session_delete, methods=["POST"]),
+        Route("/chat", chat_page, name="chat"),
+        Route("/chat/stream", chat_stream, name="chat_stream"),
+        Route("/chat/send", chat_send, methods=["POST"]),
+        Route("/chat/approve", chat_approve, methods=["POST"]),
+        Route("/chat/clarify", chat_clarify, methods=["POST"]),
+        Route("/chat/new", chat_new, methods=["POST"]),
         Mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static"),
     ]
     return Starlette(routes=routes)

@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Chat{% endblock %}
+{% block content %}
+<div class="chat-head">
+  <h1>Chat</h1>
+  <div class="chat-meta">
+    <span id="chat-session" class="mono">—</span>
+    <button id="chat-new" class="small">New chat</button>
+  </div>
+</div>
+
+<div id="transcript" class="transcript" aria-live="polite"></div>
+
+<form id="chat-form" class="chat-input">
+  <textarea id="chat-text" rows="2" placeholder="Message Gru…  (Enter to send, Shift+Enter for newline)"></textarea>
+  <button type="submit" id="chat-send">Send</button>
+</form>
+
+<p class="note">
+  Tools run with human-in-the-loop approval, just like the CLI — you'll be asked
+  before anything that writes, runs, or reaches out. This session is scoped to
+  the workspace this server was launched from.
+</p>
+
+<script>window.JAC_RESUME = {{ (resume | tojson) if resume else "null" }};</script>
+<script src="/static/chat.js" defer></script>
+{% endblock %}

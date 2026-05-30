@@ -21,7 +21,7 @@
 | `jac keys set KEY` | Prompt and store secret (not with `env-only` backend) |
 | `jac keys unset KEY` | Remove secret from backend |
 | `jac a2a serve` | Headless A2A guest server (foreground until Ctrl-C) |
-| `jac web serve` | Local-first web UI: a browser control panel for profiles, keys, and sessions (foreground until Ctrl-C) |
+| `jac web serve` | Local-first web UI: streaming chat + a browser control panel for profiles, keys, and sessions (foreground until Ctrl-C) |
 
 ### Root flags (`jac`)
 
@@ -53,7 +53,7 @@ Subcommands (`init`, `sessions`, `profiles`, `keys`, `a2a`, `web`) do not activa
 | `--port` / `-p` | Port (default: `8770`) |
 | `--open` / `--no-open` | Open the UI in your browser on start (default: open) |
 
-The web UI is **local-first and single-user**: the loopback bind is the access boundary, there are no accounts. Which sessions it shows depends on where you launch it — inside a project it shows that project's sessions; in a loose folder, the global `~/.jac` pool. See [`design/web-surface.md`](https://venkateshwaran-r.github.io/JAC/web-surface/) for the full design.
+The web UI is **local-first and single-user**: the loopback bind is the access boundary, there are no accounts. It serves a streaming chat (same engine, tools, and HITL approval as the CLI — you approve gated tool calls in the browser) plus a control panel for profiles, keys, and sessions. Which sessions it shows depends on where you launch it — inside a project it shows that project's sessions; in a loose folder, the global `~/.jac` pool. The chat binds the **default profile's** model (configure it under Profiles/Keys, or `jac init`). See [`design/web-surface.md`](https://venkateshwaran-r.github.io/JAC/web-surface/) for the full design.
 
 ## REPL exit
 
