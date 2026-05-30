@@ -304,14 +304,6 @@ def load_all_skills() -> SkillCatalog:
 
 # --- capability --------------------------------------------------------
 
-# Module-level holder so the @jac_tool function (which can't carry a
-# self-reference) can find the active skill catalog at call time. Set by
-# :meth:`SkillsCapability.__post_init__`; cleared if the capability is
-# garbage collected. A simple dict is enough — there's one Gru per
-# process at runtime, and tests build capabilities under monkeypatched
-# workspaces anyway.
-_ACTIVE_SKILLS: dict[str, LoadedSkill] = {}
-
 
 @dataclass
 class SkillsCapability(AbstractCapability[Any]):
@@ -337,22 +329,42 @@ class SkillsCapability(AbstractCapability[Any]):
     def __post_init__(self) -> None:
         # Empty `skills` is the signal that we should discover from disk.
         # Tests that want a hand-crafted catalog pass `skills={"a": ...}`
-        # explicitly; we leave those alone and just sync the module-level
-        # tool catalog.
+        # explicitly; we leave those alone.
         if not self.skills:
             catalog = load_all_skills()
             self.skills = catalog.active
             self.shadowed = catalog.shadowed
-        _ACTIVE_SKILLS.clear()
-        _ACTIVE_SKILLS.update(self.skills)
 
     def reload(self) -> None:
         """Rediscover skills from disk. Used by ``/skill reload``."""
         catalog = load_all_skills()
         self.skills = catalog.active
         self.shadowed = catalog.shadowed
-        _ACTIVE_SKILLS.clear()
-        _ACTIVE_SKILLS.update(self.skills)
+
+    def load_skill(self, name: str) -> str:
+        """Return the markdown body of skill ``name`` (the ``load_skill`` tool
+        core). Closure-free entry point so callers and tests can resolve a
+        skill body without going through the toolset.
+
+        Raises:
+            ValueError: if no skill is loaded, or ``name`` is unknown — the
+                message lists the available names so the model can self-correct.
+        """
+        if not self.skills:
+            raise ValueError(
+                "no skills are loaded — install one under "
+                "~/.jac/skills/<name>/SKILL.md or "
+                "<repo>/.agents/skills/<name>/SKILL.md, or use a shipped "
+                "reference skill."
+            )
+        skill = self.skills.get(name)
+        if skill is None:
+            available = ", ".join(sorted(self.skills)) or "(none)"
+            raise ValueError(
+                f"unknown skill {name!r}; available: {available}. "
+                "Use the exact name from the Skills block of your system prompt."
+            )
+        return skill.body
 
     def get_instructions(self) -> Any:
         # Re-render on every request so ``/skill reload`` shows up without
@@ -368,8 +380,44 @@ class SkillsCapability(AbstractCapability[Any]):
 
     def get_toolset(self) -> Any:
         # `load_skill` reads a parsed in-memory body; no filesystem touch
-        # at call time, no approval needed. Bare toolset.
-        return jac_function_toolset(load_skill)
+        # at call time, no approval needed. Bare toolset. Built as a closure
+        # over `self` (mirrors ClarifyCapability) so two SkillsCapability
+        # instances don't clobber a shared module global.
+        return jac_function_toolset(*self._build_tools())
+
+    def _build_tools(self) -> list[Any]:
+        capability = self
+
+        @jac_tool
+        def load_skill(reason: str, name: str) -> str:
+            """Pull a loaded skill's body into the current turn.
+
+            Use this when the user's request matches a skill's purpose
+            (visible in the "Skills" block of your system prompt). The body
+            is delivered to you as this tool's result — read it, then act on
+            its guidance.
+
+            Skills are advisory text, not executable tools. Loading one
+            doesn't grant access to anything; it just inserts a playbook you
+            can follow. If the skill names a tool you don't have, follow
+            whatever fallback the body suggests — don't refuse blindly.
+
+            Args:
+                reason: One-sentence justification for the load (per JAC's
+                    tool discipline). Becomes part of the audit trail.
+                name: Skill identifier as advertised in the "Skills"
+                    system-prompt block (e.g. ``"code-review"``).
+
+            Returns:
+                The full markdown body of the skill, ready to act on.
+
+            Raises:
+                ValueError: if ``name`` doesn't match any loaded skill.
+                    Lists the available names so the model can self-correct.
+            """
+            return capability.load_skill(name)
+
+        return [load_skill]
 
 
 def make_skills_capability() -> SkillsCapability:
@@ -415,47 +463,3 @@ def _render_skills_block(skills: dict[str, LoadedSkill]) -> str:
         + "\n".join(truncated_lines)
         + "\n\n_(descriptions truncated — run `/skill list` for the full table)._\n"
     )
-
-
-# --- tool --------------------------------------------------------------
-
-
-@jac_tool
-def load_skill(reason: str, name: str) -> str:
-    """Pull a loaded skill's body into the current turn.
-
-    Use this when the user's request matches a skill's purpose (visible
-    in the "Skills" block of your system prompt). The body is delivered
-    to you as this tool's result — read it, then act on its guidance.
-
-    Skills are advisory text, not executable tools. Loading one doesn't
-    grant access to anything; it just inserts a playbook you can follow.
-    If the skill names a tool you don't have, follow whatever fallback
-    the body suggests — don't refuse blindly.
-
-    Args:
-        reason: One-sentence justification for the load (per JAC's tool
-            discipline). Becomes part of the audit trail.
-        name: Skill identifier as advertised in the "Skills" system-prompt
-            block (e.g. ``"code-review"``).
-
-    Returns:
-        The full markdown body of the skill, ready to act on.
-
-    Raises:
-        ValueError: if ``name`` doesn't match any loaded skill. Lists the
-            available names in the error so the model can self-correct.
-    """
-    if not _ACTIVE_SKILLS:
-        raise ValueError(
-            "no skills are loaded — install one under ~/.jac/skills/<name>/SKILL.md "
-            "or <repo>/.agents/skills/<name>/SKILL.md, or use a shipped reference skill."
-        )
-    skill = _ACTIVE_SKILLS.get(name)
-    if skill is None:
-        available = ", ".join(sorted(_ACTIVE_SKILLS)) or "(none)"
-        raise ValueError(
-            f"unknown skill {name!r}; available: {available}. "
-            "Use the exact name from the Skills block of your system prompt."
-        )
-    return skill.body
