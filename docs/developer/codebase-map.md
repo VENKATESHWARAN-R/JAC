@@ -75,7 +75,13 @@ src/jac/
 │   ├── modes.py             # ModeCapability policy — Plan / Accept-Edits (D23)
 │   ├── observability.py     # logfire.configure() — global pipeline
 │   ├── usage.py             # UsageTracker, BudgetLimits, usage.jsonl
-│   ├── sub_agent.py         # spawn_sub_agent(s) runners; SubAgentCapability; bidirectional channel (Phase B/E)
+│   ├── sub_agent/           # sub-agent package (split from sub_agent.py, R7a)
+│   │   ├── tiers.py         #   tier names + cascade resolution
+│   │   ├── packet.py        #   SubAgentTaskPacket / SubAgentSpawnSpec / SubAgentResult
+│   │   ├── state.py         #   SubAgentCapability + setters; agent-label contextvar; minion-N counter
+│   │   ├── runner.py        #   worker-Agent build (allowed_tools filter, external ask_supervisor) + simple run
+│   │   ├── suspend.py       #   suspend/resume transport: PendingSpawn registry + drive loop (Phase 4/R7b)
+│   │   └── tools.py         #   spawn_sub_agent(s) + respond_to_sub_agent (Phase B/E)
 │   ├── sub_agent_usage.py   # sub-agent cost attribution helpers (rolled into UsageTracker)
 │   └── tool_summarize.py    # maybe_summarize_tool_result — cheap-tier summarization gate (Phase A)
 ├── capabilities/
@@ -91,7 +97,7 @@ src/jac/
 │   ├── clarify.py           # clarify
 │   ├── skills.py            # SkillsCapability + load_skill (Phase D / D21)
 │   ├── mcp.py               # MCPCapability — external mcpServers loader (Phase F / D46)
-│   ├── sub_agent.py         # SubAgentToolCapability — registers spawn + bidirectional tools (Phase B/E)
+│   ├── sub_agent.py         # SubAgentToolCapability + RespondToSubAgentCapability (Phase B/E)
 │   └── a2a/
 │       ├── __init__.py      # A2ACapability, make_a2a_capability
 │       ├── server.py        # A2AServer, AuditingAgentWorker, uvicorn lifecycle
@@ -126,7 +132,7 @@ src/jac/
 └── prompts/
     ├── gru_system.md            # Core Gru instructions
     ├── sub_agent_system.md      # Sub-agent (minion) instructions
-    ├── gru_bidirectional.md     # Addendum when sub_agent_bidirectional is on (D41)
+    ├── gru_bidirectional.md     # Addendum when sub_agent_bidirectional is on (Phase 4 suspend/resume)
     ├── gru_plan_mode.md         # Addendum in Plan mode (D23)
     ├── gru_accept_edits.md      # Addendum in Accept-Edits mode (D23)
     └── a2a_guest_addendum.md    # Guest-mode addendum (D24)
@@ -189,8 +195,8 @@ Registration: import handlers in `jac/cli/slash/handlers/__init__.py`. Completer
 | `load_skill` | skills | No |
 | `spawn_sub_agent` | sub_agent | Yes (tier + task packet shown) |
 | `spawn_sub_agents` | sub_agent | Yes (one panel per spawn) |
-| `ask_main_agent` | sub_agent | No (sub-agent side; `sub_agent_bidirectional`, default on) |
-| `respond_to_sub_agent` | sub_agent | No (main-agent side; flag-gated) |
+| `ask_supervisor` | sub_agent | No (sub-agent side; **external** tool — suspends the run; `sub_agent_bidirectional`, default on) |
+| `respond_to_sub_agent` | sub_agent | No (main-agent side; resumes the worker; flag-gated) |
 | *MCP tools* | mcp | Yes by default (per-server `requires_approval`); deferred-loaded + `ToolSearch` (D46) |
 
 **Guest Gru (inbound A2A only):** `read_file`, `list_dir`, `grep`, `glob` — write/edit are filtered out of the toolset entirely (R3).
