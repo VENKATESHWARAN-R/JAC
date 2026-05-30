@@ -1,6 +1,6 @@
 # Codebase map
 
-> **Audience:** contributors navigating `src/jac/` as built in **v0.7.0**.
+> **Audience:** contributors navigating `src/jac/` as built in **v0.8.0**.
 
 Package root: `src/jac/`. Console entry: `jac.cli.app:main` (`pyproject.toml`).
 
@@ -12,7 +12,7 @@ For the rules behind this layout — what goes where, slash-vs-capability, when 
 
 ```text
 src/jac/
-├── __init__.py              # __version__ = "0.7.0"
+├── __init__.py              # __version__ = "0.8.0"
 ├── __main__.py              # python -m jac
 ├── config.py                # Settings, CompactionSettings, BudgetSettings, CostSettings
 ├── errors.py                # JacConfigError
@@ -237,7 +237,7 @@ User workspace: `~/.jac/config.yaml`, `memory.md`, `AGENTS.md`, `mcp.json`, `his
 
 ## Tests (orientation)
 
-Run `uv run pytest --collect-only -q` for the live count (**668** at v0.7.0). `just check` runs format + lint + `ty check src` + `just drift` + pytest.
+Run `uv run pytest --collect-only -q` for the live count (**697** at v0.8.0). `just check` runs format + lint + `ty check src` + `just drift` + pytest.
 
 | Area | Files |
 | --- | --- |

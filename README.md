@@ -6,7 +6,7 @@ JAC is a Python CLI that wraps an LLM with persistent memory, tools,
 human-in-the-loop gates, multi-provider credentials, and session continuity.
 It runs on your machine — your keys, your files, your context.
 
-> **Status:** **v0.7.0** (pre-release). Latest: interaction modes (`/mode plan|accept-edits`), compaction control (`/compact`, `/context`, sliding/manual strategies), and the MCP loader (Phase F — external `mcpServers` wired in as deferred-loaded, HITL-gated toolsets). Earlier: parallel + bidirectional sub-agents (Phase E), the skill loader (Phase D), context-cost controls + sequential sub-agents (Phases A/B). Phase 4 A2A is feature-complete for v1 scope.
+> **Status:** **v0.8.0** (pre-release). Latest: an end-stage review hardening pass — sub-agent `allowed_tools` now genuinely sandboxes a worker, bidirectional comms redesigned to a suspend/resume `ask_supervisor` flow, and a surface-agnostic `SessionDriver` + `jac.sdk` facade that unlocks non-CLI surfaces. Earlier: interaction modes (`/mode plan|accept-edits`), compaction control (`/compact`, `/context`), the MCP loader (Phase F), parallel sub-agents (Phase E), the skill loader (Phase D), context-cost controls + sequential sub-agents (Phases A/B). Phase 4 A2A is feature-complete for v1 scope.
 > See [implementation progress](https://venkateshwaran-r.github.io/JAC/progress/) for the live state.
 
 ## What it does

@@ -6,9 +6,26 @@ All notable changes to JAC are documented here. Format follows
 
 ## [Unreleased]
 
-### In flight
+_Nothing yet._
 
-- Post-v0.7.0 review remediation — security hardening (A2A SSRF guard, guest read-only toolset), documentation honesty, sub-agent comms redesign, and a runtime/surface split (tracked in `docs/design/audit/2026-05-30-review.md`).
+## [0.8.0] - 2026-05-30
+
+**v0.8.0** — end-stage review remediation (R1–R20, see
+`docs/design/audit/2026-05-30-review.md`). 697 tests. Pre-1.0 API.
+
+### Added
+
+- **Sub-agent `allowed_tools` enforced** at the Agent layer (R2); **suspend/resume bidirectional comms** via an external `ask_supervisor` tool — the worker run suspends and `respond_to_sub_agent` resumes it (R7b).
+- **`SessionDriver`** — a surface-agnostic turn pipeline in `jac.runtime.driver`, plus the **`jac.sdk`** embedding facade, a **`TextDelta`** streaming event, and `suggested_action` on refusal events (R5/R5b/R5c/R5d).
+- Budget knobs reject `<= 0` (R11); unknown provider prefixes warn loudly (R12); `forget` finds orphaned bullets (R18).
+
+### Changed
+
+- `runtime/sub_agent.py` split into a `runtime/sub_agent/` package (R7a, imports unchanged); `load_skill` is a capability closure (R14); spawn tools `summarizable=False` (R10).
+
+### Security
+
+- (Landed earlier in the same review: A2A outbound SSRF guard, physically read-only guest toolset, fasta2a fork pin — see v0.7.0-era Phase 1.)
 
 ## [0.7.0] - 2026-05-30
 
