@@ -119,6 +119,15 @@ class MyCapability(AbstractCapability[Any]):
 
 Wire in `repl.py` via `extra_capabilities=[..., MyCapability()]` or `build_gru`'s default list.
 
+## Factory vs bare constructor
+
+Some capabilities ship a `make_*_capability(...)` factory; others are constructed bare as `MyCapability()`. This is a **deliberate convention, not drift** (R9):
+
+- **Bare constructor** (`FilesystemCapability()`, `SearchCapability()`, `MemoryCapability()`) — the capability is a trivial `@dataclass` with no required arguments and no construction-time work. Calling the class directly *is* the idiom; a factory would add nothing.
+- **Factory** (`make_history_capability(...)`, `make_clarify_capability(bus)`, `make_hooks(bus)`, `make_approval_handler(bus)`) — construction is **non-trivial**: it requires wiring (a `bus`, a model id, a usage tracker), validates or resolves arguments, or assembles collaborators. The factory is where that logic lives, and it keeps call sites readable.
+
+The rule: **reach for a factory when construction needs an argument the caller shouldn't have to assemble, or does real work; otherwise construct bare.** Do **not** add a no-op pass-through factory just for surface symmetry — `make_filesystem_capability()` that only does `return FilesystemCapability()` is noise. A capability can also grow a factory later, the day its constructor stops being trivial.
+
 ## Adding a slash command
 
 1. Create `jac/cli/slash/handlers/your_cmd.py`.
