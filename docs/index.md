@@ -154,6 +154,6 @@ The homepage is allowed to smile. The rest of the docs stay technical:
 - [A2A operator guide](user-guide/a2a-operator.md) — run, expose, and operate A2A.
 - [Cost-efficient orchestration](design/cost-efficient-orchestration.md) — context and budget strategy.
 - [Documentation strategy](design/documentation-strategy.md) — audiences, source of truth, and writing rules.
-- [Drift matrix](design/audit/drift-matrix.md) — doc/code alignment audit.
+- [Review remediation (2026-05-30)](design/audit/2026-05-30-review.md) — end-stage review findings + live work tracker. Doc/code drift is now guarded by `just drift`.
 - [Roadmap archive](progress-archive-2026-05.md) — older design notes and historical context.
 

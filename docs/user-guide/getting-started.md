@@ -4,7 +4,7 @@
 
 JAC (**J**ust **A**nother **C**ompanion/CLI) is a Python CLI agent built on [Pydantic AI](https://ai.pydantic.dev/). It runs on your machine with your API keys, your files, and persistent sessions per git project.
 
-**Current release:** v0.6.0. Ships workspace loose-mode (`.git` and `.agents/` both recognised as project roots; state anchors to `~/.jac` when neither is present), session management (`jac sessions delete` / `prune`), memory slash commands (`/memory`, `/remember`, `/forget`), and minion-theme renderer polish. Earlier releases: v0.5.0 (parallel sub-agents, bidirectional comms), v0.4.0 (skill loader), v0.3.0 (context-cost controls + sub-agents) — see [Implementation progress](../progress.md) for the full history.
+**Current release:** v0.7.0. Ships interaction modes (`/mode plan|accept-edits`), compaction control (`/compact`, `/context`, `sliding`/`manual` strategies, 256k default budget), and the MCP loader (Phase F — external `mcpServers` wired in as deferred-loaded, HITL-gated toolsets). Earlier releases: v0.6.0 (workspace loose-mode, session management, memory slash commands), v0.5.0 (parallel + bidirectional sub-agents), v0.4.0 (skill loader), v0.3.0 (context-cost controls + sub-agents) — see [Implementation progress](../progress.md) for the full history.
 
 ## Requirements
 
@@ -102,7 +102,7 @@ jac sessions
 
 Inside the REPL: `/sessions`, `/resume [ID]`, `/clear` — see [CLI reference](cli-reference.md).
 
-## What Gru can do in v0.6.0
+## What Gru can do in v0.7.0
 
 - Read and search the repo (`read_file`, `grep`, `glob`, `list_dir`)
 - Edit files and run shell commands **with your approval**

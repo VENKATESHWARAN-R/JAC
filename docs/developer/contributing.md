@@ -163,9 +163,9 @@ When you change behavior:
 
 1. **User-visible** → update the relevant [`docs/user-guide/`](../user-guide/) page.
 2. **Implementation status** → update [`docs/progress.md`](../progress.md) checkboxes.
-3. **Structural design decision** → update [`docs/architecture.md`](../architecture.md) §11.
+3. **Structural design decision** → update [`docs/architecture.md`](../architecture.md) §5.
 4. **Released behavior** → add an entry to [`docs/changelog.md`](../changelog.md).
-5. **Doc/code alignment** → touch the row in [`docs/design/audit/drift-matrix.md`](../design/audit/drift-matrix.md).
+5. **Doc/code alignment** → run `just drift` (guards slash-command coverage + version sync); update [`codebase-map.md`](codebase-map.md) when modules move.
 
 ## Code conventions
 

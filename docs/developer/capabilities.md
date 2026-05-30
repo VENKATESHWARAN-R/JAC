@@ -95,7 +95,7 @@ New UI-facing behavior should add an event dataclass and handle it in `CliRender
 3. **Register** in `_default_tool_capabilities` if every interactive session should have it, or pass via `extra_capabilities` from the REPL only.
 4. **HITL** — if the tool mutates disk, spends money, or spawns processes, use `approval_required`.
 5. **Bus** — if the UI should show progress, emit events from the capability (see `ProcessCapability`, `PlanCapability`).
-6. **Docs** — update [CLI reference](../user-guide/cli-reference.md) and [drift matrix](../design/audit/drift-matrix.md).
+6. **Docs** — update [CLI reference](../user-guide/cli-reference.md) and [codebase map](codebase-map.md); `just drift` guards slash-command + version coverage.
 7. **Tests** — add pytest under `tests/` with `TestModel` or mocked bus.
 
 Minimal pattern:

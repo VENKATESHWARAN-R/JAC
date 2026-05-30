@@ -50,7 +50,7 @@ nav = [
         ] },
         { "Changelog" = "changelog.md" },
         { "Documentation strategy" = "design/documentation-strategy.md" },
-        { "Drift matrix" = "design/audit/drift-matrix.md" },
+        { "Review remediation (2026-05-30)" = "design/audit/2026-05-30-review.md" },
     ] },
 ]
 
