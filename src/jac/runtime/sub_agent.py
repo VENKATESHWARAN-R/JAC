@@ -27,13 +27,15 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import contextvars
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
 import logfire
 from pydantic import BaseModel, Field
-from pydantic_ai import Agent
-from pydantic_ai.capabilities import Instrumentation
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import Instrumentation, PrepareTools
+from pydantic_ai.tools import ToolDefinition
 
 from jac.config import get_settings
 from jac.errors import JacConfigError
@@ -95,8 +97,11 @@ class SubAgentTaskPacket(BaseModel):
     summary"). Helps the sub-agent stop talking once the goal is met."""
 
     allowed_tools: list[str] | None = None
-    """Tool name allowlist. ``None`` means "all default sub-agent tools"
-    (which is the main toolset minus ``spawn_sub_agent``)."""
+    """Tool name allowlist, enforced at the Agent layer (R2). ``None`` means
+    "all default sub-agent tools" (the main toolset minus ``spawn_sub_agent``).
+    When set, the worker sees only the named tools plus an always-allowed
+    control-plane set (``read_file``, ``ask_main_agent``) — a real sandbox.
+    Name a tighter set to keep a worker on-task and off destructive verbs."""
 
     max_turns: int = 10
     """Hard cap on the sub-agent's model-call count. Prevents runaway
@@ -287,7 +292,8 @@ class SubAgentChannel:
     """
 
     spawn_id: str
-    """8-char hex id surfaced to the main agent so it can route replies."""
+    """Stable label (e.g. ``minion-3``) surfaced to the main agent so it can
+    route replies back to the right worker."""
 
     question_q: asyncio.Queue[str] = field(default_factory=asyncio.Queue)
     """Sub-agent → main agent: the sub-agent's pending question."""
@@ -403,7 +409,7 @@ def _reset_pending_channels() -> None:
     """Cancel every parked worker, clear the registry, and reset the
     spawn counter. Test fixture hook + safety net for REPL shutdown.
     Resetting the counter here keeps every new session's first spawn at
-    ``sub-1`` (and test isolation works for free)."""
+    ``minion-1`` (and test isolation works for free)."""
     for channel in list(_pending_channels.values()):
         if channel.worker_task and not channel.worker_task.done():
             channel.worker_task.cancel()
@@ -455,6 +461,42 @@ def _render_packet(
 
 # ---------- the spawn implementation ----------
 
+# Control-plane tools a filtered worker must never lose, regardless of the
+# packet's allowlist: ``read_file`` (a worker almost always needs to inspect
+# its own inputs) and ``ask_main_agent`` (the bidirectional escape hatch — a
+# sandboxed worker that hits a fork it can't resolve must still be able to
+# ask). Keeping these implicit means a spawner can write a tight allowlist
+# without accidentally muzzling the worker.
+_ALWAYS_ALLOWED_SUB_AGENT_TOOLS = frozenset({"read_file", "ask_main_agent"})
+
+# Type of a pydantic-ai ``prepare_tools`` filter: takes the run context plus
+# the function-tool definitions and returns the subset to expose.
+_ToolsFilter = Callable[
+    [RunContext[None], list[ToolDefinition]],
+    Awaitable[list[ToolDefinition]],
+]
+
+
+def _make_allowed_tools_filter(allowed: list[str] | None) -> _ToolsFilter | None:
+    """Build a ``prepare_tools`` filter that restricts a sub-agent's function
+    tools to ``allowed`` plus :data:`_ALWAYS_ALLOWED_SUB_AGENT_TOOLS`.
+
+    Returns ``None`` when there is no allowlist (the common path) — the Agent
+    then runs unfiltered, so spawns that don't set ``allowed_tools`` are
+    unchanged. The filter reads only ``tool_def.name``, so it composes with
+    any toolset the factory assembled.
+    """
+    if not allowed:
+        return None
+    permitted = set(allowed) | _ALWAYS_ALLOWED_SUB_AGENT_TOOLS
+
+    async def _filter(
+        _ctx: RunContext[None], tool_defs: list[ToolDefinition]
+    ) -> list[ToolDefinition]:
+        return [td for td in tool_defs if td.name in permitted]
+
+    return _filter
+
 
 async def _run_sub_agent(
     cap: SubAgentCapability,
@@ -491,6 +533,14 @@ async def _run_sub_agent(
         capabilities = list(cap.capability_factory(packet.allowed_tools))
     # Always attach Instrumentation so spans nest under the spawn span.
     capabilities.insert(0, Instrumentation())
+
+    # R2: enforce the packet's tool allowlist at the Agent layer. When set,
+    # the worker only ever sees the named tools plus the always-allowed
+    # control-plane set — a real sandbox, not a logged-then-discarded field.
+    # No allowlist → no filter (common path, zero behavior change).
+    tools_filter = _make_allowed_tools_filter(packet.allowed_tools)
+    if tools_filter is not None:
+        capabilities.append(PrepareTools(tools_filter))
 
     # Bind the agent label so the shared approval handler can stamp
     # "minion-N" (instead of the default "Gru") onto HITL prompts raised by
@@ -721,7 +771,7 @@ async def _spawn_bidirectional(
         raise
 
 
-@jac_tool(summarizable=True)
+@jac_tool(summarizable=False)
 async def spawn_sub_agent(
     reason: str,
     task_summary: str,
@@ -872,7 +922,8 @@ async def respond_to_sub_agent(
 
     Args:
         reason: One-sentence justification.
-        spawn_id: The id from the question block (8 hex chars).
+        spawn_id: The id from the question block — a stable label like
+            ``minion-3``. Echo it back verbatim.
         answer: Your reply. Keep it focused — the sub-agent only asked
             one question.
 
@@ -935,7 +986,7 @@ def _render_spawn_block(
     return f"{header}\n{result.output}"
 
 
-@jac_tool(summarizable=True)
+@jac_tool(summarizable=False)
 async def spawn_sub_agents(
     reason: str,
     task_summary: str,

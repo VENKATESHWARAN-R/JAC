@@ -30,12 +30,14 @@ from jac.profiles import Profile
 from jac.runtime import sub_agent as sa
 from jac.runtime.events import EventBus
 from jac.runtime.sub_agent import (
+    _ALWAYS_ALLOWED_SUB_AGENT_TOOLS,
     _BIDIRECTIONAL_FINALIZE_DIRECTIVE,
     _BIDIRECTIONAL_ROUND_TRIP_CAP,
     SubAgentCapability,
     SubAgentChannel,
     SubAgentSpawnSpec,
     SubAgentTaskPacket,
+    _make_allowed_tools_filter,
     _pending_channels,
     _render_packet,
     _reset_pending_channels,
@@ -162,11 +164,47 @@ def test_spawn_sub_agent_is_a_jac_tool() -> None:
     assert is_jac_tool(spawn_sub_agent)
 
 
-def test_spawn_sub_agent_is_summarizable() -> None:
-    """Spawn returns the sub-agent's final response — often a couple of
-    paragraphs. Marking it summarizable lets the post-processor compress
-    pathological cases (e.g. the sub-agent dumped a whole file)."""
-    assert is_summarizable(spawn_sub_agent)
+def test_spawn_sub_agent_is_not_summarizable() -> None:
+    """R10: spawn output is already distilled (the sub-agent's final
+    response, kept deliberately small). Re-summarizing is redundant spend
+    and risks mangling the ``spawn_id`` routing key inside a question
+    block — so the tool opts out of the post-processor."""
+    assert not is_summarizable(spawn_sub_agent)
+
+
+# ---------- allowed_tools filter (R2) ----------
+
+
+def test_allowed_tools_filter_none_for_empty_allowlist() -> None:
+    # No allowlist → no filter → unfiltered Agent (common path, unchanged).
+    assert _make_allowed_tools_filter(None) is None
+    assert _make_allowed_tools_filter([]) is None
+
+
+async def test_allowed_tools_filter_restricts_to_allowlist_plus_control_plane() -> None:
+    from pydantic_ai.tools import ToolDefinition
+
+    filt = _make_allowed_tools_filter(["read_file"])
+    assert filt is not None
+    tool_defs = [
+        ToolDefinition(name="read_file"),
+        ToolDefinition(name="write_file"),
+        ToolDefinition(name="run_shell"),
+        ToolDefinition(name="ask_main_agent"),
+        ToolDefinition(name="grep"),
+    ]
+    kept = {td.name for td in await filt(None, tool_defs)}  # type: ignore[arg-type]
+    # The allowlisted tool survives; the always-allowed control plane survives;
+    # everything destructive/unlisted is gone — by construction, not behavior.
+    assert kept == {"read_file", "ask_main_agent"}
+    assert "write_file" not in kept
+    assert "run_shell" not in kept
+
+
+def test_control_plane_set_is_read_file_and_ask_main_agent() -> None:
+    # Lock the always-allowed set so a future edit that muzzles a worker's
+    # escape hatch trips this test.
+    assert frozenset({"read_file", "ask_main_agent"}) == _ALWAYS_ALLOWED_SUB_AGENT_TOOLS
 
 
 # ---------- packet rendering ----------
@@ -509,10 +547,11 @@ def test_spawn_sub_agents_is_a_jac_tool() -> None:
     assert is_jac_tool(spawn_sub_agents)
 
 
-def test_spawn_sub_agents_is_summarizable() -> None:
-    """Combined output of N spawns can be N times larger than a single spawn
-    — summarization matters more, not less."""
-    assert is_summarizable(spawn_sub_agents)
+def test_spawn_sub_agents_is_not_summarizable() -> None:
+    """R10: like the single-spawn tool, the parallel fan-out already returns
+    distilled per-spawn results and embeds spawn_id routing keys; opting out
+    of the post-processor protects those keys and avoids redundant spend."""
+    assert not is_summarizable(spawn_sub_agents)
 
 
 def test_parallel_depth_cap_structural() -> None:

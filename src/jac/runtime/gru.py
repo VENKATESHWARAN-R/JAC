@@ -114,12 +114,15 @@ def sub_agent_capabilities(
     Mirrors :func:`_default_tool_capabilities` minus
     :class:`SubAgentToolCapability` (depth cap = 1) and minus the
     history capability (sub-agents are short-lived; compaction is
-    unnecessary overhead). The ``allowed_tools`` arg is reserved for
-    future filtering at the toolset level — Phase B accepts the param
-    for API stability but doesn't yet filter.
+    unnecessary overhead). This factory assembles the *full* default
+    capability set; the packet's ``allowed_tools`` allowlist is enforced
+    one layer up, at the Agent, by ``_run_sub_agent``'s ``PrepareTools``
+    filter (R2) — so this function doesn't need to consume the arg.
 
     Args:
-        allowed_tools: reserved; honored in a follow-up that filters toolsets.
+        allowed_tools: accepted for API stability; the actual filtering
+            happens at the Agent layer in
+            :func:`jac.runtime.sub_agent._run_sub_agent`, not here.
         channel: D41 bidirectional comms channel. When provided AND the
             ``cost.sub_agent_bidirectional`` flag is on, attaches
             :class:`AskMainAgentCapability` so the sub-agent can call
@@ -147,7 +150,7 @@ def sub_agent_capabilities(
             searches for one. Especially valuable here: an MCP tool's bulky
             output stays in the sub-agent's isolated context.
     """
-    _ = allowed_tools  # reserved; honored in a follow-up that filters toolsets
+    _ = allowed_tools  # enforced at the Agent layer (_run_sub_agent), not here
     caps: list[Any] = [
         Instrumentation(),
         make_context_capability(load_prompt("gru_system").strip()),
