@@ -19,6 +19,8 @@ import jac.web.chat as chatmod
 from jac.config import reset_settings_cache
 from jac.providers.registry import reset_provider_registry_cache
 from jac.runtime.events import ApprovalRequest, PlanReplaced, PlanStepView, TextDelta
+from jac.runtime.sub_agent import _pending_spawns
+from jac.runtime.sub_agent_usage import reset_sub_agent_stats
 from jac.web.chat import WebChatManager, event_to_frame
 from jac.web.server import create_app
 from jac.workspace import paths
@@ -41,8 +43,11 @@ def _isolate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv("JAC_MODEL", raising=False)
     reset_settings_cache()
     reset_provider_registry_cache()
-    # Reset the process-wide singleton so each test starts clean.
+    # Reset the process-wide singleton + sub-agent registries so the dashboard
+    # snapshot is deterministic regardless of test ordering.
     monkeypatch.setattr(chatmod, "_MANAGER", None)
+    reset_sub_agent_stats()
+    _pending_spawns.clear()
     yield
     reset_settings_cache()
     reset_provider_registry_cache()
@@ -137,3 +142,38 @@ def test_approve_and_clarify_routes_unknown_return_false() -> None:
     client = TestClient(create_app())
     assert client.post("/chat/approve", json={"id": "x", "approved": True}).json() == {"ok": False}
     assert client.post("/chat/clarify", json={"index": 1}).json() == {"ok": False}
+
+
+# ---------- dashboard (Slice 3) ----------
+
+
+def test_dashboard_shape_with_no_runtime() -> None:
+    d = WebChatManager().dashboard()
+    assert d["tokens"] == {
+        "input": 0,
+        "output": 0,
+        "total": 0,
+        "cache_pct": None,
+        "project_total": 0,
+        "budget_pct": None,
+    }
+    assert d["sub_agents"]["active"] == []
+    assert d["sub_agents"]["spawns"] == 0
+    assert d["files"] == []
+
+
+def test_dashboard_reports_changed_files() -> None:
+    mgr = WebChatManager()
+    mgr.files_changed["src/a.py"] = "write"
+    mgr.files_changed["src/b.py"] = "edit"
+    files = mgr.dashboard()["files"]
+    assert {"path": "src/a.py", "action": "write"} in files
+    assert {"path": "src/b.py", "action": "edit"} in files
+
+
+def test_chat_status_route() -> None:
+    client = TestClient(create_app())
+    resp = client.get("/chat/status")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert set(body) >= {"tokens", "sub_agents", "files", "scope"}

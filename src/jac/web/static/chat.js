@@ -135,6 +135,7 @@
       case "TurnDone":
         setBusy(false);
         textarea.focus();
+        pollDashboard();
         break;
       case "Notice":
         add("notice", esc(f.text));
@@ -253,6 +254,67 @@
     assistantEl = null;
     await post("/chat/new", {});
   });
+
+  // ----- activity dashboard (Slice 3) -----
+  const actTokens = document.getElementById("act-tokens");
+  const actMinions = document.getElementById("act-minions");
+  const actMinionCount = document.getElementById("act-minion-count");
+  const actFiles = document.getElementById("act-files");
+  const actFileCount = document.getElementById("act-file-count");
+
+  const fmt = (n) => (n == null ? "0" : Number(n).toLocaleString());
+
+  function renderDashboard(d) {
+    if (!d) return;
+    const t = d.tokens || {};
+    const cache = t.cache_pct == null ? "" : ` · cache ${t.cache_pct}%`;
+    const budget = t.budget_pct == null ? "" : ` · ${t.budget_pct}% of budget`;
+    actTokens.innerHTML =
+      `<div class="big">${fmt(t.total)}<span class="unit"> tok this session</span></div>` +
+      `<div class="dim">in ${fmt(t.input)} · out ${fmt(t.output)}${cache}</div>` +
+      `<div class="dim">project ${fmt(t.project_total)}${budget}</div>`;
+
+    const sa = d.sub_agents || {};
+    const active = sa.active || [];
+    actMinionCount.textContent = String(active.length);
+    if (!active.length) {
+      const ran = sa.spawns ? `<span class="dim">${sa.spawns} spawned · ${fmt(sa.tokens)} tok</span>` : `<span class="dim">no sub-agents yet</span>`;
+      actMinions.innerHTML = ran;
+    } else {
+      actMinions.innerHTML = active
+        .map(
+          (m) =>
+            `<div class="minion-card"><div class="mc-head">🐙 <b>${esc(m.spawn_id)}</b> <span class="badge">${esc(m.tier)}</span></div>` +
+            `<div class="dim mono">${esc(m.model)}</div>` +
+            `<div class="mc-obj">${esc(m.objective || "(no objective)")}</div>` +
+            `<div class="dim">round-trips ${m.round_trips}/${m.cap} · ${m.turns_used} turns</div></div>`
+        )
+        .join("");
+    }
+
+    const files = d.files || [];
+    actFileCount.textContent = String(files.length);
+    actFiles.innerHTML = files.length
+      ? files
+          .map((f) => `<div class="file-row"><span class="fa fa-${esc(f.action)}">${esc(f.action)}</span> <span class="mono">${esc(f.path)}</span></div>`)
+          .join("")
+      : `<span class="dim">none yet</span>`;
+  }
+
+  async function pollDashboard() {
+    try {
+      const r = await fetch("/chat/status");
+      renderDashboard(await r.json());
+    } catch (e) {
+      /* transient; next tick retries */
+    }
+  }
+  // Poll faster while a turn is active (minions/tokens move), slow when idle.
+  setInterval(() => {
+    if (sendBtn.disabled || document.querySelector(".minion-card")) pollDashboard();
+  }, 1800);
+  setInterval(pollDashboard, 6000);
+  pollDashboard();
 
   // ----- event stream -----
   const qs = window.JAC_RESUME ? "?session=" + encodeURIComponent(window.JAC_RESUME) : "";

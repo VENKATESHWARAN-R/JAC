@@ -9,18 +9,34 @@
   </div>
 </div>
 
-<div id="transcript" class="transcript" aria-live="polite"></div>
+<div class="chat-layout">
+  <div class="chat-col">
+    <div id="transcript" class="transcript" aria-live="polite"></div>
+    <form id="chat-form" class="chat-input">
+      <textarea id="chat-text" rows="2" placeholder="Message Gru…  (Enter to send, Shift+Enter for newline)"></textarea>
+      <button type="submit" id="chat-send">Send</button>
+    </form>
+    <p class="note">
+      Tools run with human-in-the-loop approval, just like the CLI — you'll be
+      asked before anything that writes, runs, or reaches out.
+    </p>
+  </div>
 
-<form id="chat-form" class="chat-input">
-  <textarea id="chat-text" rows="2" placeholder="Message Gru…  (Enter to send, Shift+Enter for newline)"></textarea>
-  <button type="submit" id="chat-send">Send</button>
-</form>
-
-<p class="note">
-  Tools run with human-in-the-loop approval, just like the CLI — you'll be asked
-  before anything that writes, runs, or reaches out. This session is scoped to
-  the workspace this server was launched from.
-</p>
+  <aside class="activity" id="activity">
+    <section class="act-sec">
+      <div class="act-title">Tokens</div>
+      <div id="act-tokens" class="act-body"><span class="dim">—</span></div>
+    </section>
+    <section class="act-sec">
+      <div class="act-title">Minions <span id="act-minion-count" class="badge act-count">0</span></div>
+      <div id="act-minions" class="act-body"><span class="dim">no sub-agents yet</span></div>
+    </section>
+    <section class="act-sec">
+      <div class="act-title">Files changed <span id="act-file-count" class="badge act-count">0</span></div>
+      <div id="act-files" class="act-body"><span class="dim">none yet</span></div>
+    </section>
+  </aside>
+</div>
 
 <script>window.JAC_RESUME = {{ (resume | tojson) if resume else "null" }};</script>
 <script src="/static/chat.js" defer></script>

@@ -145,3 +145,25 @@ details summary { cursor: pointer; color: var(--accent); font-size: 13px; margin
 .chat-input button { height: 38px; }
 .dots { animation: blink 1.2s infinite; }
 @keyframes blink { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
+
+/* ----- activity dashboard (Slice 3) ----- */
+.chat-layout { display: grid; grid-template-columns: 1fr 280px; gap: 18px; align-items: start; }
+.chat-col { min-width: 0; }
+@media (max-width: 880px) { .chat-layout { grid-template-columns: 1fr; } }
+
+.activity { display: flex; flex-direction: column; gap: 14px; position: sticky; top: 16px; }
+.act-sec { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+.act-title { font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--dim); margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+.act-count { background: var(--panel-2); color: var(--fg); }
+.act-body { font-size: 13px; display: flex; flex-direction: column; gap: 6px; }
+.act-body .dim { color: var(--dim); }
+.act-body .big { font-size: 20px; font-weight: 700; }
+.act-body .unit { font-size: 12px; font-weight: 400; color: var(--dim); }
+
+.minion-card { background: var(--bg); border: 1px solid var(--border); border-left: 2px solid var(--accent); border-radius: 8px; padding: 8px 10px; }
+.mc-head { display: flex; align-items: center; gap: 6px; }
+.mc-obj { margin: 3px 0; }
+.file-row { display: flex; gap: 8px; align-items: baseline; word-break: break-all; }
+.fa { font-size: 10px; text-transform: uppercase; padding: 1px 6px; border-radius: 4px; flex: 0 0 auto; }
+.fa-write { background: rgba(62,207,142,0.18); color: var(--ok); }
+.fa-edit { background: rgba(241,196,15,0.18); color: var(--accent); }

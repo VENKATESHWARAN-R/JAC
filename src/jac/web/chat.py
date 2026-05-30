@@ -39,10 +39,19 @@ from jac.runtime.events import (
     ApprovalResponse,
     ClarifyRequest,
     ClarifyResponse,
+    ToolCallStarted,
 )
 from jac.runtime.session import Session
+from jac.runtime.sub_agent import _BIDIRECTIONAL_ROUND_TRIP_CAP, _pending_spawns
+from jac.runtime.sub_agent_usage import get_sub_agent_stats
 from jac.secrets import apply_profile_env
 from jac.workspace import paths
+
+# Tool name → the short "action" label shown in the dashboard's files panel.
+# These are the file-mutating tools whose ``path`` arg we track (Slice 3); read
+# tools are intentionally excluded. Sub-agent edits flow on the same bus, so
+# minion-touched files are captured here too.
+_MUTATING_FILE_TOOLS = {"write_file": "write", "edit_file": "edit"}
 
 # ---------- event serialization ----------
 
@@ -101,6 +110,8 @@ class WebChatManager:
         self._turn_task: asyncio.Task[None] | None = None
         self._start_lock = asyncio.Lock()
         self._busy = False
+        # path -> last action ("write"/"edit") for the dashboard files panel.
+        self.files_changed: dict[str, str] = {}
         # Surface config the bootstrap resolved (e.g. the active profile name),
         # so a future settings change can be reflected; for now informational.
         self.model_override: str | None = None
@@ -174,6 +185,7 @@ class WebChatManager:
         self._pending_approvals.clear()
         self._pending_clarify = None
         self._busy = False
+        self.files_changed.clear()
         self._consumer = asyncio.create_task(self._consume(runtime), name="jac.web.chat.consumer")
 
     async def _start(self, *, session_id: str | None) -> None:
@@ -195,6 +207,10 @@ class WebChatManager:
                 self._pending_approvals[event.tool_call_id] = event.response_future
             elif isinstance(event, ClarifyRequest):
                 self._pending_clarify = event.response_future
+            elif isinstance(event, ToolCallStarted):
+                action = _MUTATING_FILE_TOOLS.get(event.tool_name)
+                if action and isinstance(event.args, dict) and event.args.get("path"):
+                    self.files_changed[str(event.args["path"])] = action
             await self.out_queue.put(event_to_frame(event))
 
     # ----- turns -----
@@ -288,12 +304,48 @@ class WebChatManager:
             frame = await self.out_queue.get()
             yield {"data": json.dumps(frame)}
 
-    def status(self) -> dict[str, Any]:
+    def dashboard(self) -> dict[str, Any]:
+        """A snapshot for the activity sidebar (Slice 3): tokens, minions, files.
+
+        Polled by the browser. Reads the same process-global registries the CLI
+        ``/spawns`` and ``/tokens`` commands do — for the single-user web they
+        reflect the one active session ``build_session_runtime`` set up.
+        """
+        tracker = self.runtime.usage_tracker if self.runtime else None
+        tokens = {
+            "input": tracker.counters.input_tokens if tracker else 0,
+            "output": tracker.counters.output_tokens if tracker else 0,
+            "total": tracker.counters.total_tokens if tracker else 0,
+            "cache_pct": tracker.counters.cache_hit_pct if tracker else None,
+            "project_total": tracker.project_total_tokens if tracker else 0,
+            "budget_pct": tracker.status_pct() if tracker else None,
+        }
+        stats = get_sub_agent_stats()
+        minions = [
+            {
+                "spawn_id": sid,
+                "tier": p.resolved.resolved,
+                "model": p.resolved.model,
+                "round_trips": p.round_trips,
+                "cap": _BIDIRECTIONAL_ROUND_TRIP_CAP,
+                "turns_used": p.turns_used,
+                "objective": p.objective,
+            }
+            for sid, p in sorted(_pending_spawns.items())
+        ]
         return {
             "session_id": self.session.session_id if self.session else None,
             "model": self.runtime.model_id if self.runtime else None,
             "busy": self._busy,
             "scope": "project" if paths.in_project() else "global",
+            "tokens": tokens,
+            "sub_agents": {
+                "spawns": stats.spawns,
+                "tokens": stats.total_tokens,
+                "by_tier": stats.by_tier,
+                "active": minions,
+            },
+            "files": [{"path": p, "action": a} for p, a in sorted(self.files_changed.items())],
         }
 
 

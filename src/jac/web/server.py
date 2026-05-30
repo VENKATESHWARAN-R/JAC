@@ -159,6 +159,11 @@ async def chat_new(request: Request) -> Response:
     return JSONResponse(await get_manager().new_session())
 
 
+async def chat_status(request: Request) -> Response:
+    """Dashboard snapshot (Slice 3): tokens, active minions, files changed."""
+    return JSONResponse(get_manager().dashboard())
+
+
 def create_app() -> Starlette:
     """Build the JAC web-UI ASGI app (Slice 1 control panel)."""
     routes = [
@@ -178,6 +183,7 @@ def create_app() -> Starlette:
         Route("/chat/approve", chat_approve, methods=["POST"]),
         Route("/chat/clarify", chat_clarify, methods=["POST"]),
         Route("/chat/new", chat_new, methods=["POST"]),
+        Route("/chat/status", chat_status, name="chat_status"),
         Mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static"),
     ]
     return Starlette(routes=routes)

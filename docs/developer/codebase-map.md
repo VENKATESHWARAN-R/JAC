@@ -72,9 +72,9 @@ src/jac/
 │   ├── server.py            # create_app() — Starlette app, panel + chat routes, Jinja2
 │   ├── panel.py             # Read-side: view-model assembly from management APIs
 │   ├── actions.py           # Write-side: form POST handlers → profiles_crud/secrets/Session
-│   ├── chat.py              # WebChatManager (Slice 2) — drives a live session; bus→SSE; HITL
+│   ├── chat.py              # WebChatManager (S2/S3) — live session; bus→SSE; HITL; dashboard()
 │   ├── templates/           # Jinja2: base + overview/profiles/keys/sessions/chat
-│   └── static/              # jac.css + chat.js (EventSource client)
+│   └── static/              # jac.css + chat.js (EventSource client + /chat/status poll)
 ├── runtime/
 │   ├── gru.py               # build_gru, _default_tool_capabilities, sub_agent_capabilities
 │   ├── bootstrap.py         # build_session_runtime — shared engine wiring (CLI + web), D48

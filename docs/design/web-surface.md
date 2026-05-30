@@ -1,7 +1,7 @@
 # Web surface — local-first UI (design)
 
-> **Status:** Slice 1 (control panel) and Slice 2 (streaming chat + HITL) shipped.
-> Slice 3 (minion dashboard) is designed here but not yet built.
+> **Status:** Slices 1 (control panel), 2 (streaming chat + HITL), and 3 (activity
+> dashboard) shipped. Remaining: visual/theming polish.
 > **Decision:** [`architecture.md`](../architecture.md) §5 **D48**.
 
 JAC has two surfaces today: the **CLI** (interactive REPL) and **A2A** (a
@@ -159,9 +159,16 @@ server). `app.py` is the thin CLI wrapper, parallel to `cli/a2a.py`.
    Because `jac web serve` doesn't activate a profile at boot, the chat resolves
    the default profile lazily on first message and fails *gracefully* (an error
    frame) when none is configured.
-3. **Slice 3 — minion dashboard (next).** Live sub-agent cards, file-change
-   feed, token meter — built on the Slice 2 event feed. Optional richer frontend
-   here, and the natural home for the themed/animated minion polish.
+3. **Slice 3 — activity dashboard (shipped).** A live sidebar on the chat page:
+   a **token/cost meter** (session in/out/total, cache %, project total), **minion
+   cards** (one per active sub-agent from `_pending_spawns` — tier, model,
+   objective, round-trips/turns), and a **files-changed** list (paths the session
+   wrote/edited, tracked from `write_file`/`edit_file` tool events, minions
+   included). Backed by a `GET /chat/status` snapshot the browser polls (faster
+   while a turn is active). Reuses the same registries the CLI's `/spawns` and
+   `/tokens` read. **Next: visual/theming polish** — animations, imagery, a
+   richer minion aesthetic (this is the home for that, and the point where a
+   heavier reactive frontend like Reflex could earn its place).
 
 ## Risks & how we scope around them
 
