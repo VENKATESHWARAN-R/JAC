@@ -27,7 +27,6 @@ from jac.capabilities.memory import MemoryCapability
 from jac.capabilities.search import SearchCapability
 from jac.capabilities.shell import ShellCapability
 from jac.capabilities.sub_agent import (
-    AskMainAgentCapability,
     RespondToSubAgentCapability,
     SubAgentToolCapability,
 )
@@ -90,10 +89,10 @@ def _default_tool_capabilities(
     ]
     if include_spawn:
         caps.append(SubAgentToolCapability())
-        # D41: respond_to_sub_agent is the main-agent reply to a paused
-        # sub-agent question. Only attached when the flag is on — the
-        # tool is meaningless without the matching ask_main_agent on the
-        # sub-agent side.
+        # Phase 4: respond_to_sub_agent is the main-agent reply to a
+        # suspended sub-agent question. Only attached when the flag is on —
+        # the tool is meaningless without the matching ask_supervisor
+        # (external tool) on the sub-agent side.
         if get_settings().cost.sub_agent_bidirectional:
             caps.append(RespondToSubAgentCapability())
     return caps
@@ -102,7 +101,6 @@ def _default_tool_capabilities(
 def sub_agent_capabilities(
     allowed_tools: list[str] | None = None,
     *,
-    channel: Any = None,
     hooks: Any = None,
     approval: Any = None,
     skills_capability: Any = None,
@@ -119,15 +117,16 @@ def sub_agent_capabilities(
     one layer up, at the Agent, by ``_run_sub_agent``'s ``PrepareTools``
     filter (R2) — so this function doesn't need to consume the arg.
 
+    The worker-side ``ask_supervisor`` tool is **not** attached here — it's
+    an external tool the runner adds in
+    :func:`jac.runtime.sub_agent._build_worker_agent` only on the
+    bidirectional path, because suspending on it needs
+    ``DeferredToolRequests`` in the Agent's output types.
+
     Args:
         allowed_tools: accepted for API stability; the actual filtering
             happens at the Agent layer in
-            :func:`jac.runtime.sub_agent._run_sub_agent`, not here.
-        channel: D41 bidirectional comms channel. When provided AND the
-            ``cost.sub_agent_bidirectional`` flag is on, attaches
-            :class:`AskMainAgentCapability` so the sub-agent can call
-            ``ask_main_agent``. The channel itself is threaded to the tool
-            via a contextvar — this argument's presence is the toggle.
+            :func:`jac.runtime.sub_agent._build_worker_agent`, not here.
         hooks: ``Hooks`` capability instance from :func:`jac.runtime.hooks.make_hooks`.
             Attached unchanged so the sub-agent's tool-call lifecycle events
             flow onto ``bus`` alongside the main agent's.
@@ -175,12 +174,6 @@ def sub_agent_capabilities(
         caps.append(a2a_capability)
     if mcp_capability is not None:
         caps.append(mcp_capability)
-    # D41: ask_main_agent only goes into the sub-agent's toolset when
-    # both the flag is on AND the spawn was started via the bidirectional
-    # path (which provides the channel). Either condition off → tool stays
-    # out, and the sub-agent literally cannot ask.
-    if channel is not None and get_settings().cost.sub_agent_bidirectional:
-        caps.append(AskMainAgentCapability())
     return caps
 
 

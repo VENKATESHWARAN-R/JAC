@@ -495,16 +495,15 @@ async def _repl_loop(
     # through the same HITL approval handler the main agent uses. Same
     # ``skills_capability`` / ``a2a_capability`` instances are reused so
     # ``/skill reload`` is observed by both surfaces and the guest A2A
-    # server isn't duplicated. ``allowed_tools`` / ``channel`` continue
-    # to flow from the spawn call site untouched.
+    # server isn't duplicated. ``allowed_tools`` continues to flow from the
+    # spawn call site untouched. (Phase 4: the bidirectional ``ask_supervisor``
+    # tool is external and attached by the runner, so there's no ``channel``
+    # to thread anymore.)
     def _sub_agent_capability_factory(
         allowed_tools: list[str] | None = None,
-        *,
-        channel: Any = None,
     ) -> list[Any]:
         return sub_agent_capabilities(
             allowed_tools,
-            channel=channel,
             hooks=hooks,
             approval=approval,
             skills_capability=skills_capability,

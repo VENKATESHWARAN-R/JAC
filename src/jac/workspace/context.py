@@ -108,7 +108,7 @@ def load_agents_context() -> str | None:
       carries any time-sensitivity. Omitting it also keeps the rendered
       packet maximally cache-stable across sibling spawns.
     - Conversation history never crosses into a sub-agent — that isolation
-      is the point. ``ask_main_agent`` covers "I need something only Gru
+      is the point. ``ask_supervisor`` covers "I need something only Gru
       knows".
 
     Returns ``user AGENTS.md`` then ``project AGENTS.md`` (each wrapped in

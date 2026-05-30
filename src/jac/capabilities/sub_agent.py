@@ -10,12 +10,15 @@ capabilities passed to a spawned sub-agent never include
 ``SubAgentToolCapability`` or ``RespondToSubAgentCapability``. Sub-agents
 therefore cannot recurse, even via the bidirectional channel.
 
-**Bidirectional posture (D41).** ``respond_to_sub_agent`` and
-``ask_main_agent`` are *not* approval-gated. The user already approved
-the parent ``spawn_sub_agent`` call; adding a prompt for every reply
-inside that approved conversation would be noise. Visibility is provided
-by the renderer markers ``[sub-agent → main]`` / ``[main → sub-agent]``
-emitted on the event bus.
+**Bidirectional posture (Phase 4 suspend/resume).** ``respond_to_sub_agent``
+is *not* approval-gated. The user already approved the parent
+``spawn_sub_agent`` call; adding a prompt for every reply inside that
+approved conversation would be noise. Visibility is provided by the renderer
+markers ``[sub-agent → main]`` / ``[main → sub-agent]`` emitted on the event
+bus. The worker side (``ask_supervisor``) is no longer a JAC ``Capability``:
+it's an *external* tool the runner attaches in
+:func:`jac.runtime.sub_agent._build_worker_agent`, because suspending on it
+requires ``DeferredToolRequests`` in the worker Agent's output types.
 """
 
 from __future__ import annotations
@@ -26,7 +29,6 @@ from typing import Any
 from pydantic_ai.capabilities import AbstractCapability
 
 from jac.runtime.sub_agent import (
-    ask_main_agent,
     respond_to_sub_agent,
     spawn_sub_agent,
     spawn_sub_agents,
@@ -56,15 +58,3 @@ class RespondToSubAgentCapability(AbstractCapability[Any]):
 
     def get_toolset(self) -> Any:
         return jac_function_toolset(respond_to_sub_agent)
-
-
-@dataclass
-class AskMainAgentCapability(AbstractCapability[Any]):
-    """Sub-agent side of bidirectional comms (D41). Registers
-    ``ask_main_agent`` without approval — the round-trip cap and the
-    renderer markers, not HITL, are the safety mechanisms here. Attached
-    only when ``cost.sub_agent_bidirectional`` is enabled AND a channel
-    is bound for the spawn (see :func:`jac.runtime.gru.sub_agent_capabilities`)."""
-
-    def get_toolset(self) -> Any:
-        return jac_function_toolset(ask_main_agent)

@@ -236,20 +236,24 @@ class CostSettings(BaseModel):
     ``original_tokens``, ``output`` via ``str.format``."""
 
     sub_agent_bidirectional: bool = True
-    """Bidirectional sub-agent ↔ main-agent comms (D41).
+    """Bidirectional sub-agent ↔ main-agent comms (Phase 4 suspend/resume).
 
-    When ``True``, spawned sub-agents get an ``ask_main_agent`` tool and
-    the main agent gets ``respond_to_sub_agent``. The sub-agent can pause
-    mid-run, ask one focused clarifying question, and resume on the main
-    agent's reply. Hard cap is **5 round-trips per spawn**; a sixth call
-    returns a graceful "finalize with what you have" directive to the
-    sub-agent rather than raising — so the spawn always produces a
-    coherent final answer even if the conversation runs long.
+    When ``True``, spawned sub-agents get an external ``ask_supervisor``
+    tool and the main agent gets ``respond_to_sub_agent``. A sub-agent that
+    hits a fork it can't resolve calls ``ask_supervisor``; its run
+    *suspends* (returns a checkpoint of its history) instead of parking a
+    live coroutine. The main agent answers — from its own context, or by
+    escalating to the human via ``clarify`` — and ``respond_to_sub_agent``
+    resumes the worker from the saved history plus the answer. Hard cap is
+    **5 round-trips per spawn**; a sixth question is auto-answered with a
+    "finalize with what you have" directive rather than reaching the main
+    agent — so the spawn always produces a coherent final answer.
 
-    Default ``True`` since v0.4.x — the UX validation pass on 2026-05-28
-    confirmed the happy paths and the per-question cost is bounded by
-    the 5-round-trip cap. Set to ``False`` if you'd rather sub-agents
-    finalize with what they have rather than pause for clarification."""
+    Default ``True``. The Phase 4 redesign (review tracker R7b) removed the
+    old live-channel cost inversion: a resume re-pays only the *small*
+    sub-agent context, never the large main-agent context. Set to ``False``
+    if you'd rather sub-agents finalize with what they have rather than
+    suspend for clarification."""
 
 
 class Settings(BaseSettings):

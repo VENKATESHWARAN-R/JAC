@@ -238,11 +238,11 @@ def _format_spawns_segment() -> str:
     (D41). Hidden when nothing is in flight so the toolbar stays quiet
     in the common case.
 
-    Imports the channel registry lazily to avoid pulling the sub-agent
-    runtime into the statusbar import graph at module load time."""
-    from jac.runtime.sub_agent import _pending_channels
+    Imports the pending-spawn registry lazily to avoid pulling the
+    sub-agent runtime into the statusbar import graph at module load time."""
+    from jac.runtime.sub_agent import _pending_spawns
 
-    count = len(_pending_channels)
+    count = len(_pending_spawns)
     if count == 0:
         return ""
     return f'<style fg="ansiyellow">minions:</style><style fg="ansiyellow">{count}</style>'

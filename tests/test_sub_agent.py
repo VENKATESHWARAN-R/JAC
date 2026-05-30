@@ -33,15 +33,14 @@ from jac.runtime.sub_agent import (
     _ALWAYS_ALLOWED_SUB_AGENT_TOOLS,
     _BIDIRECTIONAL_FINALIZE_DIRECTIVE,
     _BIDIRECTIONAL_ROUND_TRIP_CAP,
+    PendingSpawn,
     SubAgentCapability,
-    SubAgentChannel,
     SubAgentSpawnSpec,
     SubAgentTaskPacket,
     _make_allowed_tools_filter,
-    _pending_channels,
+    _pending_spawns,
     _render_packet,
-    _reset_pending_channels,
-    ask_main_agent,
+    _reset_pending_spawns,
     resolve_tier,
     respond_to_sub_agent,
     set_sub_agent_capability,
@@ -83,14 +82,14 @@ def _isolated_sub_agent_state(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]
     reset_sub_agent_stats()
     set_sub_agent_usage_recorder(None)
     set_sub_agent_event_bus(None)
-    _reset_pending_channels()
+    _reset_pending_spawns()
     yield
     reset_settings_cache()
     set_sub_agent_capability(None)
     reset_sub_agent_stats()
     set_sub_agent_usage_recorder(None)
     set_sub_agent_event_bus(None)
-    _reset_pending_channels()
+    _reset_pending_spawns()
 
 
 def _profile(**tiers: list[str]) -> Profile:
@@ -190,21 +189,21 @@ async def test_allowed_tools_filter_restricts_to_allowlist_plus_control_plane() 
         ToolDefinition(name="read_file"),
         ToolDefinition(name="write_file"),
         ToolDefinition(name="run_shell"),
-        ToolDefinition(name="ask_main_agent"),
+        ToolDefinition(name="ask_supervisor"),
         ToolDefinition(name="grep"),
     ]
     kept = {td.name for td in await filt(None, tool_defs)}  # type: ignore[arg-type]
     # The allowlisted tool survives; the always-allowed control plane survives;
     # everything destructive/unlisted is gone — by construction, not behavior.
-    assert kept == {"read_file", "ask_main_agent"}
+    assert kept == {"read_file", "ask_supervisor"}
     assert "write_file" not in kept
     assert "run_shell" not in kept
 
 
-def test_control_plane_set_is_read_file_and_ask_main_agent() -> None:
+def test_control_plane_set_is_read_file_and_ask_supervisor() -> None:
     # Lock the always-allowed set so a future edit that muzzles a worker's
     # escape hatch trips this test.
-    assert frozenset({"read_file", "ask_main_agent"}) == _ALWAYS_ALLOWED_SUB_AGENT_TOOLS
+    assert frozenset({"read_file", "ask_supervisor"}) == _ALWAYS_ALLOWED_SUB_AGENT_TOOLS
 
 
 # ---------- packet rendering ----------
@@ -492,7 +491,6 @@ async def test_recorder_is_invoked_for_each_spawn(
 def test_tokens_handler_shows_sub_agent_line_when_spawned() -> None:
     """The /tokens handler reads from sub_agent_usage stats — bump them
     directly and confirm the line appears."""
-    import asyncio
     from io import StringIO
 
     from rich.console import Console
@@ -887,14 +885,14 @@ async def test_spawn_sub_agents_each_spawn_writes_jsonl_row(
     assert tracker.counters.output_tokens == 100
 
 
-# ---------- bidirectional comms (D41, Phase E.2) ----------
+# ---------- bidirectional comms (Phase 4 suspend/resume) ----------
 
 
 @pytest.fixture
 def _bidirectional_on(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Flip ``cost.sub_agent_bidirectional`` on via env var and reset the
     settings cache so :func:`get_settings` picks it up. Pairs with the
-    autouse fixture above (which already clears _pending_channels)."""
+    autouse fixture above (which already clears _pending_spawns)."""
     from jac.config import reset_settings_cache
 
     monkeypatch.setenv("JAC_COST__SUB_AGENT_BIDIRECTIONAL", "true")
@@ -903,32 +901,96 @@ def _bidirectional_on(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     reset_settings_cache()
 
 
+class _FakeUsage:
+    """Minimal stand-in for ``AgentRunResult.usage`` (a property)."""
+
+    def __init__(self, requests: int = 1, input_tokens: int = 10, output_tokens: int = 5) -> None:
+        self.requests = requests
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
+
+
+class _FakeResult:
+    """Stand-in for ``AgentRunResult`` covering what the runner reads:
+    ``.output`` (str or ``DeferredToolRequests``), ``.usage``, ``.all_messages()``."""
+
+    def __init__(self, output: Any, *, usage: _FakeUsage | None = None) -> None:
+        self.output = output
+        self._usage = usage or _FakeUsage()
+
+    @property
+    def usage(self) -> _FakeUsage:
+        return self._usage
+
+    def all_messages(self) -> list[Any]:
+        # The checkpoint the worker resumes from. Opaque to the runner —
+        # an empty list is fine for the fake (the fake_run ignores it).
+        return []
+
+
+def _deferred_question(question: str, *, context: str = "", tool_call_id: str = "call-1") -> Any:
+    """Build a ``DeferredToolRequests`` carrying one ``ask_supervisor`` call —
+    the suspension signal a worker run returns when it asks a question."""
+    from pydantic_ai import DeferredToolRequests
+    from pydantic_ai.messages import ToolCallPart
+
+    args: dict[str, str] = {"reason": "worker needs input", "question": question}
+    if context:
+        args["context"] = context
+    return DeferredToolRequests(
+        calls=[ToolCallPart(tool_name="ask_supervisor", args=args, tool_call_id=tool_call_id)]
+    )
+
+
+def _scripted_agent_run(
+    monkeypatch: pytest.MonkeyPatch,
+    outputs: list[Any],
+    *,
+    usage: _FakeUsage | None = None,
+    answers_seen: list[str] | None = None,
+) -> None:
+    """Patch ``Agent.run`` to return ``outputs`` one per call (initial run then
+    each resume). When ``answers_seen`` is given, every resume's delivered
+    answer (the ``DeferredToolResults`` value) is appended to it so tests can
+    assert what the worker actually received."""
+    calls = {"n": 0}
+
+    async def fake_run(self: Any, *args: Any, **kwargs: Any) -> Any:
+        results = kwargs.get("deferred_tool_results")
+        if results is not None and answers_seen is not None:
+            answers_seen.extend(str(v) for v in results.calls.values())
+        i = calls["n"]
+        calls["n"] += 1
+        out = outputs[min(i, len(outputs) - 1)]
+        return _FakeResult(out, usage=usage)
+
+    monkeypatch.setattr("pydantic_ai.Agent.run", fake_run)
+
+
+def _spawn_id_of(result: str) -> str:
+    return result.split("spawn_id=")[1].split("\n")[0].strip()
+
+
 def test_bidirectional_capability_wiring_flag_off() -> None:
-    """With the flag off the main agent doesn't get respond_to_sub_agent
-    and a sub-agent (even with a channel) doesn't get ask_main_agent.
-    Critical: this guarantees the v1 default-off ship is truly off."""
+    """With the flag off the main agent doesn't get respond_to_sub_agent.
+    The worker-side ``ask_supervisor`` is an external tool the runner adds
+    only on the bidirectional path, so there's nothing to assert on the
+    factory output here."""
     from jac.capabilities.sub_agent import (
-        AskMainAgentCapability,
         RespondToSubAgentCapability,
         SubAgentToolCapability,
     )
-    from jac.runtime.gru import _default_tool_capabilities, sub_agent_capabilities
+    from jac.runtime.gru import _default_tool_capabilities
 
     main_caps = _default_tool_capabilities()
     assert any(isinstance(c, SubAgentToolCapability) for c in main_caps)
     assert not any(isinstance(c, RespondToSubAgentCapability) for c in main_caps)
 
-    ch = SubAgentChannel(spawn_id="x")
-    sub_caps = sub_agent_capabilities(channel=ch)
-    assert not any(isinstance(c, AskMainAgentCapability) for c in sub_caps)
-
 
 def test_bidirectional_capability_wiring_flag_on(_bidirectional_on: None) -> None:
-    """With the flag on the main agent gets respond_to_sub_agent AND a
-    sub-agent gets ask_main_agent — *if* a channel is bound. Without a
-    channel even the flag-on sub-agent stays mute (no channel → no tool)."""
+    """With the flag on the main agent gets respond_to_sub_agent. The depth
+    cap still holds: a sub-agent never sees the spawn or respond tools."""
     from jac.capabilities.sub_agent import (
-        AskMainAgentCapability,
         RespondToSubAgentCapability,
         SubAgentToolCapability,
     )
@@ -937,24 +999,9 @@ def test_bidirectional_capability_wiring_flag_on(_bidirectional_on: None) -> Non
     main_caps = _default_tool_capabilities()
     assert any(isinstance(c, RespondToSubAgentCapability) for c in main_caps)
 
-    sub_caps_no_channel = sub_agent_capabilities()
-    assert not any(isinstance(c, AskMainAgentCapability) for c in sub_caps_no_channel)
-
-    ch = SubAgentChannel(spawn_id="x")
-    sub_caps_with_channel = sub_agent_capabilities(channel=ch)
-    assert any(isinstance(c, AskMainAgentCapability) for c in sub_caps_with_channel)
-
-    # Depth cap holds regardless of the flag: a sub-agent NEVER sees
-    # the spawn or respond tools.
-    for cap in sub_caps_with_channel:
+    sub_caps = sub_agent_capabilities()
+    for cap in sub_caps:
         assert not isinstance(cap, (SubAgentToolCapability, RespondToSubAgentCapability))
-
-
-def test_ask_main_agent_is_jac_tool_not_summarizable() -> None:
-    """ask_main_agent returns a short string — summarization would
-    only add cost without saving tokens."""
-    assert is_jac_tool(ask_main_agent)
-    assert not is_summarizable(ask_main_agent)
 
 
 def test_respond_to_sub_agent_is_jac_tool_not_summarizable() -> None:
@@ -962,55 +1009,51 @@ def test_respond_to_sub_agent_is_jac_tool_not_summarizable() -> None:
     assert not is_summarizable(respond_to_sub_agent)
 
 
-async def test_ask_main_agent_fails_fast_when_no_channel_bound() -> None:
-    """Called outside a sub-agent context (no contextvar set) the tool
-    must surface a structured error — never silently 'succeed' with
-    nothing on the receiving end."""
-    with pytest.raises(JacConfigError, match="not available"):
-        await ask_main_agent(reason="r", question="q")
+def test_bidirectional_worker_agent_gets_external_ask_supervisor() -> None:
+    """By construction: with bidirectional on, the worker Agent is built with
+    ``DeferredToolRequests`` in its output types and the external
+    ``ask_supervisor`` tool — that's what lets a run suspend on a question."""
+    from pydantic_ai import DeferredToolRequests
+
+    from jac.runtime.sub_agent import _ask_supervisor_toolset, _build_worker_agent
+
+    toolset = _ask_supervisor_toolset()
+    names = [td.name for td in toolset.tool_defs]
+    assert names == ["ask_supervisor"]
+
+    p = _profile(medium=["anthropic:claude-sonnet-4-6"])
+    cap = SubAgentCapability(profile=p, base_prompt="BASE", capability_factory=lambda _a: [])
+    resolved = resolve_tier(p, "medium")
+    packet = SubAgentTaskPacket(objective="x")
+
+    bidi = _build_worker_agent(cap, packet, resolved, bidirectional=True)
+    assert DeferredToolRequests in bidi.output_type
+    plain = _build_worker_agent(cap, packet, resolved, bidirectional=False)
+    assert plain.output_type is str
 
 
 async def test_bidirectional_happy_path_single_round_trip(
     _bidirectional_on: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """End-to-end: main → spawn → sub-agent asks → main responds → sub-agent
-    finalizes → final result returns from respond_to_sub_agent."""
+    """End-to-end: main → spawn → worker suspends on a question → main
+    responds → worker resumes and finalizes → final result returns from
+    respond_to_sub_agent."""
     p = _profile(medium=["anthropic:claude-sonnet-4-6"])
-
-    def factory(_allowed: Any, *, channel: Any = None) -> list[Any]:
-        # Factory accepts the channel kwarg so the bidirectional path's
-        # call site is exercised. Empty caps so the mocked Agent.run is
-        # hermetic.
-        _ = channel
-        return []
-
     set_sub_agent_capability(
-        SubAgentCapability(profile=p, base_prompt="BASE", capability_factory=factory)
+        SubAgentCapability(profile=p, base_prompt="BASE", capability_factory=lambda _a: [])
     )
 
-    # The fake sub-agent calls ask_main_agent once, then returns "done".
-    async def fake_run(self: Any, prompt: str, **_kwargs: Any) -> Any:
-        answer = await ask_main_agent(reason="t", question="what's the schema?")
+    answers: list[str] = []
+    # Run 1 suspends on a question; run 2 (resume) returns the final answer.
+    _scripted_agent_run(
+        monkeypatch,
+        [_deferred_question("what's the schema?"), "done; schema applied"],
+        usage=_FakeUsage(requests=2, input_tokens=100, output_tokens=20),
+        answers_seen=answers,
+    )
 
-        class _U:
-            requests = 2
-            input_tokens = 100
-            output_tokens = 20
-
-        class _R:
-            output = f"done; main said: {answer}"
-
-            @property
-            def usage(self) -> _U:
-
-                return _U()
-
-        return _R()
-
-    monkeypatch.setattr("pydantic_ai.Agent.run", fake_run)
-
-    # First main-agent turn → calls spawn_sub_agent → gets the question
+    # First main-agent turn → spawn → gets the question block.
     first_result = await spawn_sub_agent(
         reason="delegate",
         task_summary="x",
@@ -1019,23 +1062,24 @@ async def test_bidirectional_happy_path_single_round_trip(
     )
     assert "[sub-agent → main: question pending]" in first_result
     assert "what's the schema?" in first_result
-    # spawn_id is a hex token — pull it out of the result.
     import re
 
     match = re.search(r"spawn_id=(minion-\d+)", first_result)
     assert match is not None
     spawn_id = match.group(1)
-    assert spawn_id in _pending_channels
+    assert spawn_id in _pending_spawns
 
-    # Second main-agent turn → calls respond_to_sub_agent → gets final
+    # Second main-agent turn → respond → worker resumes → final result.
     second_result = await respond_to_sub_agent(
         reason="reply", spawn_id=spawn_id, answer="users.id is a UUID"
     )
     assert "[sub-agent tier=medium model=anthropic:claude-sonnet-4-6" in second_result
     assert "exit=ok" in second_result
-    assert "users.id is a UUID" in second_result
-    # Channel cleaned up after worker completion.
-    assert spawn_id not in _pending_channels
+    assert "done; schema applied" in second_result
+    # The worker received the main agent's answer on resume.
+    assert answers == ["users.id is a UUID"]
+    # Pending spawn cleaned up after completion.
+    assert spawn_id not in _pending_spawns
 
 
 async def test_bidirectional_multi_round_trip(
@@ -1043,43 +1087,25 @@ async def test_bidirectional_multi_round_trip(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Two questions in one spawn. Each respond_to_sub_agent surfaces the
-    next question (or the final result), confirming the race helper
-    handles repeated round-trips correctly."""
+    next question (or the final result), confirming repeated suspend/resume
+    cycles work."""
     p = _profile(medium=["anthropic:claude-sonnet-4-6"])
     set_sub_agent_capability(
-        SubAgentCapability(
-            profile=p,
-            base_prompt="BASE",
-            capability_factory=lambda _a, *, channel=None: [],
-        )
+        SubAgentCapability(profile=p, base_prompt="BASE", capability_factory=lambda _a: [])
     )
 
-    async def fake_run(self: Any, prompt: str, **_kwargs: Any) -> Any:
-        a1 = await ask_main_agent(reason="t", question="Q1")
-        a2 = await ask_main_agent(reason="t", question="Q2")
-
-        class _U:
-            requests = 3
-            input_tokens = 100
-            output_tokens = 20
-
-        class _R:
-            output = f"got: {a1!r} {a2!r}"
-
-            @property
-            def usage(self) -> _U:
-
-                return _U()
-
-        return _R()
-
-    monkeypatch.setattr("pydantic_ai.Agent.run", fake_run)
+    answers: list[str] = []
+    _scripted_agent_run(
+        monkeypatch,
+        [_deferred_question("Q1"), _deferred_question("Q2"), "got both answers"],
+        answers_seen=answers,
+    )
 
     first = await spawn_sub_agent(
         reason="r", task_summary="s", tier="medium", task_packet={"objective": "x"}
     )
     assert "Q1" in first
-    spawn_id = first.split("spawn_id=")[1].split("\n")[0].strip()
+    spawn_id = _spawn_id_of(first)
 
     second = await respond_to_sub_agent(reason="r", spawn_id=spawn_id, answer="A1")
     # Should be ANOTHER question, not the final.
@@ -1088,79 +1114,58 @@ async def test_bidirectional_multi_round_trip(
 
     third = await respond_to_sub_agent(reason="r", spawn_id=spawn_id, answer="A2")
     assert "[sub-agent tier=medium" in third  # final result tag
-    assert "A1" in third and "A2" in third
+    assert "got both answers" in third
+    assert answers == ["A1", "A2"]
+    assert spawn_id not in _pending_spawns
 
 
 async def test_bidirectional_round_trip_cap_returns_finalize_directive(
     _bidirectional_on: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The 6th ask_main_agent call must NOT raise and must NOT put a
-    question on the queue. It returns the finalize directive directly so
-    the sub-agent can produce a coherent final answer."""
+    """The (cap+1)th question must NOT reach the main agent. The worker is
+    auto-resumed with the finalize directive so it produces a coherent final
+    answer, and the spawn lands on the final result rather than another
+    question after CAP answers."""
     p = _profile(medium=["anthropic:claude-sonnet-4-6"])
     set_sub_agent_capability(
-        SubAgentCapability(
-            profile=p,
-            base_prompt="BASE",
-            capability_factory=lambda _a, *, channel=None: [],
-        )
+        SubAgentCapability(profile=p, base_prompt="BASE", capability_factory=lambda _a: [])
     )
 
-    asks_made: list[str] = []
-    answers_received: list[str] = []
-
-    async def fake_run(self: Any, prompt: str, **_kwargs: Any) -> Any:
-        # Ask one MORE than the cap. The (cap+1)th call should return the
-        # finalize directive instead of waiting on a phantom answer.
-        for i in range(_BIDIRECTIONAL_ROUND_TRIP_CAP + 1):
-            q = f"Q{i + 1}"
-            asks_made.append(q)
-            a = await ask_main_agent(reason="t", question=q)
-            answers_received.append(a)
-
-        class _U:
-            requests = _BIDIRECTIONAL_ROUND_TRIP_CAP + 2
-            input_tokens = 100
-            output_tokens = 20
-
-        class _R:
-            output = "finalized"
-
-            @property
-            def usage(self) -> _U:
-
-                return _U()
-
-        return _R()
-
-    monkeypatch.setattr("pydantic_ai.Agent.run", fake_run)
+    answers: list[str] = []
+    # CAP+1 questions then a final answer. The (CAP+1)th question is
+    # auto-handled with the finalize directive, then the worker finalizes.
+    outputs: list[Any] = [
+        _deferred_question(f"Q{i + 1}") for i in range(_BIDIRECTIONAL_ROUND_TRIP_CAP + 1)
+    ]
+    outputs.append("finalized")
+    _scripted_agent_run(monkeypatch, outputs, answers_seen=answers)
 
     first = await spawn_sub_agent(
         reason="r", task_summary="s", tier="medium", task_packet={"objective": "x"}
     )
-    spawn_id = first.split("spawn_id=")[1].split("\n")[0].strip()
+    spawn_id = _spawn_id_of(first)
 
-    # Answer questions 1..CAP. Each answer comes back via
-    # respond_to_sub_agent, which returns either the next question or
-    # the final result.
+    # Answer questions 1..CAP-1 — each surfaces the next question.
     current = first
-    for i in range(_BIDIRECTIONAL_ROUND_TRIP_CAP):
+    for i in range(_BIDIRECTIONAL_ROUND_TRIP_CAP - 1):
         assert f"Q{i + 1}" in current
         current = await respond_to_sub_agent(reason="r", spawn_id=spawn_id, answer=f"A{i + 1}")
+        assert "[sub-agent → main: question pending]" in current
 
-    # After CAP answers, the sub-agent's (CAP+1)th ask short-circuits to
-    # the finalize directive and the sub-agent immediately returns. We
-    # therefore land on the final result, NOT another question.
-    assert "[sub-agent tier=medium" in current
-    assert "exit=ok" in current
-    assert "finalized" in current
-    # The sub-agent saw the finalize directive as the (CAP+1)th answer.
-    assert len(answers_received) == _BIDIRECTIONAL_ROUND_TRIP_CAP + 1
-    assert _BIDIRECTIONAL_FINALIZE_DIRECTIVE in answers_received[-1]
-    # And the user's first CAP answers were delivered intact.
+    # The CAP-th answer: the worker asks a (CAP+1)th time, which is
+    # auto-resumed with the finalize directive, so this call lands on the
+    # final result rather than another question.
+    final = await respond_to_sub_agent(
+        reason="r", spawn_id=spawn_id, answer=f"A{_BIDIRECTIONAL_ROUND_TRIP_CAP}"
+    )
+    assert "[sub-agent tier=medium" in final
+    assert "finalized" in final
+    # The worker received the user's CAP answers plus the finalize directive.
+    assert _BIDIRECTIONAL_FINALIZE_DIRECTIVE in answers[-1]
     for i in range(_BIDIRECTIONAL_ROUND_TRIP_CAP):
-        assert f"A{i + 1}" in answers_received[i]
+        assert f"A{i + 1}" in answers[i]
+    assert spawn_id not in _pending_spawns
 
 
 async def test_respond_to_unknown_spawn_id_returns_error(
@@ -1174,134 +1179,48 @@ async def test_respond_to_unknown_spawn_id_returns_error(
     assert "deadbeef" in out
 
 
-async def test_respond_to_already_finished_spawn_returns_error(
-    _bidirectional_on: None,
-) -> None:
-    """If a channel exists but its worker_task is already done (race
-    between completion and the main agent composing a reply), respond
-    cleans up and surfaces an error."""
-
-    # Build a channel whose worker_task is already complete.
-    async def _done() -> Any:
-        return None
-
-    task: asyncio.Task[Any] = asyncio.create_task(_done())
-    await task
-
-    channel = SubAgentChannel(spawn_id="abc12345", worker_task=task)
-    _pending_channels["abc12345"] = channel
-
-    out = await respond_to_sub_agent(reason="r", spawn_id="abc12345", answer="too late")
-    assert out.startswith("[error: sub-agent")
-    assert "already finished" in out
-    # Cleaned up.
-    assert "abc12345" not in _pending_channels
-
-
-async def test_bidirectional_cancellation_cleans_up_channel(
+async def test_respond_to_finished_spawn_returns_error(
     _bidirectional_on: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """If the main agent's run is cancelled while a sub-agent is parked
-    on answer_q, the worker must be cancelled and the channel popped —
-    no leaks across sessions."""
+    """A spawn that already completed is popped from the registry, so a
+    late reply surfaces the 'no pending sub-agent' error rather than crashing."""
     p = _profile(medium=["anthropic:claude-sonnet-4-6"])
     set_sub_agent_capability(
-        SubAgentCapability(
-            profile=p,
-            base_prompt="BASE",
-            capability_factory=lambda _a, *, channel=None: [],
-        )
+        SubAgentCapability(profile=p, base_prompt="BASE", capability_factory=lambda _a: [])
     )
-
-    # A sub-agent that asks once and then never finishes (parked on the
-    # answer queue).
-    async def fake_run(self: Any, prompt: str, **_kwargs: Any) -> Any:
-        await ask_main_agent(reason="t", question="hang here")
-        raise AssertionError("unreachable — we cancel before the answer comes")
-
-    monkeypatch.setattr("pydantic_ai.Agent.run", fake_run)
-
-    spawn_task = asyncio.create_task(
-        spawn_sub_agent(reason="r", task_summary="s", tier="medium", task_packet={"objective": "x"})
-    )
-    # Let the spawn run far enough to surface the question (which is the
-    # point at which the channel is registered AND the spawn returns).
-    first = await spawn_task
-    assert "[sub-agent → main: question pending]" in first
-    spawn_id = first.split("spawn_id=")[1].split("\n")[0].strip()
-    assert spawn_id in _pending_channels
-
-    # Now simulate session shutdown — _reset_pending_channels is what the
-    # REPL is expected to call on /exit.
-    _reset_pending_channels()
-    assert spawn_id not in _pending_channels
-
-
-async def test_channel_round_trips_counter_increments_under_cap(
-    _bidirectional_on: None,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Pin the counter behaviour: each ask_main_agent under the cap
-    increments round_trips; the counter never increments past cap (the
-    short-circuit branch returns early)."""
-    p = _profile(medium=["anthropic:claude-sonnet-4-6"])
-    set_sub_agent_capability(
-        SubAgentCapability(
-            profile=p,
-            base_prompt="BASE",
-            capability_factory=lambda _a, *, channel=None: [],
-        )
-    )
-
-    observed_round_trips: list[int] = []
-
-    async def fake_run(self: Any, prompt: str, **_kwargs: Any) -> Any:
-        from jac.runtime.sub_agent import _current_channel_for_ask
-
-        for _ in range(_BIDIRECTIONAL_ROUND_TRIP_CAP + 2):
-            ch = _current_channel_for_ask()
-            assert ch is not None
-            observed_round_trips.append(ch.round_trips)
-            await ask_main_agent(reason="t", question="q")
-
-        class _U:
-            requests = 1
-            input_tokens = 10
-            output_tokens = 5
-
-        class _R:
-            output = "ok"
-
-            @property
-            def usage(self) -> _U:
-
-                return _U()
-
-        return _R()
-
-    monkeypatch.setattr("pydantic_ai.Agent.run", fake_run)
-
-    first = await spawn_sub_agent(
+    # Worker finishes immediately (no question) → never parked.
+    _scripted_agent_run(monkeypatch, ["done"])
+    out = await spawn_sub_agent(
         reason="r", task_summary="s", tier="medium", task_packet={"objective": "x"}
     )
-    spawn_id = first.split("spawn_id=")[1].split("\n")[0].strip()
-    # Drive CAP responses; we only care about observed_round_trips, not
-    # the returned strings (those are exercised in the other tests).
-    _ = first
-    for i in range(_BIDIRECTIONAL_ROUND_TRIP_CAP):
-        await respond_to_sub_agent(reason="r", spawn_id=spawn_id, answer=f"A{i}")
+    assert "[sub-agent tier=medium" in out  # completed, not a question
+    assert not _pending_spawns
 
-    # observed[0] = 0 (before first ask); observed[1] = 1; …
-    # observed[CAP] should be CAP (final ask is the short-circuit; the
-    # counter doesn't increment past cap because the early-return branch
-    # bumps neither).
-    assert observed_round_trips[0] == 0
-    assert observed_round_trips[_BIDIRECTIONAL_ROUND_TRIP_CAP] == _BIDIRECTIONAL_ROUND_TRIP_CAP
-    # After cap, no further answers are taken from the queue; the next
-    # observation is whatever was there last (still == cap), the final
-    # ask doesn't bump it either.
-    assert observed_round_trips[_BIDIRECTIONAL_ROUND_TRIP_CAP + 1] == _BIDIRECTIONAL_ROUND_TRIP_CAP
+    late = await respond_to_sub_agent(reason="r", spawn_id="minion-1", answer="too late")
+    assert late.startswith("[error: no pending sub-agent")
+
+
+def test_reset_pending_spawns_clears_registry(
+    _bidirectional_on: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``_reset_pending_spawns`` (REPL teardown hook) drops every suspended
+    spawn — no leaks across sessions. Suspended spawns hold no live task,
+    so there's nothing to cancel; the registry is simply cleared."""
+    p = _profile(medium=["anthropic:claude-sonnet-4-6"])
+    pending = PendingSpawn(
+        spawn_id="minion-7",
+        packet=SubAgentTaskPacket(objective="x"),
+        resolved=resolve_tier(p, "medium"),
+        history=[],
+        tool_call_id="call-1",
+        objective="x",
+    )
+    _pending_spawns["minion-7"] = pending
+    assert "minion-7" in _pending_spawns
+    _reset_pending_spawns()
+    assert "minion-7" not in _pending_spawns
 
 
 def test_bidirectional_addendum_prompt_appended_only_when_flag_on(
@@ -1356,34 +1275,20 @@ async def test_bidirectional_emits_lifecycle_events_in_order(
         SubAgentCapability(
             profile=p,
             base_prompt="BASE",
-            capability_factory=lambda _a, *, channel=None: [],
+            capability_factory=lambda _a: [],
         )
     )
 
-    async def fake_run(self: Any, prompt: str, **_kwargs: Any) -> Any:
-        await ask_main_agent(reason="t", question="what schema?")
-
-        class _U:
-            requests = 1
-            input_tokens = 100
-            output_tokens = 20
-
-        class _R:
-            output = "done"
-
-            @property
-            def usage(self) -> _U:
-
-                return _U()
-
-        return _R()
-
-    monkeypatch.setattr("pydantic_ai.Agent.run", fake_run)
+    _scripted_agent_run(
+        monkeypatch,
+        [_deferred_question("what schema?"), "done"],
+        usage=_FakeUsage(requests=1, input_tokens=100, output_tokens=20),
+    )
 
     first = await spawn_sub_agent(
         reason="r", task_summary="s", tier="medium", task_packet={"objective": "x"}
     )
-    spawn_id = first.split("spawn_id=")[1].split("\n")[0].strip()
+    spawn_id = _spawn_id_of(first)
     await respond_to_sub_agent(reason="r", spawn_id=spawn_id, answer="UUID")
 
     # Drain the bus and assert order.
@@ -1428,7 +1333,7 @@ async def test_sequential_spawn_emits_no_sub_agent_events(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """When the flag is off (default), the sequential path runs to
-    completion without going through ``_spawn_bidirectional`` — no
+    completion without going through the suspend/resume path — no
     SubAgent* events should land on the bus. The existing ToolCallStarted
     line still provides visibility."""
     from jac.runtime.events import EventBus
@@ -1481,7 +1386,7 @@ async def test_bidirectional_emits_completed_on_error_path(
         SubAgentCapability(
             profile=p,
             base_prompt="BASE",
-            capability_factory=lambda _a, *, channel=None: [],
+            capability_factory=lambda _a: [],
         )
     )
 
@@ -1507,8 +1412,21 @@ async def test_bidirectional_emits_completed_on_error_path(
 # ---------- /spawns slash command ----------
 
 
+def _pending(spawn_id: str, *, objective: str = "", round_trips: int = 0) -> PendingSpawn:
+    p = _profile(medium=["anthropic:claude-sonnet-4-6"])
+    return PendingSpawn(
+        spawn_id=spawn_id,
+        packet=SubAgentTaskPacket(objective=objective or "x"),
+        resolved=resolve_tier(p, "medium"),
+        history=[],
+        tool_call_id="call-1",
+        round_trips=round_trips,
+        objective=objective,
+    )
+
+
 def test_spawns_slash_empty_state() -> None:
-    """`/spawns` with no active channels shows a clear empty-state line."""
+    """`/spawns` with no suspended sub-agents shows a clear empty-state line."""
     from io import StringIO
 
     from rich.console import Console
@@ -1526,32 +1444,22 @@ def test_spawns_slash_empty_state() -> None:
         model_id="x",
     )
     dispatch("/spawns", ctx)
-    assert "no active sub-agents" in buf.getvalue()
+    assert "no suspended sub-agents" in buf.getvalue()
 
 
-def test_spawns_slash_lists_active_channels() -> None:
-    """Populate _pending_channels directly and verify /spawns renders a
-    row per channel with spawn_id, tier/model, round-trips, objective."""
+def test_spawns_slash_lists_suspended_spawns() -> None:
+    """Populate _pending_spawns directly and verify /spawns renders a row per
+    spawn with spawn_id, tier/model, round-trips, objective."""
     from io import StringIO
 
     from rich.console import Console
 
     from jac.cli.slash import SlashContext, dispatch
     from jac.runtime.session import Session
-    from jac.runtime.sub_agent import _ResolvedTier
 
-    resolved = _ResolvedTier(
-        requested="medium",
-        resolved="medium",
-        model="anthropic:claude-sonnet-4-6",
-        cascaded=False,
+    _pending_spawns["minion-3"] = _pending(
+        "minion-3", objective="summarize the auth module", round_trips=2
     )
-    _pending_channels["aabbccdd"] = SubAgentChannel(
-        spawn_id="aabbccdd",
-        resolved=resolved,
-        objective="summarize the auth module",
-    )
-    _pending_channels["aabbccdd"].round_trips = 2
 
     buf = StringIO()
     console = Console(file=buf, force_terminal=False, width=160)
@@ -1565,8 +1473,8 @@ def test_spawns_slash_lists_active_channels() -> None:
     dispatch("/spawns", ctx)
 
     out = buf.getvalue()
-    assert "active sub-agents" in out
-    assert "aabbccdd" in out
+    assert "suspended sub-agents" in out
+    assert "minion-3" in out
     assert "medium" in out
     # round-trips column shows N/cap
     assert f"2/{_BIDIRECTIONAL_ROUND_TRIP_CAP}" in out
@@ -1579,10 +1487,10 @@ def test_statusbar_spawns_segment_hidden_when_empty() -> None:
     assert _format_spawns_segment() == ""
 
 
-def test_statusbar_spawns_segment_visible_when_parked() -> None:
+def test_statusbar_spawns_segment_visible_when_suspended() -> None:
     from jac.cli.statusbar import _format_spawns_segment
 
-    _pending_channels["abc12345"] = SubAgentChannel(spawn_id="abc12345")
+    _pending_spawns["minion-1"] = _pending("minion-1")
     segment = _format_spawns_segment()
     assert "minions:" in segment
     assert "1" in segment
@@ -1691,14 +1599,14 @@ def test_mint_spawn_id_increments_monotonically() -> None:
     assert _mint_spawn_id() == "minion-3"
 
 
-def test_reset_pending_channels_resets_counter() -> None:
+def test_reset_pending_spawns_resets_counter() -> None:
     """REPL teardown / per-test isolation must reset the counter so the
     next session starts at minion-1, not minion-7."""
     from jac.runtime.sub_agent import _mint_spawn_id
 
     _mint_spawn_id()
     _mint_spawn_id()
-    _reset_pending_channels()
+    _reset_pending_spawns()
     assert _mint_spawn_id() == "minion-1"
 
 
