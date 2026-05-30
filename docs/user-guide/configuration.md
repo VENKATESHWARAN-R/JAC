@@ -157,7 +157,9 @@ Summarization is skipped (raw passthrough) when no `small` tier is configured, t
 
 ## A2A block (per profile)
 
-Optional `a2a:` section on each profile — see [A2A operator](a2a-operator.md). Defaults: `host: 127.0.0.1`, `port: 8001`, `context_retention_days: 3`.
+Optional `a2a:` section on each profile — see [A2A operator](a2a-operator.md). Defaults: `host: 127.0.0.1`, `port: 8001`, `context_retention_days: 3`, `allow_private_peers: false`.
+
+`allow_private_peers` controls the **outbound SSRF guard**. By default (`false`), `a2a_call` / `a2a_discover` refuse *unconfigured raw URLs* that resolve to private / loopback / link-local addresses (e.g. `169.254.169.254` cloud metadata, `localhost`, RFC-1918 hosts) — the defence against a prompt-injected model being steered at internal services. **Operator-configured named peers under `a2a.peers` are always exempt**, so a `localhost` dev peer works normally once you give it a name. Set `allow_private_peers: true` only on a network where you trust every host the model might reach.
 
 ## File layout reference
 

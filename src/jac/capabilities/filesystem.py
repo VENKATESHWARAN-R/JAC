@@ -239,8 +239,30 @@ def _is_mutating(ctx: Any, tool_def: ToolDefinition, args: dict[str, Any]) -> bo
 
 @dataclass
 class FilesystemCapability(AbstractCapability[Any]):
-    """Read/write filesystem tools. ``write_file`` and ``edit_file`` are HITL-gated."""
+    """Read/write filesystem tools. ``write_file`` and ``edit_file`` are HITL-gated.
+
+    ``allowed`` optionally restricts the exposed tools to a subset by name.
+    The A2A guest passes ``{"read_file", "list_dir"}`` so write/edit are
+    *structurally* absent from its toolset — the model never sees them —
+    rather than merely approval-blocked (R3). ``None`` (default) exposes all
+    four tools with the usual HITL gating on writes.
+    """
+
+    allowed: frozenset[str] | None = None
 
     def get_toolset(self) -> Any:
-        toolset = jac_function_toolset(read_file, write_file, edit_file, list_dir)
-        return toolset.approval_required(_is_mutating)
+        all_tools = {
+            "read_file": read_file,
+            "write_file": write_file,
+            "edit_file": edit_file,
+            "list_dir": list_dir,
+        }
+        if self.allowed is None:
+            funcs = list(all_tools.values())
+        else:
+            # Build the FunctionToolset from only the allowed functions, so
+            # excluded tools are genuinely absent (not just hidden by a
+            # wrapper). The guest relies on write_file/edit_file being
+            # unregistered, not merely approval-blocked (R3).
+            funcs = [fn for name, fn in all_tools.items() if name in self.allowed]
+        return jac_function_toolset(*funcs).approval_required(_is_mutating)

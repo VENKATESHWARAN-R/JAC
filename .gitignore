@@ -221,3 +221,8 @@ __marimo__/
 .agents/settings.local.json
 .agents/state.db
 .agents/logs/
+.agents/sessions/
+.agents/usage.jsonl
+.agents/cache/
+.agents/a2a/
+.agents/memory.md

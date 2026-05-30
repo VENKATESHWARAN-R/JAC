@@ -196,6 +196,15 @@ class A2AProfileConfig(BaseModel):
     are kept before the server-start cleanup pass removes them. ``0`` disables
     retention (keep forever); negative values rejected by the validator."""
 
+    allow_private_peers: bool = False
+    """Disable the outbound SSRF guard (R1). When ``False`` (default),
+    ``a2a_call`` / ``a2a_discover`` refuse *unconfigured raw URLs* that
+    resolve to private / loopback / link-local addresses — the defence
+    against a prompt-injected model being steered at cloud metadata or
+    internal services. Operator-configured named peers (incl. ``localhost``
+    dev peers) are always trusted. Set ``true`` only on a network where you
+    trust every host the model might reach."""
+
     @model_validator(mode="after")
     def _validate_shape(self) -> A2AProfileConfig:
         if self.port < 1 or self.port > 65535:

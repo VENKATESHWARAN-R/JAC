@@ -32,9 +32,10 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import ipaddress
 import json as _json
 import mimetypes
-import re as _re
+import socket
 import time
 import uuid
 import warnings
@@ -54,6 +55,7 @@ from fasta2a.schema import (
     send_message_response_ta,
 )
 
+from jac.capabilities.a2a._files import pick_filename
 from jac.capabilities.a2a.audit import make_message_preview
 from jac.capabilities.a2a.auth_strategies import AuthStrategy
 from jac.errors import JacConfigError
@@ -98,9 +100,59 @@ _CLIENT_ACTION_STATES = frozenset({"input-required", "auth-required"})
 # don't generate URI parts ourselves because we have nowhere to host
 # files from a CLI process.
 _MAX_OUTBOUND_FILE_BYTES = 5 * 1024 * 1024  # 5 MB per file; soft DOS guard
-# Sanitize candidate filenames into something safe under inbound-files/.
-# We allow letters, digits, hyphen, underscore, period (no leading dot).
-_SAFE_FILENAME_RE = _re.compile(r"[^A-Za-z0-9._-]+")
+
+
+async def _validate_outbound_url(url: str, *, allow_private: bool) -> None:
+    """Reject model-supplied URLs that resolve to non-public addresses (SSRF guard, R1).
+
+    A2A's outbound tools take URLs the *model* can choose, so a prompt-
+    injected or confused model could be steered at internal services —
+    cloud metadata at ``169.254.169.254``, localhost admin ports, RFC-1918
+    hosts. This resolves the host (DNS, to defeat a hostname pointing at an
+    internal IP) and refuses any private / loopback / link-local / reserved
+    / multicast / unspecified address.
+
+    Only *unconfigured raw URLs* reach this guard — operator-configured
+    named peers are trusted (the headline A2A use case is local cross-repo
+    coworking, so a configured ``localhost`` peer is normal and exempt).
+    The ``allow_private`` knob (``a2a.allow_private_peers``) disables the
+    guard entirely for trusted LANs.
+
+    Raises:
+        ValueError: the host can't be resolved, or resolves to a
+            non-public address.
+    """
+    if allow_private:
+        return
+    host = httpx.URL(url).host
+    if not host:
+        raise ValueError(f"A2A: cannot determine host from URL {url!r}.")
+    try:
+        candidates = [ipaddress.ip_address(host)]
+    except ValueError:
+        # Not an IP literal — resolve the hostname so a name pointing at an
+        # internal address can't slip past.
+        try:
+            infos = await asyncio.get_running_loop().getaddrinfo(host, None)
+        except socket.gaierror as exc:
+            raise ValueError(f"A2A: cannot resolve host {host!r}: {exc}") from exc
+        candidates = [ipaddress.ip_address(info[4][0]) for info in infos]
+    for ip in candidates:
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_reserved
+            or ip.is_multicast
+            or ip.is_unspecified
+        ):
+            raise ValueError(
+                f"A2A: refusing to call {host!r} — it resolves to a non-public "
+                f"address ({ip}). This guards against SSRF via model-supplied "
+                "URLs. If this is an intentional internal peer, add it as a named "
+                "peer under a2a.peers in your profile (configured peers are "
+                "trusted), or set a2a.allow_private_peers: true to disable the guard."
+            )
 
 
 @dataclass(frozen=True)
@@ -186,6 +238,7 @@ def build_outbound_tools(
     peers_getter: Callable[[], dict[str, A2APeerConfig]],
     strategy_provider: Callable[[A2APeerConfig, str | None], AuthStrategy | None] | None = None,
     bus: EventBus | None = None,
+    allow_private_peers: bool = False,
 ):
     """Build the outbound tool closures bound to runtime accessors and a bus.
 
@@ -254,6 +307,11 @@ def build_outbound_tools(
         if not url.strip():
             raise ValueError("`url` must not be empty.")
         base = url.rstrip("/")
+        # Configured peers are operator-trusted (incl. localhost dev peers);
+        # only SSRF-guard raw URLs that don't match a configured peer.
+        peers = peers_getter()
+        if not any(p.url.rstrip("/") == base for p in peers.values()):
+            await _validate_outbound_url(base, allow_private=allow_private_peers)
         discovery_url = f"{base}/.well-known/agent-card.json"
 
         await _emit(A2AOutboundCall(target=url, message_preview="(discover)"))
@@ -342,6 +400,12 @@ def build_outbound_tools(
 
         peers = peers_getter()
         target = resolve_target(peer_or_url, peers=peers)
+
+        # SSRF guard (R1): a configured peer (target.peer set) is
+        # operator-trusted; an unconfigured raw URL chosen by the model is
+        # not — refuse non-public hosts unless a2a.allow_private_peers is on.
+        if target.peer is None:
+            await _validate_outbound_url(target.url, allow_private=allow_private_peers)
 
         # Build file parts up-front so a bad path fails before we hit the
         # network — friendlier than reporting a half-sent request.
@@ -733,7 +797,7 @@ def _save_inbound_files(envelope: dict[str, Any]) -> list[str]:
         except (ValueError, _BinasciiError):
             continue  # malformed; skip the part rather than crash
 
-        name = _pick_filename(file_obj, part)
+        name = pick_filename(file_obj, part)
         unique = _dedupe_name(name, saved_names)
 
         if target_dir is None:
@@ -757,33 +821,6 @@ def _save_inbound_files(envelope: dict[str, Any]) -> list[str]:
 def _safe_list(value: Any) -> list[Any]:
     """Return ``value`` if it's a list, else ``[]`` — defensive iteration."""
     return value if isinstance(value, list) else []
-
-
-def _pick_filename(file_obj: dict[str, Any], part: dict[str, Any]) -> str:
-    """Pick the best-available filename for a saved file.
-
-    Order: file.name → part.metadata.filename → uuid-based fallback.
-    Always returns a sanitized string safe to join under inbound-files/.
-    """
-    raw = file_obj.get("name")
-    if not isinstance(raw, str) or not raw.strip():
-        meta = part.get("metadata")
-        if isinstance(meta, dict):
-            raw_meta = meta.get("filename")
-            if isinstance(raw_meta, str) and raw_meta.strip():
-                raw = raw_meta
-    if not isinstance(raw, str) or not raw.strip():
-        return f"file-{uuid.uuid4().hex}.bin"
-    return _sanitize_filename(raw)
-
-
-def _sanitize_filename(name: str) -> str:
-    """Strip path components, leading dots, NUL bytes, and unsafe chars."""
-    # Take basename only — defeats absolute paths and ``..`` traversal.
-    bare = Path(name).name
-    # Replace any run of unsafe chars with a single underscore.
-    cleaned = _SAFE_FILENAME_RE.sub("_", bare).lstrip(".")
-    return cleaned or f"file-{uuid.uuid4().hex}.bin"
 
 
 def _dedupe_name(name: str, seen: dict[str, int]) -> str:

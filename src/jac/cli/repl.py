@@ -459,6 +459,7 @@ async def _repl_loop(
     # defaults when no profile is in play). Both are refreshed on /profile.
     if active_profile is not None:
         a2a_capability.retention_days = active_profile.a2a.context_retention_days
+        a2a_capability.allow_private_peers = active_profile.a2a.allow_private_peers
         a2a_capability.profile_peers = dict(active_profile.a2a.peers)
     message_history: list = list(session.message_history)
 
@@ -656,6 +657,9 @@ async def _repl_loop(
                         if active_profile is not None:
                             a2a_capability.retention_days = (
                                 active_profile.a2a.context_retention_days
+                            )
+                            a2a_capability.allow_private_peers = (
+                                active_profile.a2a.allow_private_peers
                             )
                             # Mutate profile_peers in place so the outbound
                             # tool closures (which capture the merged-view

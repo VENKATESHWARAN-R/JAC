@@ -9,12 +9,13 @@ search) arrive in subsequent steps and live as sibling modules here.
 """
 
 from jac.tools.decorator import is_jac_tool, is_summarizable, jac_tool
-from jac.tools.toolset import jac_function_toolset, summarizing_wrap
+from jac.tools.toolset import jac_function_toolset, restrict_toolset, summarizing_wrap
 
 __all__ = [
     "is_jac_tool",
     "is_summarizable",
     "jac_function_toolset",
     "jac_tool",
+    "restrict_toolset",
     "summarizing_wrap",
 ]

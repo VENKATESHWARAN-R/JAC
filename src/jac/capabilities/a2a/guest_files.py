@@ -26,8 +26,6 @@ arbitrary URIs needs an SSRF guard we haven't built. Bytes-only.
 from __future__ import annotations
 
 import base64
-import re
-import uuid
 from binascii import Error as _BinasciiError
 from collections.abc import Iterable, Mapping
 from pathlib import Path
@@ -35,12 +33,8 @@ from typing import Any
 
 from pydantic_ai.messages import BinaryContent, ModelRequest, UserPromptPart
 
+from jac.capabilities.a2a._files import pick_filename
 from jac.workspace import paths
-
-# Same sanitizer rules as the outbound save path. Allow letters,
-# digits, hyphen, underscore, period; strip leading dots so a peer
-# can't write to ``.hidden`` files.
-_SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
 
 def materialize_inbound_files(task: Mapping[str, Any], context_id: str) -> list[str]:
@@ -96,7 +90,7 @@ def materialize_inbound_files(task: Mapping[str, Any], context_id: str) -> list[
         except (ValueError, _BinasciiError):
             continue
 
-        name = _pick_name(file_obj, part)
+        name = pick_filename(file_obj, part)
         if not target_dir_created:
             try:
                 target_dir.mkdir(parents=True, exist_ok=True)
@@ -112,28 +106,6 @@ def materialize_inbound_files(task: Mapping[str, Any], context_id: str) -> list[
         saved.append(out_path.as_posix())
 
     return saved
-
-
-def _pick_name(file_obj: dict[str, Any], part: dict[str, Any]) -> str:
-    """Choose the best-available filename, sanitize it, fall back to a uuid.
-
-    Resolution order: ``file.name`` (spec) → ``part.metadata.filename``
-    (our belt-and-braces) → ``file-<uuid>.bin``. Sanitization strips
-    path components, leading dots, and unsafe characters — the peer
-    can't drop a file outside our per-context directory.
-    """
-    raw = file_obj.get("name")
-    if not (isinstance(raw, str) and raw.strip()):
-        meta = part.get("metadata")
-        if isinstance(meta, dict):
-            raw_meta = meta.get("filename")
-            if isinstance(raw_meta, str) and raw_meta.strip():
-                raw = raw_meta
-    if not (isinstance(raw, str) and raw.strip()):
-        return f"file-{uuid.uuid4().hex}.bin"
-    bare = Path(raw).name  # defeats absolute paths / ``..`` traversal
-    cleaned = _SAFE_FILENAME_RE.sub("_", bare).lstrip(".")
-    return cleaned or f"file-{uuid.uuid4().hex}.bin"
 
 
 def _dedupe_against_disk(target_dir: Path, name: str) -> Path:

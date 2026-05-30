@@ -414,3 +414,21 @@ def test_inbound_file_part_lands_under_guest_uploads(tmp_path, monkeypatch, free
             await cap.shutdown()
 
     _run(_scenario())
+
+
+def test_fasta2a_worker_private_method_still_exists():
+    """Fork-drift guard (R13).
+
+    ``AuditingAgentWorker`` (server.py) forks fasta2a's
+    ``AgentWorker.run_task`` and calls the *private*
+    ``_response_parts_to_a2a`` to convert model output to A2A parts.
+    fasta2a is pinned ``<0.7`` precisely because that private surface
+    could move; if this assertion fails after a dependency bump, review
+    the fork in ``capabilities/a2a/server.py`` before raising the ceiling.
+    """
+    from fasta2a.pydantic_ai import AgentWorker
+
+    assert hasattr(AgentWorker, "_response_parts_to_a2a"), (
+        "fasta2a's AgentWorker._response_parts_to_a2a is gone — the A2A guest "
+        "worker fork depends on it. Review server.py before bumping fasta2a."
+    )
