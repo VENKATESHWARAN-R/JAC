@@ -162,13 +162,16 @@ def test_dashboard_shape_with_no_runtime() -> None:
     assert d["files"] == []
 
 
-def test_dashboard_reports_changed_files() -> None:
+def test_dashboard_reports_existing_changed_files(tmp_path: Path) -> None:
+    # The cwd is the isolated tmp project (set by the fixture). Only files that
+    # actually exist on disk are reported — a denied/phantom write drops out.
+    Path("a.py").write_text("x")  # exists
     mgr = WebChatManager()
-    mgr.files_changed["src/a.py"] = "write"
-    mgr.files_changed["src/b.py"] = "edit"
+    mgr.files_changed["a.py"] = "write"
+    mgr.files_changed["ghost.py"] = "write"  # never created
     files = mgr.dashboard()["files"]
-    assert {"path": "src/a.py", "action": "write"} in files
-    assert {"path": "src/b.py", "action": "edit"} in files
+    assert {"path": "a.py", "action": "write"} in files
+    assert all(f["path"] != "ghost.py" for f in files)
 
 
 def test_chat_status_route() -> None:

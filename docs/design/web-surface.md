@@ -143,30 +143,41 @@ server). `app.py` is the thin CLI wrapper, parallel to `cli/a2a.py`.
    scope, default profile, secrets backend, model, token totals). No agent
    driving, no streaming, no concurrency concerns. Highest reuse, lowest risk.
    Useful on its own as a GUI for `jac init` / `profiles` / `keys` / `sessions`.
-2. **Slice 2 — streaming chat + HITL (shipped).** [`web/chat.py`](../../src/jac/web/chat.py)
+2. **Slice 2 — chat + HITL (shipped).** [`web/chat.py`](../../src/jac/web/chat.py)
    drives one live session through the **shared engine**: the REPL's bootstrap
    was extracted to [`runtime/bootstrap.py`](../../src/jac/runtime/bootstrap.py)
    (`build_session_runtime`) so the CLI and the web build the *identical* Gru +
    capabilities + driver — no duplication, no drift. A persistent consumer task
-   drains the `EventBus` into a per-session queue; an SSE endpoint
-   (`/chat/stream`, via `sse-starlette`) streams JSON frames to the browser
-   ([`static/chat.js`](../../src/jac/web/static/chat.js) dispatches them — token
-   deltas, tool lifecycle, plan, sub-agent/minion lines). HITL approval +
-   clarify are resolved by browser POSTs that complete the `asyncio.Future` the
-   approval handler is awaiting — the same future the CLI resolves at a terminal
-   prompt. One turn at a time (single-user charter); the consumer is decoupled
-   from the SSE connection so a tab refresh doesn't stall an in-flight approval.
+   drains the `EventBus` and **broadcasts** JSON frames to every connected SSE
+   subscriber (`/chat/stream`, via `sse-starlette`);
+   [`static/chat.js`](../../src/jac/web/static/chat.js) dispatches them. HITL
+   approval + clarify are resolved by browser POSTs that complete the
+   `asyncio.Future` the approval handler is awaiting — the same future the CLI
+   resolves at a terminal prompt. One turn at a time (single-user charter).
    Because `jac web serve` doesn't activate a profile at boot, the chat resolves
    the default profile lazily on first message and fails *gracefully* (an error
    frame) when none is configured.
-3. **Slice 3 — activity dashboard (shipped).** A live sidebar on the chat page:
-   a **token/cost meter** (session in/out/total, cache %, project total), **minion
-   cards** (one per active sub-agent from `_pending_spawns` — tier, model,
-   objective, round-trips/turns), and a **files-changed** list (paths the session
-   wrote/edited, tracked from `write_file`/`edit_file` tool events, minions
-   included). Backed by a `GET /chat/status` snapshot the browser polls (faster
-   while a turn is active). Reuses the same registries the CLI's `/spawns` and
-   `/tokens` read. **Next: visual/theming polish** — animations, imagery, a
+
+   Two non-obvious correctness choices (each fixed a real bug found in testing):
+   - **`stream=False`, not `run_stream`.** HITL approval is driven by
+     `agent.run()`'s deferred-tool-call handling, which `run_stream` silently
+     bypasses — streaming would let a gated tool execute with **no confirmation
+     prompt**. We run non-streamed (the reply lands on `RunCompleted`).
+     Token-level streaming *with* approval needs the `agent.iter()` graph path —
+     a deferred enhancement, not worth losing HITL correctness for.
+   - **Broadcast, not a single shared queue.** EventSource auto-reconnects, and a
+     dangling generator from a prior page-load competing for one shared queue
+     could steal a live connection's frames (the "first message not shown" bug).
+     Each connection gets its own queue, discarded on disconnect.
+3. **Slice 3 — activity dashboard (shipped).** A live, **collapsible** sidebar on
+   the chat page: a **token/cost meter** (session in/out/total, cache %, project
+   total), **minion cards** (one per active sub-agent from `_pending_spawns` —
+   tier, model, objective, round-trips/turns), and a **files-changed** list
+   (paths the session wrote/edited, tracked from `write_file`/`edit_file` tool
+   events, minions included, **filtered to files that actually exist on disk** so
+   a denied/phantom write never shows). Backed by a `GET /chat/status` snapshot
+   the browser polls (faster while a turn is active). Reuses the same registries
+   the CLI's `/spawns` and `/tokens` read. **Next: visual/theming polish** — animations, imagery, a
    richer minion aesthetic (this is the home for that, and the point where a
    heavier reactive frontend like Reflex could earn its place).
 

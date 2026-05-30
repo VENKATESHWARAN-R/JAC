@@ -1,5 +1,6 @@
-// JAC web chat (Slice 2). Vanilla JS: EventSource for the agent event stream,
-// fetch for sending messages and resolving HITL approvals/clarifications.
+// JAC web chat (Slice 2/3). Vanilla JS: EventSource for the agent event stream,
+// fetch for sending messages and resolving HITL approvals/clarifications, and a
+// polled /chat/status for the activity sidebar.
 (() => {
   "use strict";
 
@@ -9,33 +10,58 @@
   const sendBtn = document.getElementById("chat-send");
   const newBtn = document.getElementById("chat-new");
   const sessionLabel = document.getElementById("chat-session");
+  const collapseBtn = document.getElementById("act-toggle");
+  const layout = document.getElementById("chat-layout");
 
-  let assistantEl = null; // current streaming assistant bubble
+  let streamEl = null; // assistant bubble being streamed into (if TextDelta used)
   let lastToolEl = null; // last tool chip, for completion status
+  let typingEl = null; // transient "thinking" indicator, always kept last
 
   // ----- DOM helpers -----
-  const atBottom = () =>
-    transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 80;
-
-  function add(cls, html) {
-    const wasBottom = atBottom();
-    const el = document.createElement("div");
-    el.className = "msg " + cls;
-    if (html !== undefined) el.innerHTML = html;
-    transcript.appendChild(el);
-    if (wasBottom) transcript.scrollTop = transcript.scrollHeight;
-    return el;
-  }
-
   const esc = (s) =>
     String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
       ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
     );
 
+  const atBottom = () =>
+    transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 100;
+
+  function scroll() {
+    transcript.scrollTop = transcript.scrollHeight;
+  }
+
+  // Insert a message element, keeping the typing indicator (if any) last.
+  function add(cls, html) {
+    const wasBottom = atBottom();
+    const el = document.createElement("div");
+    el.className = "msg " + cls;
+    if (html !== undefined) el.innerHTML = html;
+    if (typingEl) transcript.insertBefore(el, typingEl);
+    else transcript.appendChild(el);
+    if (wasBottom) scroll();
+    return el;
+  }
+
+  function showTyping() {
+    if (!typingEl) {
+      typingEl = document.createElement("div");
+      typingEl.className = "msg assistant typing";
+      typingEl.innerHTML = "<span class='dots'>● ● ●</span>";
+    }
+    transcript.appendChild(typingEl); // always last
+    scroll();
+  }
+  function hideTyping() {
+    if (typingEl) {
+      typingEl.remove();
+      typingEl = null;
+    }
+  }
+
   function setBusy(busy) {
     sendBtn.disabled = busy;
-    textarea.disabled = busy;
     sendBtn.textContent = busy ? "…" : "Send";
+    if (!busy) hideTyping();
   }
 
   // ----- frame dispatch -----
@@ -45,26 +71,27 @@
         sessionLabel.textContent = f.id || "—";
         break;
       case "UserMessage":
-        assistantEl = null;
+        streamEl = null;
         lastToolEl = null;
         add("user", esc(f.content));
         setBusy(true);
+        showTyping();
         break;
       case "ModelRequestStarted":
-        if (!assistantEl) {
-          assistantEl = add("assistant thinking", "<span class='dots'>…</span>");
-        }
+        if (sendBtn.disabled) showTyping();
         break;
       case "TextDelta":
-        if (!assistantEl || assistantEl.classList.contains("thinking")) {
-          assistantEl = add("assistant", "");
+        if (!streamEl) {
+          hideTyping();
+          streamEl = add("assistant", "");
         }
-        assistantEl.textContent += f.content;
-        if (atBottom()) transcript.scrollTop = transcript.scrollHeight;
+        streamEl.textContent += f.content;
+        if (atBottom()) scroll();
         break;
       case "ToolCallStarted": {
         const reason = f.reason ? " — " + esc(f.reason) : "";
         lastToolEl = add("tool", `🔧 <b>${esc(f.tool_name)}</b>${reason} <span class="tstat">running…</span>`);
+        showTyping();
         break;
       }
       case "ToolCallCompleted":
@@ -74,12 +101,14 @@
         markTool("err", "failed: " + esc(f.error));
         break;
       case "ApprovalRequest":
+        hideTyping();
         renderApproval(f);
         break;
       case "ModeAutoDecision":
         add("notice", `mode <b>${esc(f.mode)}</b> auto-${esc(f.decision)}ed <b>${esc(f.tool_name)}</b>`);
         break;
       case "ClarifyRequest":
+        hideTyping();
         renderClarify(f);
         break;
       case "PlanReplaced":
@@ -116,19 +145,22 @@
         add("error", `context too full (${f.usage_pct}%). ${esc(f.suggested_action)}`);
         break;
       case "RunCompleted":
-        if (assistantEl && !assistantEl.classList.contains("tool")) {
-          assistantEl.classList.remove("thinking");
-          if (f.output) assistantEl.textContent = f.output;
+        hideTyping();
+        if (streamEl) {
+          if (f.output) streamEl.textContent = f.output;
         } else if (f.output) {
-          add("assistant", esc(f.output));
+          add("assistant", esc(f.output)); // appended after any tool cards
         }
-        assistantEl = null;
+        streamEl = null;
+        scroll();
         break;
       case "RunFailed":
+        hideTyping();
         add("error", esc(f.error));
-        assistantEl = null;
+        streamEl = null;
         break;
       case "Error":
+        hideTyping();
         add("error", esc(f.error));
         setBusy(false);
         break;
@@ -141,7 +173,7 @@
         add("notice", esc(f.text));
         break;
       default:
-        break; // unknown frame types are ignored, not fatal
+        break; // unknown frames are ignored, not fatal
     }
   }
 
@@ -183,6 +215,7 @@
       card.querySelector(".ar-btns").innerHTML =
         `<span class="ar-result">${approved ? "approved" : feedback ? "redirected" : "denied"}</span>`;
       card.querySelector(".ar-fb").remove();
+      if (sendBtn.disabled) showTyping();
     };
     card.querySelector(".ar-yes").onclick = () => done(true);
     card.querySelector(".ar-no").onclick = () => done(false);
@@ -201,6 +234,7 @@
         post("/chat/clarify", { index: Number(b.dataset.i), text: b.textContent });
         card.querySelector(".cl-opts").innerHTML = `<span class="ar-result">${esc(b.textContent)}</span>`;
         card.querySelector(".cl-free").remove();
+        if (sendBtn.disabled) showTyping();
       };
     });
     const freeInput = card.querySelector(".cl-free input");
@@ -210,6 +244,7 @@
       post("/chat/clarify", { free_text: true, text: v });
       card.querySelector(".cl-opts").innerHTML = `<span class="ar-result">${esc(v)}</span>`;
       card.querySelector(".cl-free").remove();
+      if (sendBtn.disabled) showTyping();
     };
   }
 
@@ -251,9 +286,25 @@
   });
   newBtn.addEventListener("click", async () => {
     transcript.innerHTML = "";
-    assistantEl = null;
+    streamEl = null;
+    typingEl = null;
     await post("/chat/new", {});
   });
+  if (collapseBtn && layout) {
+    collapseBtn.addEventListener("click", () => {
+      const collapsed = layout.classList.toggle("collapsed");
+      collapseBtn.textContent = collapsed ? "‹ activity" : "activity ›";
+      try {
+        localStorage.setItem("jac.activity.collapsed", collapsed ? "1" : "0");
+      } catch (e) {}
+    });
+    try {
+      if (localStorage.getItem("jac.activity.collapsed") === "1") {
+        layout.classList.add("collapsed");
+        collapseBtn.textContent = "‹ activity";
+      }
+    } catch (e) {}
+  }
 
   // ----- activity dashboard (Slice 3) -----
   const actTokens = document.getElementById("act-tokens");
@@ -268,26 +319,25 @@
     if (!d) return;
     const t = d.tokens || {};
     const cache = t.cache_pct == null ? "" : ` · cache ${t.cache_pct}%`;
-    const budget = t.budget_pct == null ? "" : ` · ${t.budget_pct}% of budget`;
     actTokens.innerHTML =
-      `<div class="big">${fmt(t.total)}<span class="unit"> tok this session</span></div>` +
+      `<div class="big">${fmt(t.total)}<span class="unit"> tok</span></div>` +
       `<div class="dim">in ${fmt(t.input)} · out ${fmt(t.output)}${cache}</div>` +
-      `<div class="dim">project ${fmt(t.project_total)}${budget}</div>`;
+      `<div class="dim">project ${fmt(t.project_total)}</div>`;
 
     const sa = d.sub_agents || {};
     const active = sa.active || [];
     actMinionCount.textContent = String(active.length);
     if (!active.length) {
-      const ran = sa.spawns ? `<span class="dim">${sa.spawns} spawned · ${fmt(sa.tokens)} tok</span>` : `<span class="dim">no sub-agents yet</span>`;
-      actMinions.innerHTML = ran;
+      actMinions.innerHTML = sa.spawns
+        ? `<span class="dim">${sa.spawns} spawned · ${fmt(sa.tokens)} tok</span>`
+        : `<span class="dim">none active</span>`;
     } else {
       actMinions.innerHTML = active
         .map(
           (m) =>
             `<div class="minion-card"><div class="mc-head">🐙 <b>${esc(m.spawn_id)}</b> <span class="badge">${esc(m.tier)}</span></div>` +
-            `<div class="dim mono">${esc(m.model)}</div>` +
             `<div class="mc-obj">${esc(m.objective || "(no objective)")}</div>` +
-            `<div class="dim">round-trips ${m.round_trips}/${m.cap} · ${m.turns_used} turns</div></div>`
+            `<div class="dim">${m.round_trips}/${m.cap} rt · ${m.turns_used} turns</div></div>`
         )
         .join("");
     }
@@ -309,7 +359,6 @@
       /* transient; next tick retries */
     }
   }
-  // Poll faster while a turn is active (minions/tokens move), slow when idle.
   setInterval(() => {
     if (sendBtn.disabled || document.querySelector(".minion-card")) pollDashboard();
   }, 1800);
@@ -325,7 +374,7 @@
     } catch (e) {}
   };
   es.onerror = () => {
-    /* EventSource auto-reconnects; the persistent server consumer buffers. */
+    /* EventSource auto-reconnects; broadcast means each connection gets frames. */
   };
 
   textarea.focus();

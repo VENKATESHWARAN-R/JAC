@@ -12,12 +12,17 @@ Concurrency model (single-user by charter):
 - **One** :class:`WebChatManager` per process (``get_manager()``), bound to
   uvicorn's event loop on first use.
 - A **persistent consumer task** reads ``bus.stream()`` for the life of the
-  session and pushes serialized frames onto ``out_queue``. It is decoupled from
-  the SSE connection on purpose: approvals must still be readable (and the turn
-  must keep progressing) even if the browser tab momentarily reconnects.
-- Each user message runs ``driver.run_turn(stream=True)`` as its own task, so
-  the POST returns immediately and tokens/tool-events flow over SSE. Only one
-  turn runs at a time.
+  session and broadcasts serialized frames to every connected SSE subscriber.
+  It is decoupled from the SSE connection on purpose: approvals must still be
+  readable (and the turn must keep progressing) even if the browser reconnects.
+  Broadcast (one queue per connection) — not a single shared queue — so a
+  dangling generator from a prior page-load can't steal a live connection's
+  frames (that was the "first message not shown" bug).
+- Each user message runs ``driver.run_turn(stream=False)`` as its own task, so
+  the POST returns immediately and tool-events flow over SSE. **stream=False is
+  deliberate:** HITL approval is driven by ``agent.run()``'s deferred-tool-call
+  handling, which ``run_stream`` bypasses — streaming would let a gated tool run
+  with no confirmation. Only one turn runs at a time.
 
 Known v1 limitation (documented in the design doc): if the browser never answers
 an approval, the turn blocks on that future. Single-user, local: the operator
@@ -103,7 +108,11 @@ class WebChatManager:
         self.runtime: SessionRuntime | None = None
         self.session: Session | None = None
         self.history: list[Any] = []
-        self.out_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        # One queue per live SSE connection (broadcast). A single shared queue
+        # would let a dangling generator from a prior page-load steal frames —
+        # that's the "first message not shown" bug. Each connection registers
+        # its own queue and is discarded on disconnect.
+        self._subscribers: set[asyncio.Queue[dict[str, Any]]] = set()
         self._pending_approvals: dict[str, asyncio.Future[ApprovalResponse]] = {}
         self._pending_clarify: asyncio.Future[ClarifyResponse] | None = None
         self._consumer: asyncio.Task[None] | None = None
@@ -169,12 +178,7 @@ class WebChatManager:
         except JacConfigError as exc:
             self.session = session
             self.runtime = None
-            await self.out_queue.put(
-                {
-                    "type": "Error",
-                    "error": f"can't start chat — {exc}",
-                }
-            )
+            self._emit({"type": "Error", "error": f"can't start chat — {exc}"})
             return
 
         if self._consumer is not None:
@@ -199,6 +203,11 @@ class WebChatManager:
         restored_plan, _warning = session.load_plan()
         await self._attach(session, restored_plan=restored_plan)
 
+    def _emit(self, frame: dict[str, Any]) -> None:
+        """Broadcast a frame to every connected SSE subscriber."""
+        for queue in list(self._subscribers):
+            queue.put_nowait(frame)
+
     # ----- the persistent bus consumer -----
 
     async def _consume(self, runtime: SessionRuntime) -> None:
@@ -211,7 +220,7 @@ class WebChatManager:
                 action = _MUTATING_FILE_TOOLS.get(event.tool_name)
                 if action and isinstance(event.args, dict) and event.args.get("path"):
                     self.files_changed[str(event.args["path"])] = action
-            await self.out_queue.put(event_to_frame(event))
+            self._emit(event_to_frame(event))
 
     # ----- turns -----
 
@@ -230,8 +239,8 @@ class WebChatManager:
             return {"ok": False, "reason": "empty message"}
 
         self._busy = True
-        # Mirror the browser bubble immediately so the user sees their message.
-        await self.out_queue.put({"type": "UserMessage", "content": text})
+        # Echo the user's message immediately so it shows in the transcript.
+        self._emit({"type": "UserMessage", "content": text})
         self._turn_task = asyncio.create_task(self._run_turn(text), name="jac.web.chat.turn")
         return {"ok": True}
 
@@ -247,15 +256,21 @@ class WebChatManager:
             if (await driver.check_context_budget(self.history, text)) is not None:
                 return
 
-            result = await driver.run_turn(text, self.history, stream=True)
+            # stream=False: HITL approval (ApprovalRequiredToolset +
+            # deferred_tool_calls) is driven by agent.run(), NOT run_stream —
+            # the streamed path silently bypasses the approval handler, so a
+            # gated tool could run with no confirmation. Correctness over
+            # token-streaming: the reply lands on RunCompleted. (Streaming WITH
+            # approval needs the agent.iter() graph path — a future enhancement.)
+            result = await driver.run_turn(text, self.history, stream=False)
             self.history = result.message_history
             try:
                 self.session.save(self.history)
             except OSError as exc:
-                await self.out_queue.put({"type": "Notice", "level": "warn", "text": str(exc)})
+                self._emit({"type": "Notice", "level": "warn", "text": str(exc)})
         finally:
             self._busy = False
-            await self.out_queue.put({"type": "TurnDone"})
+            self._emit({"type": "TurnDone"})
 
     # ----- HITL resolution from the browser -----
 
@@ -289,20 +304,32 @@ class WebChatManager:
             await self._attach(session, restored_plan=None)
         if self.runtime is None:
             return {"ok": False, "reason": "no model is bound"}
-        await self.out_queue.put({"type": "SessionStarted", "id": session.session_id})
+        self._emit({"type": "SessionStarted", "id": session.session_id})
         return {"ok": True, "id": session.session_id}
 
     # ----- SSE -----
 
     async def sse_events(self):
-        """Async generator yielding SSE frames from ``out_queue`` forever."""
-        # Greet the freshly-connected client with the current session id so the
-        # header can render even before the first turn.
-        if self.session is not None:
-            yield {"data": json.dumps({"type": "SessionStarted", "id": self.session.session_id})}
-        while True:
-            frame = await self.out_queue.get()
-            yield {"data": json.dumps(frame)}
+        """Async generator: one queue per connection, removed on disconnect.
+
+        Broadcast (not a shared queue) so concurrent / reconnecting EventSource
+        connections each get every frame — and a dropped connection can't strand
+        frames meant for a live one.
+        """
+        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self._subscribers.add(queue)
+        try:
+            # Greet this client with the current session id so the header
+            # renders even before the first turn.
+            if self.session is not None:
+                yield {
+                    "data": json.dumps({"type": "SessionStarted", "id": self.session.session_id})
+                }
+            while True:
+                frame = await queue.get()
+                yield {"data": json.dumps(frame)}
+        finally:
+            self._subscribers.discard(queue)
 
     def dashboard(self) -> dict[str, Any]:
         """A snapshot for the activity sidebar (Slice 3): tokens, minions, files.
@@ -345,8 +372,26 @@ class WebChatManager:
                 "by_tier": stats.by_tier,
                 "active": minions,
             },
-            "files": [{"path": p, "action": a} for p, a in sorted(self.files_changed.items())],
+            "files": self._files_on_disk(),
         }
+
+    def _files_on_disk(self) -> list[dict[str, str]]:
+        """Changed files that actually exist now.
+
+        ``before_tool_execute`` (which records the path) also fires for the
+        *deferred* call before approval, so a denied write would otherwise leave
+        a phantom entry. Filtering to files that exist on disk keeps the panel
+        honest — a denied/failed write never created a file, so it drops out.
+        """
+        out: list[dict[str, str]] = []
+        for path, action in sorted(self.files_changed.items()):
+            try:
+                exists = paths.resolve_under_project(path).exists()
+            except OSError:
+                exists = True  # can't tell — don't hide it
+            if exists:
+                out.append({"path": path, "action": action})
+        return out
 
 
 _MANAGER: WebChatManager | None = None

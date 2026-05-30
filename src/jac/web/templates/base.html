@@ -24,7 +24,7 @@
       </div>
     </aside>
 
-    <main class="content">
+    <main class="content {% block main_class %}{% endblock %}">
       {% if ok %}<div class="flash ok">{{ ok }}</div>{% endif %}
       {% if err %}<div class="flash err">{{ err }}</div>{% endif %}
       {% block content %}{% endblock %}
