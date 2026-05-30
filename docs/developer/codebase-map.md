@@ -20,6 +20,7 @@ src/jac/
 ├── profiles_io.py           # YAML codec + pre-D22 migration helpers
 ├── profiles_crud.py         # list/get/add/remove + resolve_active_profile_name
 ├── secrets.py               # keyring / dotenv / env-only backends
+├── sdk.py                   # jac.sdk — documented embedding facade (R5d)
 ├── cli/
 │   ├── app.py               # Typer root: jac, init, sessions; sub-apps profiles/keys/a2a
 │   ├── repl.py              # Interactive loop, build_gru wiring, slash dispatch
@@ -68,6 +69,7 @@ src/jac/
 │               └── peer.py      # /a2a peer add|remove
 ├── runtime/
 │   ├── gru.py               # build_gru, _default_tool_capabilities, sub_agent_capabilities
+│   ├── driver.py            # SessionDriver — surface-agnostic turn pipeline + budget guards (R5)
 │   ├── session.py           # Session persistence, plan.json, delete/prune
 │   ├── events.py            # Typed JacEvent union + EventBus
 │   ├── hooks.py             # make_hooks → EventBus (PAI Hooks wiring)

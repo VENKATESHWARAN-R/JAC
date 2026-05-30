@@ -28,22 +28,13 @@ from prompt_toolkit.document import Document
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.styles import Style
-from pydantic_ai import Agent, AgentRunResult, capture_run_messages
-from pydantic_ai.messages import (
-    ModelRequest,
-    ModelResponse,
-    RetryPromptPart,
-    TextPart,
-    ToolCallPart,
-    ToolReturnPart,
-    UserPromptPart,
-)
+from pydantic_ai import Agent
 from rich.console import Console
 
 from jac import __version__
 from jac.capabilities.a2a import make_a2a_capability
 from jac.capabilities.clarify import make_clarify_capability
-from jac.capabilities.history import estimate_text_tokens, estimate_tokens, force_compact
+from jac.capabilities.history import estimate_tokens, force_compact
 from jac.capabilities.mcp import make_mcp_capability
 from jac.capabilities.plan import make_plan_capability
 from jac.capabilities.process import make_process_capability
@@ -71,13 +62,10 @@ from jac.profiles import Profile
 from jac.profiles_crud import get_profile
 from jac.providers.registry import get_provider_registry, provider_prefix
 from jac.runtime.approval import make_approval_handler
+from jac.runtime.driver import SessionDriver
 from jac.runtime.events import (
-    BudgetHardStop,
-    CompactionRefused,
     EventBus,
     PlanReplaced,
-    RunCompleted,
-    RunFailed,
 )
 from jac.runtime.gru import build_gru, sub_agent_capabilities
 from jac.runtime.hooks import make_hooks
@@ -93,7 +81,7 @@ from jac.runtime.sub_agent_usage import (
     set_sub_agent_usage_recorder,
 )
 from jac.runtime.tool_summarize import reset_summarizer_stats, set_summarizer_model
-from jac.runtime.usage import BudgetLimits, UsageTracker, make_usage_tracker
+from jac.runtime.usage import BudgetLimits, make_usage_tracker
 from jac.secrets import (
     apply_ad_hoc_model_env,
     apply_profile_env,
@@ -225,118 +213,22 @@ def _greet(
     console.print("[dim]type 'exit' or Ctrl-D to quit[/dim]", highlight=False)
 
 
-async def _run_turn(
-    gru: Agent,
-    bus: EventBus,
-    text: str,
-    message_history: list,
-    usage_tracker: UsageTracker | None = None,
-) -> list:
-    """Run one agent turn through the bus. Returns the updated message history.
+async def _run_turn(driver: SessionDriver, bus: EventBus, text: str, message_history: list) -> list:
+    """CLI wrapper around :meth:`SessionDriver.run_turn`.
 
-    On successful completion, records the turn's input / output token
-    counts into ``usage_tracker`` (D25). The tracker handles JSONL
-    persistence and threshold-crossing events; we just hand it the deltas.
-
-    On a **hard failure** (a tool exhausting retries, an MCP server failing
-    to connect, a model error) we don't silently discard the turn — that
-    wiped the user's message and made Gru "forget" the conversation. Instead
-    we persist the messages captured up to the crash (via
-    ``capture_run_messages``), closing any dangling tool calls so the history
-    stays resumable on the next turn.
+    The surface-agnostic turn logic (running the agent, recording usage,
+    recovering a failed history) lives in the driver (R5). This wrapper owns
+    only the CLI-specific orchestration: spin up a ``CliRenderer``, run the
+    driver concurrently, consume the bus until the terminal event, then print
+    the final frame. A browser/SDK surface writes its own equivalent of this
+    function around the same ``driver.run_turn`` call.
     """
     renderer = CliRenderer(console)
-    captured: list = []
-
-    async def run_agent_and_signal() -> AgentRunResult[str]:
-        nonlocal captured
-        with capture_run_messages() as msgs:
-            try:
-                result = await gru.run(text, message_history=message_history)
-            except Exception as exc:
-                captured = list(msgs)
-                await bus.emit(RunFailed(error=str(exc)))
-                raise
-        await bus.emit(RunCompleted(output=str(result.output)))
-        return result
-
-    agent_task = asyncio.create_task(run_agent_and_signal())
+    agent_task = asyncio.create_task(driver.run_turn(text, message_history))
     await renderer.consume(bus)
-
-    try:
-        result = await agent_task
-    except Exception:
-        # The renderer already rendered the error from the bus event. Keep
-        # the conversation alive: persist what we captured (sanitized) so the
-        # next turn still has context instead of starting from a blank slate.
-        renderer.print_final()
-        return _recover_failed_history(message_history, captured, text)
-
+    result = await agent_task
     renderer.print_final()
-    if usage_tracker is not None:
-        usage = result.usage
-        await usage_tracker.record(
-            input_tokens=usage.input_tokens,
-            output_tokens=usage.output_tokens,
-            cache_read_tokens=getattr(usage, "cache_read_tokens", 0),
-            cache_write_tokens=getattr(usage, "cache_write_tokens", 0),
-        )
-    return result.all_messages()
-
-
-def _close_open_tool_calls(messages: list) -> list:
-    """Append synthetic returns for any tool call left unanswered by a crash.
-
-    pydantic-ai refuses to resume a history that ends with an unprocessed
-    tool call ("Cannot provide a new user prompt when the message history
-    contains unprocessed tool calls"). A run that died mid-tool (retries
-    exhausted, server disconnected) leaves exactly that. We pair every open
-    ``ToolCallPart`` with a ``ToolReturnPart`` marking it aborted so the next
-    turn can continue.
-    """
-    answered: set[str] = set()
-    calls: dict[str, str] = {}
-    for msg in messages:
-        for part in getattr(msg, "parts", []):
-            if isinstance(part, ToolCallPart):
-                calls[part.tool_call_id] = part.tool_name
-            elif isinstance(part, ToolReturnPart | RetryPromptPart):
-                tcid = getattr(part, "tool_call_id", None)
-                if tcid:
-                    answered.add(tcid)
-    open_calls = [(cid, name) for cid, name in calls.items() if cid not in answered]
-    if not open_calls:
-        return list(messages)
-    returns = [
-        ToolReturnPart(
-            tool_name=name,
-            content="(tool call aborted: the turn failed before it returned)",
-            tool_call_id=cid,
-        )
-        for cid, name in open_calls
-    ]
-    return [*messages, ModelRequest(parts=returns)]
-
-
-def _recover_failed_history(original: list, captured: list, text: str) -> list:
-    """Build a resumable history after a turn crashed.
-
-    Prefers the messages captured during the failed run (they include the
-    user's prompt + whatever the model/tools produced), with dangling tool
-    calls closed. If nothing was captured (the run died before recording the
-    turn — e.g. an MCP server that failed to connect at run start), we
-    synthesize the user turn plus a short failure note onto the prior history
-    so the user's message and context survive.
-    """
-    if captured:
-        return _close_open_tool_calls(captured)
-    return [
-        *original,
-        ModelRequest(parts=[UserPromptPart(content=text)]),
-        ModelResponse(
-            parts=[TextPart(content="(the previous turn failed before it could complete)")]
-        ),
-    ]
+    return result.message_history
 
 
 async def _repl_loop(
@@ -483,6 +375,13 @@ async def _repl_loop(
     # post-construction so the order stays readable.
     a2a_capability.usage_tracker = usage_tracker
 
+    # The surface-agnostic turn driver (R5). Owns the turn pipeline — running
+    # the agent, recording usage, recovering a failed history, and the budget
+    # pre-flight guards. The REPL is now a thin consumer: it builds the driver
+    # here, then per turn creates a CliRenderer and consumes the bus while the
+    # driver runs the agent. Gru/tracker are swapped on it on rebuild/switch.
+    driver = SessionDriver(gru=gru, bus=bus, usage_tracker=usage_tracker)
+
     # Phase B — install the sub-agent factory. Requires the active
     # profile (for tier cascade) and a capability list factory (closes
     # over bus + summarizer_model so spawned sub-agents inherit them).
@@ -628,6 +527,7 @@ async def _repl_loop(
                     # or future inbound calls feed the right session's
                     # project_total counter.
                     a2a_capability.usage_tracker = usage_tracker
+                    driver.usage_tracker = usage_tracker
                     status.session_id = session.session_id
                     status.message_history = message_history
                     status.budget_pct = usage_tracker.status_pct()
@@ -643,6 +543,7 @@ async def _repl_loop(
                     )
                     if rebuilt is not None:
                         gru, model_id, profile_name, active_profile = rebuilt
+                        driver.gru = gru
                         status.model_id = model_id
                         status.profile_name = profile_name
                         status.profile = active_profile
@@ -690,6 +591,7 @@ async def _repl_loop(
                         except JacConfigError as exc:
                             console.print(f"[red]rebuild failed:[/red] {exc}")
                         else:
+                            driver.gru = gru
                             if result.note:
                                 console.print(f"[green]✓[/green] {result.note}")
                 elif isinstance(result, StartA2AServer):
@@ -730,13 +632,11 @@ async def _repl_loop(
                     # synthesized text — budget checks + persistence apply
                     # the same way a real user prompt would.
                     text = result.text
-                    if await _refuse_if_over_budget(bus, message_history, text):
+                    if await _refuse_if_over_budget(driver, message_history, text):
                         continue
-                    if await _refuse_if_over_token_budget(bus, usage_tracker):
+                    if await _refuse_if_over_token_budget(driver):
                         continue
-                    message_history = await _run_turn(
-                        gru, bus, text, message_history, usage_tracker
-                    )
+                    message_history = await _run_turn(driver, bus, text, message_history)
                     status.message_history = message_history
                     status.budget_pct = usage_tracker.status_pct()
                     status.exact_context_tokens = usage_tracker.last_input_tokens
@@ -746,12 +646,12 @@ async def _repl_loop(
                         console.print(f"[yellow]warning:[/yellow] session save failed: {exc}")
                 continue
 
-            if await _refuse_if_over_budget(bus, message_history, text):
+            if await _refuse_if_over_budget(driver, message_history, text):
                 continue
-            if await _refuse_if_over_token_budget(bus, usage_tracker):
+            if await _refuse_if_over_token_budget(driver):
                 continue
 
-            message_history = await _run_turn(gru, bus, text, message_history, usage_tracker)
+            message_history = await _run_turn(driver, bus, text, message_history)
             status.message_history = message_history
             status.budget_pct = usage_tracker.status_pct()
             status.exact_context_tokens = usage_tracker.last_input_tokens
@@ -809,51 +709,41 @@ async def _handle_stop_a2a(cap) -> None:
     console.print("[green]✓ A2A server stopped[/green]")
 
 
-async def _refuse_if_over_token_budget(bus: EventBus, tracker: UsageTracker) -> bool:
-    """Pre-flight: refuse the turn if any token budget is already at hardstop.
+async def _refuse_if_over_token_budget(driver: SessionDriver) -> bool:
+    """CLI wrapper: run the driver's token-budget guard, print on refusal.
 
-    Per D25 + the locked decision for 1.7.f: strict check — only refuse
-    when already past the line. The 80% warn already gave the user a
-    heads-up. Emits :class:`BudgetHardStop` so other surfaces (status
-    bar, future TUI) get the same signal.
+    The check + the :class:`BudgetHardStop` emission (with ``suggested_action``
+    for other surfaces) live in :meth:`SessionDriver.check_token_budget`; this
+    renders the styled CLI message and returns whether the turn was refused.
     """
-    tripped = tracker.is_over_hardstop()
-    if tripped is None:
+    event = await driver.check_token_budget()
+    if event is None:
         return False
-    kind, used, budget = tripped
-    await bus.emit(BudgetHardStop(kind=kind, used=used, budget=budget))
     console.print(
-        f"[red]token budget exceeded[/red] — {kind} at "
-        f"[bold]{used:,}/{budget:,}[/bold] tokens.\n"
+        f"[red]token budget exceeded[/red] — {event.kind} at "
+        f"[bold]{event.used:,}/{event.budget:,}[/bold] tokens.\n"
         "[dim]raise it with [bold]/budget extend N[/bold] for this session, "
         "or edit the [bold]budget:[/bold] block in your config.[/dim]"
     )
     return True
 
 
-async def _refuse_if_over_budget(bus: EventBus, message_history: list, user_text: str) -> bool:
-    """Pre-flight: refuse the turn if context is already above the refuse pct.
+async def _refuse_if_over_budget(
+    driver: SessionDriver, message_history: list, user_text: str
+) -> bool:
+    """CLI wrapper: run the driver's context-budget guard, print on refusal.
 
-    Estimates the tokens we'd send (history + the next user prompt) and
-    compares against ``settings.compaction.refuse_pct * max_context_tokens``.
-    On refuse: emit :class:`CompactionRefused`, surface an actionable
-    message, and return ``True``. The caller skips the model call.
+    The estimate + the :class:`CompactionRefused` emission live in
+    :meth:`SessionDriver.check_context_budget`; this renders the styled CLI
+    message and returns whether the turn was refused.
     """
-    settings = get_settings().compaction
-    # Sliding strategy never refuses — it drops oldest turns at send time and
-    # flags the overflow in the status bar. Refusing would defeat the point.
-    if settings.strategy == "sliding":
+    event = await driver.check_context_budget(message_history, user_text)
+    if event is None:
         return False
     budget = resolve_context_budget()
-    if budget <= 0:
-        return False
-    projected = estimate_tokens(message_history) + estimate_text_tokens(user_text)
-    pct = int((projected / budget) * 100)
-    if pct < settings.refuse_pct:
-        return False
-    await bus.emit(CompactionRefused(usage_pct=pct))
     console.print(
-        f"[red]context at {pct}% of {budget:,}-token budget[/red] — refusing the turn.\n"
+        f"[red]context at {event.usage_pct}% of {budget:,}-token budget[/red] — "
+        "refusing the turn.\n"
         "[dim]free up context with [bold]/compact[/bold] (summarize now), "
         "[bold]/clear[/bold] (start fresh), [bold]/context <N>[/bold] (raise the "
         "budget), or switch [bold]compaction.strategy[/bold] to sliding.[/dim]"

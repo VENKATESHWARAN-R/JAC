@@ -20,7 +20,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from jac.cli.repl import _close_open_tool_calls, _recover_failed_history
+from jac.runtime.driver import _close_open_tool_calls, _recover_failed_history
 
 
 def _dangling() -> list:
