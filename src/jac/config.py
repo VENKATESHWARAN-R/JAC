@@ -150,6 +150,25 @@ class BudgetSettings(BaseModel):
     hardstop_pct: int = 100
     """Threshold at which the next user turn is pre-flight refused."""
 
+    @field_validator(
+        "session_input_tokens",
+        "session_total_tokens",
+        "project_total_tokens",
+    )
+    @classmethod
+    def _reject_non_positive(cls, v: int | None) -> int | None:
+        # A budget knob is either ``None`` (unset → unlimited) or a positive
+        # cap. ``0`` or a negative number is almost always a typo that would
+        # silently mean "unlimited" downstream (usage.py treats ``<= 0`` as
+        # "no budget") — the opposite of the user's intent. Fail loud instead.
+        if v is not None and v <= 0:
+            raise ValueError(
+                f"budget token caps must be positive (got {v}). Leave a knob "
+                "unset (omit it, or null in YAML) for unlimited; a value of 0 "
+                "is rejected so it can't be mistaken for a limit."
+            )
+        return v
+
 
 _DEFAULT_SUMMARIZE_PROMPT = """\
 You are compressing the output of a developer tool so another AI agent can

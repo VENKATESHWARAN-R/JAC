@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import difflib
 import warnings
 from functools import cache
 from pathlib import Path
 from typing import Any
 
+import logfire
 import yaml
 from pydantic import BaseModel, Field
 
@@ -67,14 +69,35 @@ class ProviderRegistry(BaseModel):
     providers: dict[str, ProviderSpec] = Field(default_factory=dict)
 
     def required_env_for_prefix(self, prefix: str) -> list[str]:
-        """Return required secret env vars for a pydantic-ai model prefix."""
+        """Return required secret env vars for a pydantic-ai model prefix.
+
+        An unknown prefix returns ``[]`` — some providers are legitimately
+        keyless (a local Ollama, a gateway). But it's *loud* about it: a
+        typo'd model id like ``anthropc:...`` would otherwise load needing
+        zero credentials and then fail opaquely deep in the provider. We
+        name the offending prefix, the closest known match, and the full
+        known list on both a Python warning and a Logfire span so the typo
+        is visible at config time rather than at request time.
+        """
         for spec in self.providers.values():
             if spec.prefix == prefix:
                 return list(spec.required_env)
-        warnings.warn(
-            f"unknown model provider prefix {prefix!r}; no credentials will be required. "
-            "Add an entry to providers.yaml or set requires_env on the profile.",
-            stacklevel=2,
+
+        known = sorted({spec.prefix for spec in self.providers.values()})
+        suggestion = difflib.get_close_matches(prefix, known, n=1)
+        hint = f" Did you mean {suggestion[0]!r}?" if suggestion else ""
+        message = (
+            f"unknown model provider prefix {prefix!r}; no credentials will be "
+            "required, so a typo'd model id will fail later at the provider rather "
+            f"than here.{hint} Known prefixes: {', '.join(known) or '(none)'}. "
+            "Add an entry to providers.yaml or set required_env on the profile."
+        )
+        warnings.warn(message, stacklevel=2)
+        logfire.warning(
+            "unknown model provider prefix {prefix!r}",
+            prefix=prefix,
+            suggestion=suggestion[0] if suggestion else None,
+            known_prefixes=known,
         )
         return []
 
