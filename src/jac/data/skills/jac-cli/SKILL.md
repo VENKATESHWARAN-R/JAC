@@ -13,7 +13,7 @@ Use this skill when the user asks **"how do I run X in JAC"** or **"what's the s
 
 There are **three command surfaces**:
 
-1. **Typer commands** — `jac …` from the shell. Subcommands (`init`, `sessions`, `profiles`, `keys`, `a2a serve`) do not need a model.
+1. **Typer commands** — `jac …` from the shell. Subcommands (`init`, `sessions`, `profiles`, `keys`, `a2a serve`, `web serve`) do not need a model.
 2. **Root flags on `jac`** — control how the REPL boots: `--model`, `--profile`, `--resume`, `--session`.
 3. **Slash commands** — typed inside the REPL. Handled locally, **never sent to the model**. Tab-complete the first word after `/`.
 
@@ -175,6 +175,18 @@ Peer management — three auth shapes:
 ```
 
 Secrets (bearer token, API key value, client secret) are always prompted with hidden input — **never** pass them on the command line.
+
+## Web UI composition
+
+A local-first, single-user browser control panel for profiles, keys, and sessions (chat is a later slice):
+
+```bash
+jac web serve                        # http://127.0.0.1:8770, opens browser
+jac web serve --port 9000 --no-open
+jac web serve --host 0.0.0.0         # WARNS — non-loopback exposes API keys; single-user, no auth
+```
+
+Loopback is the security boundary (no accounts). Which sessions it shows depends on the launch directory: inside a project → that project's sessions; loose folder → the global `~/.jac` pool. It is **not** a hosted/multi-tenant service.
 
 ## Common composition mistakes to avoid
 

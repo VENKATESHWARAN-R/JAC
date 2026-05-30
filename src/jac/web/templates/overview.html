@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Overview</h1>
+
+<div class="cards">
+  <div class="card">
+    <div class="card-label">Workspace</div>
+    <div class="card-value">{{ scope.label }}</div>
+    <div class="card-foot">{{ scope.root }}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Default profile</div>
+    <div class="card-value">{{ default_profile or "—" }}</div>
+    <div class="card-foot">{{ profile_count if profile_count is not none else "?" }} profile(s)</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Model</div>
+    <div class="card-value mono">{{ model or "—" }}</div>
+    <div class="card-foot">secrets: {{ secrets_backend }}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Sessions</div>
+    <div class="card-value">{{ session_count }}</div>
+    <div class="card-foot">
+      {% if token_total is not none %}{{ "{:,}".format(token_total) }} tokens used{% else %}usage ledger unreadable{% endif %}
+    </div>
+  </div>
+</div>
+
+<p class="note">
+  This panel manages the <strong>{{ scope.label }}</strong> workspace at
+  <span class="mono">{{ scope.root }}</span>. Sessions and usage shown here are
+  scoped to it. JAC's web UI is local-first and single-user — bound to loopback,
+  with no accounts.
+</p>
+{% endblock %}

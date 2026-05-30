@@ -21,6 +21,7 @@
 | `jac keys set KEY` | Prompt and store secret (not with `env-only` backend) |
 | `jac keys unset KEY` | Remove secret from backend |
 | `jac a2a serve` | Headless A2A guest server (foreground until Ctrl-C) |
+| `jac web serve` | Local-first web UI: a browser control panel for profiles, keys, and sessions (foreground until Ctrl-C) |
 
 ### Root flags (`jac`)
 
@@ -31,7 +32,7 @@
 | `--resume` | `-r` | Resume latest session in this project |
 | `--session` | `-s` | Resume specific session id |
 
-Subcommands (`init`, `sessions`, `profiles`, `keys`, `a2a`) do not activate a profile or require a model.
+Subcommands (`init`, `sessions`, `profiles`, `keys`, `a2a`, `web`) do not activate a profile or require a model.
 
 **Project vs. global workspace.** A folder is a *project* if it has `.git` or `.agents/` at or above the CWD. Outside any project, JAC runs "loose": sessions and `usage.jsonl` go to the global user workspace (`~/.jac/`) rather than creating `.agents/` in an unrelated folder. `jac init` offers to create `.agents/` to make the current folder a project.
 
@@ -43,6 +44,16 @@ Subcommands (`init`, `sessions`, `profiles`, `keys`, `a2a`) do not activate a pr
 | `--port` / `-p` | Port (default: profile `a2a.port`, else `8001`) |
 | `--unsafe` | Disable bearer auth — any client on the port can call guest Gru |
 | `--profile` | Profile for model/credentials (default: `default_profile`) |
+
+### `jac web serve` flags
+
+| Flag | Description |
+| --- | --- |
+| `--host` | Bind address (default: `127.0.0.1`). Non-loopback binds warn loudly — the panel handles API keys in the clear, and the UI is single-user with no auth |
+| `--port` / `-p` | Port (default: `8770`) |
+| `--open` / `--no-open` | Open the UI in your browser on start (default: open) |
+
+The web UI is **local-first and single-user**: the loopback bind is the access boundary, there are no accounts. Which sessions it shows depends on where you launch it — inside a project it shows that project's sessions; in a loose folder, the global `~/.jac` pool. See [`design/web-surface.md`](https://venkateshwaran-r.github.io/JAC/web-surface/) for the full design.
 
 ## REPL exit
 

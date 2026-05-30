@@ -31,6 +31,7 @@ from jac.cli.sessions_cmd import app as sessions_app
 from jac.errors import JacConfigError
 from jac.runtime.observability import setup_observability
 from jac.secrets import apply_ad_hoc_model_env, apply_profile_env
+from jac.web import app as web_app
 from jac.workspace.bootstrap import ensure_user_workspace
 
 app = typer.Typer(
@@ -43,6 +44,7 @@ app.add_typer(profiles_app, name="profiles")
 app.add_typer(keys_app, name="keys")
 app.add_typer(a2a_app, name="a2a")
 app.add_typer(sessions_app, name="sessions")
+app.add_typer(web_app, name="web")
 
 console = Console()
 

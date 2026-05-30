@@ -22,7 +22,7 @@ src/jac/
 ├── secrets.py               # keyring / dotenv / env-only backends
 ├── sdk.py                   # jac.sdk — documented embedding facade (R5d)
 ├── cli/
-│   ├── app.py               # Typer root: jac, init, sessions; sub-apps profiles/keys/a2a
+│   ├── app.py               # Typer root: jac, init, sessions; sub-apps profiles/keys/a2a/web
 │   ├── repl.py              # Interactive loop, build_gru wiring, slash dispatch
 │   ├── renderer.py          # Rich UI, approval/clarify panels, compaction notices, mode markers
 │   ├── statusbar.py         # prompt-toolkit bottom toolbar (inline branch debounce)
@@ -67,6 +67,13 @@ src/jac/
 │               ├── token.py     # /a2a token
 │               ├── peers.py     # /a2a peers
 │               └── peer.py      # /a2a peer add|remove
+├── web/                     # Local-first web UI surface (D48) — mirrors cli/
+│   ├── app.py               # Typer `jac web serve` + uvicorn launch + loopback guard
+│   ├── server.py            # create_app() — Starlette app, routes, Jinja2 wiring
+│   ├── panel.py             # Read-side: view-model assembly from management APIs
+│   ├── actions.py           # Write-side: form POST handlers → profiles_crud/secrets/Session
+│   ├── templates/           # Jinja2: base + overview/profiles/keys/sessions
+│   └── static/jac.css       # Panel styling (dark, minion-yellow)
 ├── runtime/
 │   ├── gru.py               # build_gru, _default_tool_capabilities, sub_agent_capabilities
 │   ├── driver.py            # SessionDriver — surface-agnostic turn pipeline + budget guards (R5)
@@ -215,6 +222,7 @@ History compaction is not a tool — `make_history_capability` registers a `Proc
 | `jac profiles` / `list` / `use` / `remove` / `edit` | `cli/profiles_cmd.py` |
 | `jac keys` / `list` / `set` / `unset` | `cli/keys_cmd.py` |
 | `jac a2a serve` | `cli/a2a.py` |
+| `jac web serve` | `web/app.py` → `web/server.py:create_app` |
 
 ## On-disk artifacts (project)
 

@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>JAC — {% block title %}{{ active|capitalize }}{% endblock %}</title>
+  <link rel="stylesheet" href="/static/jac.css">
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="brand">JAC</div>
+      <div class="brand-sub">web · v{{ version }}</div>
+      <nav>
+        <a href="/" class="{{ 'on' if active == 'overview' }}">Overview</a>
+        <a href="/profiles" class="{{ 'on' if active == 'profiles' }}">Profiles</a>
+        <a href="/keys" class="{{ 'on' if active == 'keys' }}">Keys &amp; secrets</a>
+        <a href="/sessions" class="{{ 'on' if active == 'sessions' }}">Sessions</a>
+        <span class="nav-soon" title="Coming in Slice 2">Chat &middot; soon</span>
+      </nav>
+      <div class="sidebar-foot">
+        local-first &middot; single-user<br>
+        loopback only
+      </div>
+    </aside>
+
+    <main class="content">
+      {% if ok %}<div class="flash ok">{{ ok }}</div>{% endif %}
+      {% if err %}<div class="flash err">{{ err }}</div>{% endif %}
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+</body>
+</html>
