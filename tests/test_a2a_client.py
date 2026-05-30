@@ -35,7 +35,11 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
-from jac.capabilities.a2a.client import build_outbound_tools, resolve_target
+from jac.capabilities.a2a.client import (
+    _validate_outbound_url,
+    build_outbound_tools,
+    resolve_target,
+)
 from jac.errors import JacConfigError
 from jac.profiles import A2APeerConfig
 from jac.runtime.events import (
@@ -146,7 +150,7 @@ def test_call_applies_auth_when_url_matches_configured_peer():
     peer must send the bearer header (otherwise the peer returns 401)."""
     app, log = _make_rpc_app(expected_token="t-promoted")
     peers = {"project-a": A2APeerConfig(url="http://peer", token="t-promoted")}
-    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: peers)
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: peers, allow_private_peers=True)
     with _drive_via_asgi(app):
         result = _run(a2a_call(reason="x", peer_or_url="http://peer", message="hi"))
     # No 401 → call succeeded, bearer was applied.
@@ -217,7 +221,7 @@ def _drive_via_asgi(app: Starlette, base_url: str = "http://peer"):
 
 def test_discover_returns_card_with_camelcase_keys():
     app = _make_card_app(_sample_card())
-    [a2a_discover, _] = build_outbound_tools(peers_getter=lambda: {})
+    [a2a_discover, _] = build_outbound_tools(peers_getter=lambda: {}, allow_private_peers=True)
     with _drive_via_asgi(app):
         card = _run(a2a_discover(reason="check the peer", url="http://peer"))
     # Tool returns spec camelCase keys
@@ -228,7 +232,7 @@ def test_discover_returns_card_with_camelcase_keys():
 
 
 def test_discover_rejects_empty_url():
-    [a2a_discover, _] = build_outbound_tools(peers_getter=lambda: {})
+    [a2a_discover, _] = build_outbound_tools(peers_getter=lambda: {}, allow_private_peers=True)
     with pytest.raises(ValueError, match="must not be empty"):
         _run(a2a_discover(reason="x", url=""))
 
@@ -238,7 +242,7 @@ def test_discover_raises_on_404():
         return Response(status_code=404)
 
     app = Starlette(routes=[Route("/.well-known/agent-card.json", not_found)])
-    [a2a_discover, _] = build_outbound_tools(peers_getter=lambda: {})
+    [a2a_discover, _] = build_outbound_tools(peers_getter=lambda: {}, allow_private_peers=True)
     with _drive_via_asgi(app), pytest.raises(ValueError, match="HTTP 404"):
         _run(a2a_discover(reason="x", url="http://peer"))
 
@@ -248,7 +252,7 @@ def test_discover_raises_on_malformed_card():
         return JSONResponse({"not": "a card"})
 
     app = Starlette(routes=[Route("/.well-known/agent-card.json", bad_card)])
-    [a2a_discover, _] = build_outbound_tools(peers_getter=lambda: {})
+    [a2a_discover, _] = build_outbound_tools(peers_getter=lambda: {}, allow_private_peers=True)
     with _drive_via_asgi(app), pytest.raises(ValueError, match="malformed AgentCard"):
         _run(a2a_discover(reason="x", url="http://peer"))
 
@@ -256,7 +260,9 @@ def test_discover_raises_on_malformed_card():
 def test_discover_emits_outbound_events():
     app = _make_card_app(_sample_card())
     bus = EventBus()
-    [a2a_discover, _] = build_outbound_tools(peers_getter=lambda: {}, bus=bus)
+    [a2a_discover, _] = build_outbound_tools(
+        peers_getter=lambda: {}, bus=bus, allow_private_peers=True
+    )
 
     async def go():
         await a2a_discover(reason="x", url="http://peer")
@@ -328,7 +334,7 @@ def _make_rpc_app(
 
 def test_call_sends_message_send_with_text_part():
     app, log = _make_rpc_app()
-    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {})
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {}, allow_private_peers=True)
     with _drive_via_asgi(app):
         result = _run(a2a_call(reason="ask peer", peer_or_url="http://peer", message="hello peer"))
     assert result["id"] == "task-1"
@@ -343,7 +349,7 @@ def test_call_sends_message_send_with_text_part():
 def test_call_injects_bearer_for_named_peer():
     app, log = _make_rpc_app(expected_token="secret-123")
     peers = {"backend": A2APeerConfig(url="http://peer", token="secret-123")}
-    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: peers)
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: peers, allow_private_peers=True)
     with _drive_via_asgi(app):
         _run(a2a_call(reason="x", peer_or_url="backend", message="hi"))
     assert log[0]["auth"] == "Bearer secret-123"
@@ -351,7 +357,7 @@ def test_call_injects_bearer_for_named_peer():
 
 def test_call_omits_auth_for_raw_url():
     app, log = _make_rpc_app()
-    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {})
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {}, allow_private_peers=True)
     with _drive_via_asgi(app):
         _run(a2a_call(reason="x", peer_or_url="http://peer", message="hi"))
     assert log[0]["auth"] == ""
@@ -360,7 +366,7 @@ def test_call_omits_auth_for_raw_url():
 def test_call_passes_context_id_when_provided():
     """Request body uses camelCase aliases on the wire (`by_alias=True`)."""
     app, log = _make_rpc_app()
-    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {})
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {}, allow_private_peers=True)
     with _drive_via_asgi(app):
         _run(a2a_call(reason="x", peer_or_url="http://peer", message="hi", context_id="ctx-99"))
     assert log[0]["body"]["params"]["message"]["contextId"] == "ctx-99"
@@ -368,7 +374,7 @@ def test_call_passes_context_id_when_provided():
 
 def test_call_omits_context_id_for_fresh_conversation():
     app, log = _make_rpc_app()
-    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {})
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {}, allow_private_peers=True)
     with _drive_via_asgi(app):
         _run(a2a_call(reason="x", peer_or_url="http://peer", message="hi"))
     msg = log[0]["body"]["params"]["message"]
@@ -380,19 +386,19 @@ def test_call_omits_context_id_for_fresh_conversation():
 
 def test_call_surfaces_jsonrpc_error_as_valueerror():
     app, _ = _make_rpc_app(response_error={"code": -32600, "message": "bad request"})
-    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {})
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {}, allow_private_peers=True)
     with _drive_via_asgi(app), pytest.raises(ValueError, match=r"-32600.*bad request"):
         _run(a2a_call(reason="x", peer_or_url="http://peer", message="hi"))
 
 
 def test_call_rejects_empty_message():
-    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {})
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {}, allow_private_peers=True)
     with pytest.raises(ValueError, match="must not be empty"):
         _run(a2a_call(reason="x", peer_or_url="http://peer", message=""))
 
 
 def test_call_raises_on_unknown_peer_name():
-    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {})
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {}, allow_private_peers=True)
     with pytest.raises(JacConfigError, match="unknown A2A peer"):
         _run(a2a_call(reason="x", peer_or_url="nope", message="hi"))
 
@@ -401,7 +407,9 @@ def test_call_emits_outbound_events_with_peer_name():
     app, _ = _make_rpc_app()
     peers = {"backend": A2APeerConfig(url="http://peer", token=None)}
     bus = EventBus()
-    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: peers, bus=bus)
+    [_, a2a_call] = build_outbound_tools(
+        peers_getter=lambda: peers, bus=bus, allow_private_peers=True
+    )
 
     async def go():
         await a2a_call(reason="x", peer_or_url="backend", message="hello")
@@ -420,7 +428,7 @@ def test_call_emits_outbound_events_with_peer_name():
 def test_call_emits_failed_state_on_jsonrpc_error():
     app, _ = _make_rpc_app(response_error={"code": -32000, "message": "nope"})
     bus = EventBus()
-    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {}, bus=bus)
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {}, bus=bus, allow_private_peers=True)
 
     async def go():
         import contextlib
@@ -442,7 +450,7 @@ def test_peers_getter_picks_up_runtime_changes():
     """A2ACapability swaps peers in place on /profile — the getter must
     see the new map without rebuilding the tools."""
     peers: dict[str, A2APeerConfig] = {}
-    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: peers)
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: peers, allow_private_peers=True)
 
     # Initially no peer named "live"
     with pytest.raises(JacConfigError):
@@ -545,7 +553,7 @@ def test_call_polls_until_completed():
             }
         ],
     )
-    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {})
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {}, allow_private_peers=True)
     with _drive_via_asgi(app):
         result = _run(a2a_call(reason="x", peer_or_url="http://peer", message="hi"))
 
@@ -560,7 +568,7 @@ def test_call_returns_inline_terminal_without_polling():
     """If message/send already returns a terminal task (no broker / fast peer),
     we must NOT issue any tasks/get calls."""
     app, log = _make_rpc_app()
-    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {})
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {}, allow_private_peers=True)
     with _drive_via_asgi(app):
         _run(a2a_call(reason="x", peer_or_url="http://peer", message="hi"))
     assert [entry["body"]["method"] for entry in log] == ["message/send"]
@@ -570,7 +578,7 @@ def test_call_stops_polling_on_input_required():
     """input-required is non-terminal but waiting on us — return the task
     as-is so the calling Gru can read the embedded prompt."""
     app, log = _make_broker_app(states=["working", "input-required"])
-    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {})
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {}, allow_private_peers=True)
     with _drive_via_asgi(app):
         result = _run(a2a_call(reason="x", peer_or_url="http://peer", message="hi"))
     assert result["status"]["state"] == "input-required"
@@ -583,7 +591,7 @@ def test_call_propagates_auth_to_tasks_get():
     """The same bearer used on message/send must flow into tasks/get polls."""
     app, log = _make_broker_app(states=["completed"], expected_token="secret-9")
     peers = {"backend": A2APeerConfig(url="http://peer", token="secret-9")}
-    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: peers)
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: peers, allow_private_peers=True)
     with _drive_via_asgi(app):
         _run(a2a_call(reason="x", peer_or_url="backend", message="hi"))
     # Both calls carried the bearer.
@@ -603,7 +611,7 @@ def test_call_timeout_returns_partial_with_marker(monkeypatch):
 
     # Always "working" — never reaches a terminal state.
     app, _log = _make_broker_app(states=["working"] * 50)
-    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {})
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {}, allow_private_peers=True)
     with _drive_via_asgi(app):
         result = _run(a2a_call(reason="x", peer_or_url="http://peer", message="hi"))
     assert result["status"]["state"] == "working"
@@ -613,7 +621,7 @@ def test_call_timeout_returns_partial_with_marker(monkeypatch):
 def test_call_passes_task_id_through_to_tasks_get():
     """tasks/get params.id must be the id returned by message/send."""
     app, log = _make_broker_app(states=["completed"])
-    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {})
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {}, allow_private_peers=True)
     with _drive_via_asgi(app):
         _run(a2a_call(reason="x", peer_or_url="http://peer", message="hi"))
     get_call = next(e for e in log if e["method"] == "tasks/get")
@@ -640,7 +648,7 @@ def test_call_handles_message_response_without_polling():
         )
 
     app = Starlette(routes=[Route("/", rpc_endpoint, methods=["POST"])])
-    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {})
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {}, allow_private_peers=True)
     with _drive_via_asgi(app):
         result = _run(a2a_call(reason="x", peer_or_url="http://peer", message="hi"))
     assert result["kind"] == "message"
@@ -658,7 +666,7 @@ def test_call_attaches_file_part_with_bytes(tmp_path):
     csv.write_text("a,b\n1,2\n", encoding="utf-8")
 
     app, log = _make_rpc_app()
-    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {})
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {}, allow_private_peers=True)
     with _drive_via_asgi(app):
         _run(
             a2a_call(
@@ -682,7 +690,7 @@ def test_call_attaches_file_part_with_bytes(tmp_path):
 
 
 def test_call_rejects_missing_file_path(tmp_path):
-    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {})
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {}, allow_private_peers=True)
     missing = tmp_path / "nope.csv"
     with pytest.raises(JacConfigError, match="file not found"):
         _run(
@@ -696,7 +704,7 @@ def test_call_rejects_missing_file_path(tmp_path):
 
 
 def test_call_rejects_directory_as_file(tmp_path):
-    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {})
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {}, allow_private_peers=True)
     with pytest.raises(JacConfigError, match="not a regular file"):
         _run(a2a_call(reason="x", peer_or_url="http://peer", message="m", files=[str(tmp_path)]))
 
@@ -706,7 +714,7 @@ def test_call_rejects_oversize_file(tmp_path, monkeypatch):
     monkeypatch.setattr("jac.capabilities.a2a.client._MAX_OUTBOUND_FILE_BYTES", 16)
     big = tmp_path / "big.bin"
     big.write_bytes(b"x" * 32)
-    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {})
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {}, allow_private_peers=True)
     with pytest.raises(JacConfigError, match="cap is"):
         _run(
             a2a_call(
@@ -722,7 +730,7 @@ def test_call_uses_octet_stream_for_unknown_extension(tmp_path):
     f = tmp_path / "weird.zzz"
     f.write_bytes(b"\x00\x01\x02")
     app, log = _make_rpc_app()
-    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {})
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {}, allow_private_peers=True)
     with _drive_via_asgi(app):
         _run(a2a_call(reason="x", peer_or_url="http://peer", message="m", files=[str(f)]))
     file_part = log[0]["body"]["params"]["message"]["parts"][1]
@@ -732,7 +740,7 @@ def test_call_uses_octet_stream_for_unknown_extension(tmp_path):
 def test_call_no_files_param_omits_file_parts():
     """Backward compat: existing callers without files= see no FilePart."""
     app, log = _make_rpc_app()
-    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {})
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {}, allow_private_peers=True)
     with _drive_via_asgi(app):
         _run(a2a_call(reason="x", peer_or_url="http://peer", message="hi"))
     parts = log[0]["body"]["params"]["message"]["parts"]
@@ -792,7 +800,7 @@ def test_inbound_file_part_saved_and_path_returned(tmp_path, monkeypatch):
         paths.find_project_root.cache_clear()
 
     app = _make_artifact_app(artifact_parts=[_file_part("chart.png", b"\x89PNG-bytes")])
-    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {})
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {}, allow_private_peers=True)
     with _drive_via_asgi(app):
         result = _run(a2a_call(reason="x", peer_or_url="http://peer", message="m"))
 
@@ -814,7 +822,7 @@ def test_inbound_no_files_means_no_save_no_key(tmp_path, monkeypatch):
         paths.find_project_root.cache_clear()
 
     app = _make_artifact_app(artifact_parts=[{"kind": "text", "text": "summary text"}])
-    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {})
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {}, allow_private_peers=True)
     with _drive_via_asgi(app):
         result = _run(a2a_call(reason="x", peer_or_url="http://peer", message="m"))
 
@@ -834,7 +842,7 @@ def test_inbound_sanitizes_filename_path_traversal(tmp_path, monkeypatch):
     app = _make_artifact_app(
         artifact_parts=[_file_part("../../etc/passwd", b"haha", mime="text/plain")]
     )
-    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {})
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {}, allow_private_peers=True)
     with _drive_via_asgi(app):
         result = _run(a2a_call(reason="x", peer_or_url="http://peer", message="m"))
 
@@ -860,7 +868,7 @@ def test_inbound_dedupes_colliding_filenames(tmp_path, monkeypatch):
             _file_part("out.png", b"second", mime="image/png"),
         ]
     )
-    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {})
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {}, allow_private_peers=True)
     with _drive_via_asgi(app):
         result = _run(a2a_call(reason="x", peer_or_url="http://peer", message="m"))
 
@@ -887,7 +895,7 @@ def test_inbound_skips_malformed_base64(tmp_path, monkeypatch):
             _file_part("ok.png", b"good", mime="image/png"),
         ]
     )
-    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {})
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {}, allow_private_peers=True)
     with _drive_via_asgi(app):
         result = _run(a2a_call(reason="x", peer_or_url="http://peer", message="m"))
 
@@ -912,8 +920,85 @@ def test_inbound_uri_only_file_part_is_skipped(tmp_path, monkeypatch):
             }
         ]
     )
-    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {})
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {}, allow_private_peers=True)
     with _drive_via_asgi(app):
         result = _run(a2a_call(reason="x", peer_or_url="http://peer", message="m"))
 
     assert "_jac_saved_files" not in result
+
+
+# ---------------------------------------------------------------------------
+# SSRF guard (R1) — outbound tools refuse model-supplied non-public URLs.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://127.0.0.1",  # loopback literal
+        "http://10.0.0.5",  # RFC-1918
+        "http://192.168.1.1",  # RFC-1918
+        "http://172.16.0.1",  # RFC-1918
+        "http://169.254.169.254",  # link-local / cloud metadata
+        "http://[::1]:8080",  # IPv6 loopback
+    ],
+)
+def test_validate_outbound_url_rejects_non_public(url):
+    with pytest.raises(ValueError, match=r"non-public|resolve"):
+        _run(_validate_outbound_url(url, allow_private=False))
+
+
+def test_validate_outbound_url_allows_public_ip_literal():
+    # Public IP literal — classified without DNS or any network call.
+    _run(_validate_outbound_url("http://8.8.8.8:8001", allow_private=False))
+
+
+def test_validate_outbound_url_allow_private_knob_bypasses():
+    # The escape hatch disables the guard entirely for trusted LANs.
+    _run(_validate_outbound_url("http://127.0.0.1", allow_private=True))
+
+
+def test_validate_outbound_url_resolves_hostname_to_loopback():
+    # A *name* that resolves to a non-public address is rejected too.
+    with pytest.raises(ValueError, match="non-public"):
+        _run(_validate_outbound_url("http://localhost", allow_private=False))
+
+
+def test_validate_outbound_url_unresolvable_host_rejected():
+    # ``.invalid`` is reserved to never resolve (RFC 2606) — fail closed.
+    with pytest.raises(ValueError, match="resolve"):
+        _run(_validate_outbound_url("http://nope.invalid", allow_private=False))
+
+
+def test_call_rejects_raw_private_url_when_guard_on():
+    # Default (guard on): an unconfigured raw private URL is refused before
+    # any network I/O.
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: {})
+    with pytest.raises(ValueError, match=r"non-public|resolve"):
+        _run(a2a_call(reason="x", peer_or_url="http://127.0.0.1:9", message="hi"))
+
+
+def test_discover_rejects_raw_private_url_when_guard_on():
+    [a2a_discover, _] = build_outbound_tools(peers_getter=lambda: {})
+    with pytest.raises(ValueError, match=r"non-public|resolve"):
+        _run(a2a_discover(reason="x", url="http://10.0.0.5"))
+
+
+def test_call_configured_peer_bypasses_guard():
+    # A configured (operator-trusted) peer is exempt even with the guard on
+    # and a non-public host — the headline local-coworking case.
+    app, _log = _make_rpc_app()
+    peers = {"backend": A2APeerConfig(url="http://peer", token="t")}
+    [_, a2a_call] = build_outbound_tools(peers_getter=lambda: peers)
+    with _drive_via_asgi(app):
+        result = _run(a2a_call(reason="x", peer_or_url="backend", message="hi"))
+    assert result["id"] == "task-1"
+
+
+def test_discover_configured_peer_url_bypasses_guard():
+    app = _make_card_app(_sample_card())
+    peers = {"backend": A2APeerConfig(url="http://peer")}
+    [a2a_discover, _] = build_outbound_tools(peers_getter=lambda: peers)
+    with _drive_via_asgi(app):
+        card = _run(a2a_discover(reason="x", url="http://peer"))
+    assert card["name"] == "test-peer"

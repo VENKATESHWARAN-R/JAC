@@ -379,22 +379,33 @@ def _find_duplicate(section_body: str, content: str) -> str | None:
     return None
 
 
+_ORPHAN_SECTION_LABEL = "(no section)"
+"""Label for bullets that sit above the first ``## heading`` — typically a
+hand-edited line. They still match :func:`forget` so a user can remove them;
+without this they were silently invisible to forget/de-dup (R18)."""
+
+
 def _find_all_matches(text: str, content: str) -> list[tuple[str, int, str]]:
     """Find every bullet matching ``content`` across every section.
 
     Returns a list of ``(section_title, line_index, bullet_prose)`` triples.
     Used by :func:`forget` to disambiguate hits.
+
+    Bullets that appear *before* the first ``## heading`` (e.g. a line a
+    user hand-added at the top of the file) are matched too, labelled
+    :data:`_ORPHAN_SECTION_LABEL`. Otherwise ``forget`` would raise "no
+    entry matching" on a line that is plainly in the file (R18).
     """
     needle = _normalize(content)
     lines = text.splitlines()
     out: list[tuple[str, int, str]] = []
-    current_section: str | None = None
+    current_section = _ORPHAN_SECTION_LABEL
     for i, line in enumerate(lines):
         stripped = line.strip()
         if stripped.startswith("## "):
             current_section = stripped[3:].strip()
             continue
-        if current_section is None or not stripped.startswith("- "):
+        if not stripped.startswith("- "):
             continue
         existing = _strip_bullet_metadata(line)
         if _normalize(existing) == needle:

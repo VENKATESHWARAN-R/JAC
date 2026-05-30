@@ -74,6 +74,24 @@ def test_unknown_prefix_warns_and_returns_empty() -> None:
     assert keys == []
 
 
+def test_unknown_prefix_warning_lists_known_prefixes(
+    recwarn: pytest.WarningsRecorder,
+) -> None:
+    # R12: the warning must be loud — name the known prefixes so a typo is
+    # diagnosable at config time, not opaque at request time.
+    registry = get_provider_registry()
+    registry.required_env_for_prefix("totally-unknown")
+    messages = [str(w.message) for w in recwarn.list]
+    assert any("Known prefixes:" in m and "anthropic" in m for m in messages)
+
+
+def test_unknown_prefix_warning_suggests_close_match() -> None:
+    # R12: a near-miss typo gets a "Did you mean ...?" hint via difflib.
+    registry = get_provider_registry()
+    with pytest.warns(UserWarning, match="Did you mean 'anthropic'"):
+        registry.required_env_for_prefix("anthropc")
+
+
 def test_get_pricing_returns_known_model() -> None:
     registry = get_provider_registry()
     pricing = registry.get_pricing("anthropic:claude-haiku-4-5")

@@ -346,6 +346,36 @@ def test_find_all_matches_across_sections() -> None:
     assert {h[0] for h in hits} == {"Conventions", "Facts"}
 
 
+def test_find_all_matches_finds_orphaned_bullet_above_first_heading() -> None:
+    # R18: a hand-edited bullet above the first `## heading` used to be
+    # invisible to forget — now it matches under the "(no section)" label.
+    text = (
+        "<!-- jac:memory schema=1 -->\n# Project memory\n- orphan fact\n\n## Conventions\n- alpha\n"
+    )
+    hits = _find_all_matches(text, "orphan fact")
+    assert len(hits) == 1
+    section, _line_index, prose = hits[0]
+    assert section == "(no section)"
+    assert prose == "orphan fact"
+
+
+def test_forget_removes_orphaned_bullet(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # R18 end-to-end: forget must succeed (not raise "no entry matching")
+    # on a bullet that sits outside any `## section`.
+    from jac.capabilities import memory as memory_mod
+
+    path = tmp_path / "memory.md"
+    path.write_text(
+        "<!-- jac:memory schema=1 -->\n# User memory\n- orphan fact\n\n## Conventions\n- alpha\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(memory_mod, "_memory_path_for_scope", lambda scope: path)
+    out = forget(reason="cleanup", content="orphan fact", scope="user")
+    assert "orphan fact" in out
+    assert "(no section)" in out
+    assert "- orphan fact" not in path.read_text(encoding="utf-8")
+
+
 def test_remove_line_drops_only_that_line() -> None:
     lines = _SAMPLE.splitlines()
     idx = lines.index("- beta")

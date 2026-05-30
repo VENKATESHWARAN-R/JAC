@@ -45,7 +45,7 @@ spawn_sub_agent(
 Notes:
 
 - `tier="small"` — summarization is cheap reasoning; don't pay large-tier prices for it.
-- `allowed_tools=["read_file"]` — narrow the toolset so the sub-agent can't go exploring; you asked for one file's summary, not a deep dive.
+- `allowed_tools=["read_file"]` — restricts the sub-agent's toolset (enforced at the Agent layer) so it can't go exploring with `write_file`/`run_shell`/etc.; you asked for one file's summary, not a deep dive. A small always-allowed control-plane set (`read_file`, `ask_supervisor`) stays available regardless.
 - `max_turns=3` — generous: one to read, one to draft, one for retries. If the summary takes more turns than that, something's off with the request.
 
 ## How to use the result

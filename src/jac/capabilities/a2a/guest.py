@@ -6,9 +6,11 @@ The guest Gru is *almost* a normal Gru. Differences:
    ``read_file``, ``list_dir``, ``grep``, ``glob``. No web (host money
    + privacy), no plan/process tools (host state leak), no writes/shell
    (mutating), no clarify (no human in the guest path), no memory
-   writes. The cut is enforced *structurally* — we don't pass the
-   excluded capabilities at construction, so the model literally
-   doesn't see those tools.
+   writes. The cut is enforced *structurally*: excluded capabilities are
+   never passed at construction, and the filesystem capability is built
+   with ``allowed={"read_file", "list_dir"}`` so its ``write_file`` /
+   ``edit_file`` tools are filtered out of the toolset entirely (R3) —
+   the model literally doesn't see them, regardless of approval wiring.
 2. **No session memory.** The guest doesn't load any host session's
    message history. Each peer conversation thread is its own
    ``context_id`` and lives in fasta2a's Storage, not in JAC's
@@ -72,19 +74,13 @@ def build_guest_gru(*, model: str | Model) -> Agent[None, str]:
             "profile's default tier model is the normal choice)."
         )
 
-    # Filesystem: read_file, list_dir, write_file (approval), edit_file
-    # (approval). The toolset *exposes* all four to the agent, but the
-    # ApprovalRequiredToolset wrapping in the capability gates writes —
-    # and in the guest server we install NO approval handler, so deferred
-    # tool calls never get answered → writes effectively can't fire.
-    #
-    # That's a defense-in-depth posture (rather than relying solely on
-    # "no approval handler" to keep writes from happening) we'll harden
-    # in PR3 by physically filtering write/edit from the toolset. For
-    # PR1 the "no approval = no write" pathway is structurally enforced
-    # by the test in tests/test_a2a_guest.py (writes raise without an
-    # approval handler installed).
-    fs = FilesystemCapability()
+    # Filesystem: read_file + list_dir only. ``allowed=`` filters
+    # write_file / edit_file out of the toolset structurally (R3), so the
+    # guest's read-only guarantee no longer depends on "no approval handler
+    # installed" — the write tools are simply not present. Defense in depth:
+    # even if a future refactor wired an auto-approver into the guest path,
+    # a network peer still couldn't reach a workspace-mutating tool.
+    fs = FilesystemCapability(allowed=frozenset({"read_file", "list_dir"}))
     search = SearchCapability()
 
     instructions = _compose_guest_instructions()

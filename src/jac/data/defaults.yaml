@@ -51,7 +51,7 @@ cost:
   # default is False. Use sparingly — defaults exist for a reason.
   summarize_tools: []
   # Bidirectional sub-agent ↔ main-agent comms (D41). When true, sub-agents
-  # get `ask_main_agent` and the main agent gets `respond_to_sub_agent`,
+  # get `ask_supervisor` and the main agent gets `respond_to_sub_agent`,
   # letting a sub-agent ask one focused clarifying question mid-run.
   # Hard cap = 5 round-trips per spawn (a sixth ask returns a graceful
   # "finalize with what you have" directive, not an error). On by default

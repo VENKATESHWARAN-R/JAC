@@ -5,6 +5,48 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); this project
 uses [Semantic Versioning](https://semver.org/) (pre-1.0, so minor versions may
 carry behavioural changes).
 
+## [0.8.0] — 2026-05-30
+
+End-stage review remediation (R1–R20, tracked in
+`docs/design/audit/2026-05-30-review.md`): safety/correctness hardening, a
+sub-agent comms redesign, and the runtime↔surface split that unlocks non-CLI
+surfaces. 697 tests.
+
+### Added
+
+- **Sub-agent tool allowlist is now enforced (R2).** A spawn's
+  `allowed_tools` is applied at the Agent layer via a `PrepareTools` filter —
+  the worker sees only the named tools plus an always-allowed control plane
+  (`read_file`, `ask_supervisor`). Previously the field was accepted and
+  discarded (a false safety promise).
+- **Bidirectional sub-agent comms redesigned to suspend/resume (R7b).** A
+  worker that needs direction calls an **external** `ask_supervisor` tool; its
+  run *suspends* (returns a checkpoint) instead of parking a live coroutine,
+  and `respond_to_sub_agent` resumes it. Modeled on A2A `input-required`. The
+  main agent answers from context or escalates to the human via `clarify`.
+  Removes the live-channel registry + contextvar race-resolver and the cost
+  inversion (a resume re-pays only the small worker context).
+- **`SessionDriver` — a surface-agnostic turn pipeline (R5).** New
+  `jac.runtime.driver.SessionDriver` owns `run_turn` + the budget pre-flight
+  guards + history recovery; the CLI is now a thin consumer. **`jac.sdk`**
+  facade re-exports the supported embedding surface (R5d). **`TextDelta`**
+  streaming event (R5b) and `suggested_action` on refusal events (R5c) let a
+  browser/SDK surface stream tokens and show the same guidance.
+- **Budget knobs reject `<= 0` (R11)**; **unknown provider prefixes warn
+  loudly** with the closest known match + a Logfire span (R12); **`forget`
+  finds orphaned bullets** above the first heading (R18).
+
+### Changed
+
+- **`runtime/sub_agent.py` split into a `runtime/sub_agent/` package (R7a):**
+  `tiers` / `packet` / `state` / `runner` / `suspend` / `tools`, with a
+  re-exporting `__init__` (imports unchanged).
+- **`skills.load_skill` is a capability closure** (R14); spawn tools are
+  `summarizable=False` (R10); spawn_id docstrings say `minion-N` not "hex" (R4).
+
+(Earlier Phase 1/2 items — A2A SSRF guard, read-only guest toolset, fasta2a
+fork pin, the `just drift` doc-drift guard — landed under this same review.)
+
 ## [0.7.0] — 2026-05-30
 
 Two headline feature areas — **interaction modes** and **compaction control** —
@@ -115,6 +157,7 @@ after v0.6.0 but were never released on their own.
   memory, tool-surface polish, coworker experience (compaction, status bar,
   slash commands, budgets), and A2A (inbound + outbound + file transfer).
 
+[0.8.0]: https://github.com/VENKATESHWARAN-R/JAC/releases/tag/v0.8.0
 [0.7.0]: https://github.com/VENKATESHWARAN-R/JAC/releases/tag/v0.7.0
 [0.6.0]: https://github.com/VENKATESHWARAN-R/JAC/releases/tag/v0.6.0
 [0.5.0]: https://github.com/VENKATESHWARAN-R/JAC/releases/tag/v0.5.0

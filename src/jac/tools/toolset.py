@@ -104,6 +104,20 @@ def summarizing_wrap(
     )
 
 
+def restrict_toolset(toolset: Any, allowed: frozenset[str] | set[str]) -> Any:
+    """Filter ``toolset`` to only the tools named in ``allowed``.
+
+    Thin wrapper over pydantic-ai's ``AbstractToolset.filtered`` — we don't
+    reinvent the primitive. The filter hides every tool whose name isn't in
+    ``allowed`` from the agent entirely, so the restriction is *structural*
+    (the model never sees the tool), not a runtime block. Used to give the
+    A2A guest a physically read-only toolset (R3) and to honour a
+    sub-agent's ``allowed_tools`` allowlist (R2).
+    """
+    names = frozenset(allowed)
+    return toolset.filtered(lambda _ctx, tool_def: tool_def.name in names)
+
+
 def jac_function_toolset(*funcs: Callable[..., Any]) -> SummarizingToolset:
     """Build a JAC toolset from decorated tool functions.
 

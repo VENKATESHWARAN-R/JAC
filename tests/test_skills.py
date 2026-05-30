@@ -23,12 +23,12 @@ from rich.console import Console
 
 from jac.capabilities.skills import (
     _INSTRUCTIONS_CAP_BYTES,
+    LoadedSkill,
     SkillCatalog,
     SkillFrontmatter,
     SkillsCapability,
     _render_skills_block,
     load_all_skills,
-    load_skill,
     make_skills_capability,
 )
 from jac.cli.slash import (
@@ -270,23 +270,41 @@ def test_oversize_block_falls_back_to_name_only(isolated_skills: Path) -> None:
 
 def test_load_skill_returns_body(isolated_skills: Path) -> None:
     _write_skill(paths.USER_SKILLS_DIR, "alpha", body="alpha body content")
-    # Construct the capability so the module-level catalog is populated.
-    SkillsCapability()
-    out = load_skill(reason="testing", name="alpha")
+    cap = SkillsCapability()
+    out = cap.load_skill("alpha")
     assert out == "alpha body content"
 
 
 def test_load_skill_unknown_raises_with_available(isolated_skills: Path) -> None:
     _write_skill(paths.USER_SKILLS_DIR, "alpha", body="b")
-    SkillsCapability()
+    cap = SkillsCapability()
     with pytest.raises(ValueError, match="unknown skill"):
-        load_skill(reason="test", name="nonexistent")
+        cap.load_skill("nonexistent")
 
 
 def test_load_skill_with_no_skills_loaded_raises(isolated_skills: Path) -> None:
-    SkillsCapability()  # empty dirs → empty catalog
+    cap = SkillsCapability()  # empty dirs → empty catalog
     with pytest.raises(ValueError, match="no skills are loaded"):
-        load_skill(reason="t", name="anything")
+        cap.load_skill("anything")
+
+
+def test_two_capabilities_do_not_clobber_each_other(isolated_skills: Path) -> None:
+    # R14: with the module global gone, two instances keep independent
+    # catalogs — the second's tool resolves against its own skills, not a
+    # shared global the last constructor stomped.
+    _write_skill(paths.USER_SKILLS_DIR, "alpha", body="alpha body")
+    cap_a = SkillsCapability()  # discovers alpha from disk
+    beta = LoadedSkill(
+        frontmatter=SkillFrontmatter(name="beta", description="d"),
+        body="beta body",
+        source="user",
+        path=Path("beta/SKILL.md"),
+    )
+    cap_b = SkillsCapability(skills={"beta": beta})  # hand-crafted, no discovery
+    assert cap_a.load_skill("alpha") == "alpha body"
+    assert cap_b.load_skill("beta") == "beta body"
+    with pytest.raises(ValueError, match="unknown skill"):
+        cap_b.load_skill("alpha")
 
 
 # ---------- capability reload -----------------------------------------

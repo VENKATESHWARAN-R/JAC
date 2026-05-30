@@ -59,8 +59,12 @@ typecheck:
 test:
     uv run pytest tests/ -q
 
+# doc/code drift guard — slash-command coverage + version sync (review R20)
+drift:
+    uv run python scripts/check_drift.py
+
 # aggregate: format check + lint + typecheck (CI-style, no writes)
-check: fmt lint typecheck test
+check: fmt lint typecheck drift test
 
 # aggregate: format + lint --fix (typecheck still read-only)
 fix: fmt-fix lint-fix typecheck

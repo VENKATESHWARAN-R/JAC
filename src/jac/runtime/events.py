@@ -268,6 +268,10 @@ class CompactionRefused(JacEvent):
     """
 
     usage_pct: int
+    suggested_action: str = ""
+    """Plain-text guidance on how to free space (R5c). The CLI renders its
+    own styled message; non-CLI surfaces (browser/SDK) read this so they get
+    the same advice without re-deriving it."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -317,6 +321,9 @@ class BudgetHardStop(JacEvent):
     kind: BudgetKind
     used: int
     budget: int
+    suggested_action: str = ""
+    """Plain-text guidance on how to raise the budget (R5c). The CLI renders
+    its own styled message; non-CLI surfaces read this for the same advice."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -479,6 +486,21 @@ class SubAgentCompleted(JacEvent):
 
 
 @dataclass(frozen=True, slots=True)
+class TextDelta(JacEvent):
+    """An incremental chunk of the model's output text (R5b).
+
+    Emitted by :meth:`jac.runtime.driver.SessionDriver.run_turn` when it
+    drives the model via the streaming path — a browser/chat surface can
+    paint tokens as they arrive instead of waiting for the whole
+    :class:`RunCompleted` string. The CLI renderer may ignore these (it
+    prints the final output on ``RunCompleted``); a streaming surface
+    accumulates them. Not a terminal event.
+    """
+
+    content: str
+
+
+@dataclass(frozen=True, slots=True)
 class RunCompleted(JacEvent):
     """Terminal: ``agent.run()`` completed normally. Carries the final output."""
 
@@ -522,6 +544,7 @@ type JacEventT = (
     | SubAgentQuestion
     | SubAgentAnswer
     | SubAgentCompleted
+    | TextDelta
     | RunCompleted
     | RunFailed
 )

@@ -120,36 +120,31 @@ def test_guest_toolset_excludes_all_forbidden_tools():
     )
 
 
-def test_guest_includes_writes_but_no_handler():
-    """Filesystem ships write/edit alongside read.
+def test_guest_physically_excludes_writes():
+    """Write/edit are structurally absent from the guest toolset (R3).
 
-    The guest gets them in the toolset (capability is bundled wholesale)
-    but they're approval-gated, and the guest server installs NO approval
-    handler, so deferred calls never get answered → writes effectively
-    can't fire. This test documents that defense-in-depth posture; PR3
-    may narrow further by physically filtering writes out.
+    The guest builds ``FilesystemCapability(allowed={"read_file",
+    "list_dir"})`` so ``write_file`` / ``edit_file`` are never registered —
+    not merely approval-blocked. The read-only guarantee no longer depends
+    on "no approval handler installed", so it survives any future change to
+    approval wiring. A network peer cannot reach a workspace-mutating tool
+    because the tool isn't there.
     """
     agent = _agent()
     names = _tool_names(agent)
-    # Both should be present in the toolset (capability bundles them)
-    assert "write_file" in names
-    assert "edit_file" in names
-    # The unreachability is enforced by the absence of an approval
-    # handler in the guest construction — that's a property of
-    # A2AServer.start, not of the toolset shape, so we don't assert
-    # on it directly here. Reverse-test: an actual write call against
-    # the running server would block forever waiting for approval.
+    assert "write_file" not in names
+    assert "edit_file" not in names
 
 
 def test_guest_toolset_size_is_bounded():
     """Sanity cap — guest shouldn't grow a sprawling tool surface
-    accidentally. Today we expect 4 reads + 2 writes = 6 tools, all
-    from filesystem + search. Bump this assertion deliberately when
-    the guest gains a new capability."""
+    accidentally. Today we expect exactly 4 read-only tools (read_file,
+    list_dir, grep, glob); write/edit are filtered out (R3). Bump this
+    assertion deliberately when the guest gains a new capability."""
     agent = _agent()
     names = _tool_names(agent)
-    assert len(names) == 6, (
-        f"expected exactly 6 guest tools, got {len(names)}: {sorted(names)}. "
+    assert len(names) == 4, (
+        f"expected exactly 4 guest tools, got {len(names)}: {sorted(names)}. "
         "If you added a capability to build_guest_gru, update this assertion "
         "in the same change."
     )

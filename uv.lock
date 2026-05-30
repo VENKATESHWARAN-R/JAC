@@ -765,7 +765,7 @@ wheels = [
 
 [[package]]
 name = "jac"
-version = "0.7.0"
+version = "0.8.0"
 source = { editable = "." }
 dependencies = [
     { name = "fasta2a", extra = ["pydantic-ai"] },
@@ -792,7 +792,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "fasta2a", extras = ["pydantic-ai"], specifier = ">=0.6.1" },
+    { name = "fasta2a", extras = ["pydantic-ai"], specifier = ">=0.6.1,<0.7" },
     { name = "httpx", specifier = ">=0.28.0" },
     { name = "keyring", specifier = ">=25.0" },
     { name = "logfire", specifier = ">=4.33.0" },

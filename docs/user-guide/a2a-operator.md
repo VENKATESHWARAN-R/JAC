@@ -195,6 +195,10 @@ Secrets are prompted with `getpass` — never pass tokens on the command line. S
 
 List shows `[session]` vs `[profile]` provenance; shadowed profile entries appear dimmed.
 
+### Outbound SSRF guard
+
+Because `a2a_call` / `a2a_discover` take URLs the *model* can choose, an unconfigured **raw URL** that resolves to a private / loopback / link-local address (cloud metadata `169.254.169.254`, `localhost`, RFC-1918 hosts) is **refused** by default — this stops a prompt-injected model from being steered at internal services. **Configured named peers are always trusted**, so the right pattern for an internal/dev peer is to give it a name under `a2a.peers` (or add it with `/a2a peer add`) rather than passing its raw URL. To disable the guard wholesale on a trusted network, set `a2a.allow_private_peers: true` in the profile.
+
 ## File transfer (inline bytes, both directions)
 
 v1 supports A2A's `FileWithBytes` (base64) part type both ways. `FileWithUri` (URL pointer) is intentionally deferred until JAC has an SSRF story for fetching arbitrary URIs.

@@ -1,11 +1,16 @@
 [project]
 name = "jac"
-version = "0.7.0"
+version = "0.8.0"
 description = "Just Another Companion/CLI — built on Pydantic AI."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "fasta2a[pydantic-ai]>=0.6.1",
+    # Pinned <0.7: the A2A guest worker (capabilities/a2a/server.py) forks
+    # fasta2a's AgentWorker.run_task and calls its private
+    # _response_parts_to_a2a — a minor bump could change that surface. The
+    # ceiling forces a deliberate review (+ the test_a2a_server fork-drift
+    # guard) before adopting a new minor. See review item R13.
+    "fasta2a[pydantic-ai]>=0.6.1,<0.7",
     "httpx>=0.28.0",
     "keyring>=25.0",
     "logfire>=4.33.0",

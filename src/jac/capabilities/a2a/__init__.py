@@ -85,6 +85,14 @@ class A2ACapability(AbstractCapability[Any]):
     profile_name: str | None = None
     retention_days: int = 3
 
+    allow_private_peers: bool = False
+    """When ``False`` (default), ``a2a_call`` / ``a2a_discover`` refuse
+    *unconfigured raw URLs* that resolve to private / loopback / link-local
+    addresses — the SSRF guard against model-supplied internal URLs (R1).
+    Operator-configured named peers are always trusted (the local cross-repo
+    use case). Set ``a2a.allow_private_peers: true`` to disable the guard on a
+    trusted LAN. Refreshed from the active profile on ``/profile``."""
+
     profile_peers: dict[str, A2APeerConfig] = field(default_factory=dict)
     """Peers from the active profile's ``a2a.peers`` block. The REPL
     keeps this in sync with the active profile via the same in-place
@@ -153,6 +161,7 @@ class A2ACapability(AbstractCapability[Any]):
             peers_getter=self._current_peers,
             strategy_provider=self._strategy_for,
             bus=self.bus,
+            allow_private_peers=self.allow_private_peers,
         )
         return jac_function_toolset(*tools)
 
@@ -288,9 +297,9 @@ def make_a2a_capability(
     model: str | Model | None = None,
     profile_name: str | None = None,
     retention_days: int = 3,
+    allow_private_peers: bool = False,
     profile_peers: dict[str, A2APeerConfig] | None = None,
     usage_tracker: UsageTracker | None = None,
-    peers: dict[str, A2APeerConfig] | None = None,  # legacy alias
 ) -> A2ACapability:
     """Build a fresh :class:`A2ACapability`. One per agent / session.
 
@@ -304,20 +313,18 @@ def make_a2a_capability(
         profile_name: name of the active profile (None when running
             with ``--model``).
         retention_days: A2A context retention from the profile.
+        allow_private_peers: disable the outbound SSRF guard for
+            unconfigured raw URLs (``a2a.allow_private_peers``). Default
+            ``False``; configured named peers are trusted regardless.
         profile_peers: peers from the active profile's ``a2a.peers``
             block. The REPL keeps this updated in place on ``/profile``.
-        peers: legacy alias for ``profile_peers`` to keep PR1/PR2
-            test fixtures (and any external callers) working. Will be
-            removed in a follow-up; prefer ``profile_peers``.
     """
-    # Backward compat: the old `peers=` arg now means profile_peers.
-    if peers is not None and profile_peers is None:
-        profile_peers = peers
     return A2ACapability(
         bus=bus,
         model=model,
         profile_name=profile_name,
         retention_days=retention_days,
+        allow_private_peers=allow_private_peers,
         profile_peers=profile_peers or {},
         usage_tracker=usage_tracker,
     )

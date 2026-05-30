@@ -1,13 +1,13 @@
-"""``/spawns`` — list currently-active bidirectional sub-agents (D41).
+"""``/spawns`` — list currently-suspended bidirectional sub-agents (Phase 4).
 
-A bidirectional sub-agent that's parked waiting for the main agent to
-reply (via ``respond_to_sub_agent``) leaves an entry in
-:data:`jac.runtime.sub_agent._pending_channels`. This handler renders
-that registry as a Rich table so the user can see at a glance what's in
-flight without scrolling back through events.
+A bidirectional sub-agent that suspended on a question and is waiting for
+the main agent to reply (via ``respond_to_sub_agent``) leaves an entry in
+:data:`jac.runtime.sub_agent._pending_spawns`. This handler renders that
+registry as a Rich table so the user can see at a glance what's in flight
+without scrolling back through events.
 
 Sequential (non-bidirectional) spawns do NOT appear here — they don't
-park; they run to completion inside a single tool call.
+suspend; they run to completion inside a single tool call.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from rich.table import Table
 from jac.cli.slash.context import SlashContext
 from jac.cli.slash.registry import register
 from jac.cli.slash.result import Handled, SlashResult
-from jac.runtime.sub_agent import _pending_channels
+from jac.runtime.sub_agent import _BIDIRECTIONAL_ROUND_TRIP_CAP, _pending_spawns
 
 _OBJECTIVE_TRUNCATE_AT = 60
 
@@ -31,12 +31,12 @@ def spawns_handler(ctx: SlashContext, args: str) -> SlashResult:
     if args.strip():
         ctx.console.print("[dim]/spawns takes no arguments[/dim]")
 
-    if not _pending_channels:
-        ctx.console.print("[dim]no active sub-agents (none parked)[/dim]")
+    if not _pending_spawns:
+        ctx.console.print("[dim]no suspended sub-agents (none waiting)[/dim]")
         return Handled()
 
     table = Table(
-        title=f"active sub-agents ({len(_pending_channels)})",
+        title=f"suspended sub-agents ({len(_pending_spawns)})",
         title_style="bold",
         title_justify="left",
         show_lines=False,
@@ -47,20 +47,18 @@ def spawns_handler(ctx: SlashContext, args: str) -> SlashResult:
     table.add_column("round-trips")
     table.add_column("objective")
 
-    for spawn_id, channel in sorted(_pending_channels.items()):
-        resolved = channel.resolved
-        tier = resolved.resolved if resolved is not None else "?"
-        model = resolved.model if resolved is not None else "?"
-        round_trips = f"{channel.round_trips}/{channel.cap}"
-        objective = channel.objective or "[dim](no objective)[/dim]"
+    for spawn_id, pending in sorted(_pending_spawns.items()):
+        resolved = pending.resolved
+        round_trips = f"{pending.round_trips}/{_BIDIRECTIONAL_ROUND_TRIP_CAP}"
+        objective = pending.objective or "[dim](no objective)[/dim]"
         if len(objective) > _OBJECTIVE_TRUNCATE_AT:
             objective = objective[: _OBJECTIVE_TRUNCATE_AT - 1] + "…"
-        table.add_row(spawn_id, tier, model, round_trips, objective)
+        table.add_row(spawn_id, resolved.resolved, resolved.model, round_trips, objective)
 
     ctx.console.print(table)
     ctx.console.print(
-        "[dim]reply to a parked sub-agent by letting the agent call "
-        "respond_to_sub_agent(spawn_id=..., answer=...). /exit cancels "
-        "every parked worker.[/dim]"
+        "[dim]reply to a suspended sub-agent by letting the agent call "
+        "respond_to_sub_agent(spawn_id=..., answer=...). /exit drops "
+        "every suspended worker.[/dim]"
     )
     return Handled()

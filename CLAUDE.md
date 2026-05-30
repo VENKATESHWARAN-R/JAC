@@ -192,5 +192,6 @@ If a task seems to require any v2 item, stop and ask before scaffolding.
 - Vision or scope shift → `docs/idea.md`.
 - Work lands → `docs/progress.md` + relevant `docs/user-guide/*.md` page if user-visible.
 - **CLI surface changes** (new/renamed Typer command, root flag, slash command, A2A peer auth shape, budget kind, etc.) → update [`docs/user-guide/cli-reference.md`](docs/user-guide/cli-reference.md) **and** the shipped [`src/jac/data/skills/jac-cli/SKILL.md`](src/jac/data/skills/jac-cli/SKILL.md) in the same change. The skill is what Gru consults when the user asks "how do I run X" — drift here means Gru improvises wrong commands.
+- **New/moved module, new slash command, new tool** → update [`docs/developer/codebase-map.md`](docs/developer/codebase-map.md) (the as-built tree + tables) in the same change. `just drift` enforces slash-command coverage + version sync; it does **not** catch a moved module, so keep the map honest by hand.
 - When updating docs, **replace outdated information** — don't append. One fact, one home.
 - Don't accumulate undocumented architectural debt.

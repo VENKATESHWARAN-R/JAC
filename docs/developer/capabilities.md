@@ -95,7 +95,7 @@ New UI-facing behavior should add an event dataclass and handle it in `CliRender
 3. **Register** in `_default_tool_capabilities` if every interactive session should have it, or pass via `extra_capabilities` from the REPL only.
 4. **HITL** — if the tool mutates disk, spends money, or spawns processes, use `approval_required`.
 5. **Bus** — if the UI should show progress, emit events from the capability (see `ProcessCapability`, `PlanCapability`).
-6. **Docs** — update [CLI reference](../user-guide/cli-reference.md) and [drift matrix](../design/audit/drift-matrix.md).
+6. **Docs** — update [CLI reference](../user-guide/cli-reference.md) and [codebase map](codebase-map.md); `just drift` guards slash-command + version coverage.
 7. **Tests** — add pytest under `tests/` with `TestModel` or mocked bus.
 
 Minimal pattern:
@@ -118,6 +118,15 @@ class MyCapability(AbstractCapability[Any]):
 ```
 
 Wire in `repl.py` via `extra_capabilities=[..., MyCapability()]` or `build_gru`'s default list.
+
+## Factory vs bare constructor
+
+Some capabilities ship a `make_*_capability(...)` factory; others are constructed bare as `MyCapability()`. This is a **deliberate convention, not drift** (R9):
+
+- **Bare constructor** (`FilesystemCapability()`, `SearchCapability()`, `MemoryCapability()`) — the capability is a trivial `@dataclass` with no required arguments and no construction-time work. Calling the class directly *is* the idiom; a factory would add nothing.
+- **Factory** (`make_history_capability(...)`, `make_clarify_capability(bus)`, `make_hooks(bus)`, `make_approval_handler(bus)`) — construction is **non-trivial**: it requires wiring (a `bus`, a model id, a usage tracker), validates or resolves arguments, or assembles collaborators. The factory is where that logic lives, and it keeps call sites readable.
+
+The rule: **reach for a factory when construction needs an argument the caller shouldn't have to assemble, or does real work; otherwise construct bare.** Do **not** add a no-op pass-through factory just for surface symmetry — `make_filesystem_capability()` that only does `return FilesystemCapability()` is noise. A capability can also grow a factory later, the day its constructor stops being trivial.
 
 ## Adding a slash command
 
