@@ -1,0 +1,64 @@
+{% from "panel/_hx.html" import form_attrs %}
+<div data-drawer-title="Profiles & models">
+  {% if flash %}<div class="flash {{ flash.kind }}">{{ flash.msg }}</div>{% endif %}
+  <h1>Profiles &amp; models</h1>
+  <p class="note">Each profile maps tiers (small / medium / large) to models. The default
+    profile's active tier is what a new chat binds to.</p>
+
+  {% if error %}
+    <div class="flash err">{{ error }}</div>
+    <p class="note">Run <span class="mono">jac init</span> to migrate or repair your config.</p>
+  {% else %}
+    {% if not profiles %}<p class="note">No profiles yet — add one below.</p>{% endif %}
+
+    {% for p in profiles %}
+    <div class="row">
+      <div class="row-head">
+        <span class="row-title mono">{{ p.name }}</span>
+        {% if p.is_default %}<span class="badge ok-badge">default</span>{% endif %}
+        <span class="row-meta">active: <b>{{ p.active_tier }}</b> · {{ p.default_model }}</span>
+      </div>
+      <div class="row-body">
+        <table class="tiers">
+          {% for tier, models in p.tiers.items() %}
+          <tr><td class="mono tier-name">{{ tier }}</td><td class="mono">{{ models|join(", ") }}</td></tr>
+          {% endfor %}
+        </table>
+        <details>
+          <summary>Edit YAML</summary>
+          <form class="stack" {{ form_attrs("/profiles/save", in_drawer) }}>
+            <input type="hidden" name="name" value="{{ p.name }}">
+            <textarea name="yaml" rows="10" class="mono">{{ p.yaml }}</textarea>
+            <button type="submit">Save</button>
+          </form>
+        </details>
+        <div class="row-actions">
+          {% if not p.is_default %}
+          <form {{ form_attrs("/profiles/default", in_drawer) }}>
+            <input type="hidden" name="name" value="{{ p.name }}">
+            <button class="ghost" type="submit">Set default</button>
+          </form>
+          {% endif %}
+          <form {{ form_attrs("/profiles/delete", in_drawer, confirm="Delete profile " ~ p.name ~ "?") }}>
+            <input type="hidden" name="name" value="{{ p.name }}">
+            <button class="danger" type="submit">Delete</button>
+          </form>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+
+    <h2>Add / replace a profile</h2>
+    <form class="stack" {{ form_attrs("/profiles/save", in_drawer) }}>
+      <label>Name <input type="text" name="name" class="mono" placeholder="e.g. default"></label>
+      <textarea name="yaml" rows="8" class="mono" placeholder="tiers:
+  small:
+    - anthropic:claude-haiku-4-5
+  medium:
+    - anthropic:claude-sonnet-4-6
+active_tier: medium"></textarea>
+      <label class="inline"><input type="checkbox" name="set_default"> set as default</label>
+      <button type="submit">Save profile</button>
+    </form>
+  {% endif %}
+</div>

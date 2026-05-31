@@ -1,0 +1,65 @@
+{% from "panel/_hx.html" import form_attrs %}
+<div data-drawer-title="Skills">
+  {% if flash %}<div class="flash {{ flash.kind }}">{{ flash.msg }}</div>{% endif %}
+  <h1>Skills</h1>
+  <p class="note">Loadable playbooks (community <span class="mono">SKILL.md</span> format).
+    Project shadows user shadows package. Edit reloads on the next chat.</p>
+
+  {% if not skills_active %}<p class="note">No skills loaded.</p>{% endif %}
+  {% for s in skills_active %}
+  <div class="row">
+    <div class="row-head">
+      <span class="row-title mono">{{ s.name }}</span>
+      <span class="badge">{{ s.source }}</span>
+      <span class="row-meta">{{ s.description }}</span>
+    </div>
+    <div class="row-body">
+      {% if s.editable %}
+      <details>
+        <summary>Edit SKILL.md</summary>
+        <form class="stack" {{ form_attrs("/skills/save", in_drawer) }}>
+          <input type="hidden" name="scope" value="{{ s.source }}">
+          <input type="hidden" name="name" value="{{ s.name }}">
+          <textarea name="text" rows="14" class="mono">{{ s.text }}</textarea>
+          <button type="submit">Save</button>
+        </form>
+      </details>
+      <div class="row-actions">
+        <form {{ form_attrs("/skills/delete", in_drawer, confirm="Delete skill " ~ s.name ~ "?") }}>
+          <input type="hidden" name="scope" value="{{ s.source }}">
+          <input type="hidden" name="name" value="{{ s.name }}">
+          <button class="danger" type="submit">Delete</button>
+        </form>
+      </div>
+      {% else %}
+      <p class="note">Shipped (package) skill — read-only. Recreate it under user/project to customize.</p>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+
+  {% if skills_shadowed %}
+  <h2>Shadowed</h2>
+  {% for s in skills_shadowed %}<div class="note mono">{{ s.name }} <span class="badge">{{ s.source }}</span></div>{% endfor %}
+  {% endif %}
+
+  <h2>New skill</h2>
+  <form class="stack" {{ form_attrs("/skills/save", in_drawer) }}>
+    <div class="cfg-row">
+      <select name="scope">
+        {% if skills_in_project %}<option value="project">Project</option>{% endif %}
+        <option value="user">User</option>
+      </select>
+      <input type="text" name="name" class="mono" placeholder="skill-name">
+    </div>
+    <textarea name="text" rows="10" class="mono">---
+name: skill-name
+description: One line on when to use this.
+---
+
+# Skill body
+
+Advice the model reads when it loads this skill.</textarea>
+    <button type="submit">Create skill</button>
+  </form>
+</div>

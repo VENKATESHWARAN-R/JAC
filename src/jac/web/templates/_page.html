@@ -1,0 +1,11 @@
+{# Full-page wrapper for a management panel: the same fragment that fills a
+   drawer, rendered standalone inside the chrome (direct-URL / deep-link path).
+   `fragment` is the panel template; `in_drawer` is False here. #}
+{% extends "base.html" %}
+{% block title %}{{ active|capitalize }}{% endblock %}
+{% block main_class %}scrollable{% endblock %}
+{% block content %}
+<div class="page">
+  {% include fragment %}
+</div>
+{% endblock %}

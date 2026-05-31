@@ -1,0 +1,31 @@
+{% from "panel/_hx.html" import form_attrs %}
+<div data-drawer-title="Providers">
+  {% if flash %}<div class="flash {{ flash.kind }}">{{ flash.msg }}</div>{% endif %}
+  <h1>Providers</h1>
+  <p class="note">The model-provider catalog (prefix → required keys → priced models).
+    Override or extend it with the user overlay below.</p>
+
+  {% for p in providers %}
+  <div class="row">
+    <div class="row-head">
+      <span class="row-title mono">{{ p.id }}</span>
+      <span class="badge">{{ p.prefix }}</span>
+      {% if p.required_env %}<span class="row-meta">needs {{ p.required_env|join(", ") }}</span>{% endif %}
+    </div>
+    {% if p.models %}
+    <div class="row-body"><div class="tag-list">{% for m in p.models %}<span class="env-tag mono">{{ m }}</span>{% endfor %}</div></div>
+    {% endif %}
+  </div>
+  {% endfor %}
+
+  <h2>User overlay — providers.yaml</h2>
+  <p class="note">Deep-merges over the package catalog (per provider). Pricing here drives the
+    summarizer's cheaper-tier gate.</p>
+  <form class="stack" {{ form_attrs("/providers/raw", in_drawer) }}>
+    <textarea name="text" rows="14" class="mono" placeholder="providers:
+  anthropic:
+    pricing:
+      anthropic:claude-haiku-4-5: {input: 0.8, output: 4.0}">{{ providers_raw }}</textarea>
+    <button type="submit">Save overlay</button>
+  </form>
+</div>

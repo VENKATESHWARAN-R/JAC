@@ -1,0 +1,102 @@
+{% from "panel/_hx.html" import form_attrs %}
+<div data-drawer-title="MCP servers">
+  {% if flash %}<div class="flash {{ flash.kind }}">{{ flash.msg }}</div>{% endif %}
+  <h1>MCP servers</h1>
+  <p class="note">External tool servers (standard <span class="mono">mcpServers</span> JSON).
+    Toggles persist to each server's own file; new servers and raw edits use the chosen layer.</p>
+
+  {% for e in mcp_errors %}<div class="flash err">{{ e }}</div>{% endfor %}
+
+  {% macro knob(s, key, label) %}
+  <form class="knob-row" {{ form_attrs("/mcp/knob", in_drawer) }}>
+    <input type="hidden" name="source" value="{{ s.source }}">
+    <input type="hidden" name="name" value="{{ s.name }}">
+    <input type="hidden" name="key" value="{{ key }}">
+    <span class="knob-label">{{ label }}</span>
+    <label class="toggle">
+      <input type="checkbox" name="value" {{ "checked" if s[key] }}
+             onchange="(this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit())">
+      <span class="track"></span>
+    </label>
+  </form>
+  {% endmacro %}
+
+  {% if not mcp_servers %}<p class="note">No MCP servers configured. Add one below.</p>{% endif %}
+
+  {% for s in mcp_servers %}
+  <div class="row">
+    <div class="row-head">
+      <span class="row-title mono">{{ s.name }}</span>
+      <span class="badge">{{ s.transport }}</span>
+      <span class="row-meta">{{ s.source }}</span>
+    </div>
+    <div class="row-body">
+      {{ knob(s, "enabled", "enabled") }}
+      {{ knob(s, "defer", "defer (tool search)") }}
+      {{ knob(s, "requires_approval", "require approval (HITL)") }}
+      <form class="knob-row" {{ form_attrs("/mcp/knob", in_drawer) }}>
+        <input type="hidden" name="source" value="{{ s.source }}">
+        <input type="hidden" name="name" value="{{ s.name }}">
+        <input type="hidden" name="key" value="init_timeout">
+        <span class="knob-label">init timeout (s)</span>
+        <input type="number" name="value" value="{{ s.init_timeout }}" step="0.5" style="width:80px">
+        <button class="small" type="submit">Set</button>
+      </form>
+      <details>
+        <summary>Edit definition (JSON)</summary>
+        <form class="stack" {{ form_attrs("/mcp/save-server", in_drawer) }}>
+          <input type="hidden" name="scope" value="{{ s.source }}">
+          <input type="hidden" name="name" value="{{ s.name }}">
+          <textarea name="entry" rows="8" class="mono">{{ s.raw_json }}</textarea>
+          <button type="submit">Save definition</button>
+        </form>
+      </details>
+      <div class="row-actions">
+        <form {{ form_attrs("/mcp/delete-server", in_drawer, confirm="Delete MCP server " ~ s.name ~ "?") }}>
+          <input type="hidden" name="scope" value="{{ s.source }}">
+          <input type="hidden" name="name" value="{{ s.name }}">
+          <button class="danger" type="submit">Delete</button>
+        </form>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+
+  <div class="scope-toggle">
+    <span class="dim">New servers / raw edits target:</span>
+    {% if in_drawer %}
+      <select name="scope" hx-get="/panel/mcp" hx-target="#drawer-body" hx-trigger="change">
+        <option value="project" {{ "selected" if mcp_scope == "project" }} {{ "disabled" if not mcp_in_project }}>Project</option>
+        <option value="user" {{ "selected" if mcp_scope == "user" }}>User</option>
+      </select>
+    {% else %}
+      <form method="get" action="/mcp" style="display:inline">
+        <select name="scope" onchange="this.form.submit()">
+          <option value="project" {{ "selected" if mcp_scope == "project" }} {{ "disabled" if not mcp_in_project }}>Project</option>
+          <option value="user" {{ "selected" if mcp_scope == "user" }}>User</option>
+        </select>
+      </form>
+    {% endif %}
+  </div>
+
+  <h2>Add a server</h2>
+  <form class="stack" {{ form_attrs("/mcp/save-server", in_drawer) }}>
+    <input type="hidden" name="scope" value="{{ mcp_scope }}">
+    <label>Name <input type="text" name="name" class="mono" placeholder="github"></label>
+    <textarea name="entry" rows="6" class="mono" placeholder='{
+  "command": "npx",
+  "args": ["-y", "@modelcontextprotocol/server-github"],
+  "env": {"GITHUB_TOKEN": "${GITHUB_TOKEN}"}
+}'></textarea>
+    <button type="submit">Add server</button>
+  </form>
+
+  <details>
+    <summary>Advanced — raw {{ mcp_scope }} mcp.json</summary>
+    <form class="stack" {{ form_attrs("/mcp/raw", in_drawer) }}>
+      <input type="hidden" name="scope" value="{{ mcp_scope }}">
+      <textarea name="text" rows="12" class="mono">{{ mcp_raw }}</textarea>
+      <button type="submit">Save raw JSON</button>
+    </form>
+  </details>
+</div>

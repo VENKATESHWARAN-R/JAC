@@ -34,11 +34,23 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import os
 from typing import Any
 
+from jac.config import reset_settings_cache
 from jac.errors import JacConfigError
-from jac.profiles_crud import get_profile, resolve_active_profile_name
-from jac.runtime.bootstrap import SessionRuntime, build_session_runtime
+from jac.profiles_crud import (
+    get_default_profile_name,
+    get_profile,
+    list_profiles,
+    resolve_active_profile_name,
+)
+from jac.providers.registry import get_provider_registry, provider_prefix
+from jac.runtime.bootstrap import (
+    SessionRuntime,
+    build_session_runtime,
+    resolve_summarizer_model,
+)
 from jac.runtime.events import (
     ApprovalRequest,
     ApprovalResponse,
@@ -48,10 +60,17 @@ from jac.runtime.events import (
     SubAgentSpawned,
     ToolCallStarted,
 )
+from jac.runtime.gru import build_gru
 from jac.runtime.session import Session
 from jac.runtime.sub_agent import _BIDIRECTIONAL_ROUND_TRIP_CAP, _pending_spawns
 from jac.runtime.sub_agent_usage import get_sub_agent_stats
-from jac.secrets import apply_profile_env
+from jac.runtime.tool_summarize import set_summarizer_model
+from jac.secrets import (
+    apply_ad_hoc_model_env,
+    apply_profile_env,
+    restore_env,
+    snapshot_env,
+)
 from jac.workspace import paths
 
 # Tool name → the short "action" label shown in the dashboard's files panel.
@@ -119,6 +138,9 @@ class WebChatManager:
         self._pending_clarify: asyncio.Future[ClarifyResponse] | None = None
         self._consumer: asyncio.Task[None] | None = None
         self._turn_task: asyncio.Task[None] | None = None
+        # Grace-period failsafe: if every SSE client drops mid-approval and none
+        # reconnects, auto-deny the pending HITL so the turn doesn't hang forever.
+        self._hitl_failsafe: asyncio.Task[None] | None = None
         self._start_lock = asyncio.Lock()
         self._busy = False
         # path -> last action ("write"/"edit") for the dashboard files panel.
@@ -144,15 +166,19 @@ class WebChatManager:
         the lock so a racing SSE-connect + send don't double-build.
         """
         async with self._start_lock:
-            if self.runtime is not None and session_id is None:
-                return
-            if (
-                self.runtime is not None
-                and self.session is not None
-                and session_id == self.session.session_id
-            ):
-                return
-            await self._start(session_id=session_id)
+            await self._ensure_started_locked(session_id=session_id)
+
+    async def _ensure_started_locked(self, *, session_id: str | None = None) -> None:
+        """Body of :meth:`ensure_started` without the lock (callers already hold it)."""
+        if self.runtime is not None and session_id is None:
+            return
+        if (
+            self.runtime is not None
+            and self.session is not None
+            and session_id == self.session.session_id
+        ):
+            return
+        await self._start(session_id=session_id)
 
     def _activate_profile(self) -> None:
         """Resolve + apply the default profile's env so a model is bound.
@@ -324,6 +350,176 @@ class WebChatManager:
         self._emit({"type": "SessionStarted", "id": session.session_id})
         return {"ok": True, "id": session.session_id}
 
+    # ----- live model / profile switch (mid-session Gru rebuild) -----
+
+    def _rebuild(self, *, new_model_id: str, new_profile_name: str | None) -> tuple[bool, str]:
+        """Rebuild Gru in place for a new model/profile, snapshot/rollback on failure.
+
+        Mirrors the REPL's ``_rebuild_gru``: snapshot every env key either profile
+        (or the new model's provider) could touch, apply the new env, rebuild Gru
+        against the **same** bus + capabilities, and on a missing-key / bad-profile
+        error restore the snapshot and keep the old Gru. The history, bus, consumer,
+        and pending approvals are untouched — only the agent swaps.
+        """
+        rt = self.runtime
+        assert rt is not None
+        new_profile = None
+        if new_profile_name is not None:
+            try:
+                new_profile = get_profile(new_profile_name)
+            except JacConfigError as exc:
+                return False, str(exc)
+
+        keys: set[str] = {"JAC_MODEL"}
+        if rt.active_profile is not None:
+            keys.update(rt.active_profile.env)
+            keys.update(rt.active_profile.required_env_keys())
+        if new_profile is not None:
+            keys.update(new_profile.env)
+            keys.update(new_profile.required_env_keys())
+        keys.update(get_provider_registry().required_env_for_prefix(provider_prefix(new_model_id)))
+        snap = snapshot_env(list(keys))
+
+        try:
+            if new_profile_name is None:
+                apply_ad_hoc_model_env(new_model_id)
+            elif new_profile is not None and new_profile_name != self.profile_name:
+                apply_profile_env(new_profile_name, new_profile)
+                if new_model_id != new_profile.default_model():
+                    os.environ["JAC_MODEL"] = new_model_id
+            else:
+                apply_ad_hoc_model_env(new_model_id)
+            reset_settings_cache()
+            resolved = resolve_summarizer_model(
+                new_profile_name if new_profile_name is not None else self.profile_name
+            )
+            # Pass model_override explicitly: get_settings() is cached, so the
+            # env change alone wouldn't be seen by build_gru's fallback.
+            new_gru = build_gru(
+                model_override=new_model_id,
+                extra_capabilities=rt.persisted_capabilities,
+                bus=rt.bus,
+                summarizer_model=resolved,
+            )
+            set_summarizer_model(resolved)
+        except Exception as exc:
+            # Any switch failure rolls back to the prior agent: JacConfigError
+            # (missing key), pydantic-ai UserError (unknown model), or a provider
+            # construction error. Snapshot/restore keeps the running agent intact.
+            restore_env(snap)
+            reset_settings_cache()
+            return False, str(exc)
+
+        target_profile = new_profile if new_profile is not None else rt.active_profile
+        target_profile_name = (
+            new_profile_name if new_profile_name is not None else self.profile_name
+        )
+
+        rt.gru = new_gru
+        rt.driver.gru = new_gru
+        rt.model_id = new_model_id
+        rt.active_profile = target_profile
+        self.profile_name = target_profile_name
+        default_model = target_profile.default_model() if target_profile is not None else None
+        self.model_override = None if new_model_id == default_model else new_model_id
+
+        a2a = rt.a2a_capability
+        if a2a is not None:
+            a2a.model = new_model_id
+            a2a.profile_name = target_profile_name
+            if target_profile is not None:
+                a2a.retention_days = target_profile.a2a.context_retention_days
+                a2a.allow_private_peers = target_profile.a2a.allow_private_peers
+                a2a.profile_peers.clear()
+                a2a.profile_peers.update(target_profile.a2a.peers)
+        return True, new_model_id
+
+    async def switch_model(self, model_id: str) -> dict[str, Any]:
+        """Switch the active model (ad-hoc, keeping the current profile)."""
+        model_id = (model_id or "").strip()
+        if not model_id:
+            return {"ok": False, "reason": "empty model id"}
+        async with self._start_lock:
+            await self._ensure_started_locked()
+            if self.runtime is None:
+                return {
+                    "ok": False,
+                    "reason": "no model bound — configure a profile under Profiles",
+                }
+            if self._busy:
+                return {
+                    "ok": False,
+                    "reason": "a turn is in progress — try again after it finishes",
+                }
+            ok, msg = self._rebuild(new_model_id=model_id, new_profile_name=self.profile_name)
+        if not ok:
+            self._emit({"type": "Notice", "level": "warn", "text": f"model switch failed: {msg}"})
+            return {"ok": False, "reason": msg}
+        self._emit({"type": "Notice", "text": f"switched model → {msg}"})
+        self._emit({"type": "ModelSwitched", "model": msg, "profile": self.profile_name})
+        return {"ok": True, "model": msg, "profile": self.profile_name}
+
+    async def switch_profile(self, name: str) -> dict[str, Any]:
+        """Switch the active profile (binds its active-tier default model)."""
+        name = (name or "").strip()
+        if not name:
+            return {"ok": False, "reason": "empty profile name"}
+        try:
+            profile = get_profile(name)
+        except JacConfigError as exc:
+            return {"ok": False, "reason": str(exc)}
+        async with self._start_lock:
+            await self._ensure_started_locked()
+            if self.runtime is None:
+                return {"ok": False, "reason": "no runtime — configure a profile first"}
+            if self._busy:
+                return {
+                    "ok": False,
+                    "reason": "a turn is in progress — try again after it finishes",
+                }
+            ok, msg = self._rebuild(new_model_id=profile.default_model(), new_profile_name=name)
+        if not ok:
+            self._emit({"type": "Notice", "level": "warn", "text": f"profile switch failed: {msg}"})
+            return {"ok": False, "reason": msg}
+        self._emit({"type": "Notice", "text": f"switched profile → {name} ({msg})"})
+        self._emit({"type": "ModelSwitched", "model": msg, "profile": name})
+        return {"ok": True, "model": msg, "profile": name}
+
+    def switcher_options(self) -> dict[str, Any]:
+        """Data for the top-bar profile/model dropdowns (profiles + tier models)."""
+        try:
+            profile_names = list(list_profiles().keys())
+        except JacConfigError:
+            profile_names = []
+        current_profile = self.profile_name
+        if current_profile is None:
+            try:
+                current_profile = get_default_profile_name()
+            except JacConfigError:
+                current_profile = None
+
+        profile = self.runtime.active_profile if self.runtime else None
+        if profile is None and current_profile:
+            try:
+                profile = get_profile(current_profile)
+            except JacConfigError:
+                profile = None
+
+        models: list[dict[str, str]] = []
+        if profile is not None:
+            for tier, tier_models in profile.tiers.items():
+                for model in tier_models:
+                    models.append({"tier": tier, "model": model})
+        current_model = self.runtime.model_id if self.runtime else None
+        if current_model is None and profile is not None:
+            current_model = profile.default_model()
+        return {
+            "profiles": profile_names,
+            "current_profile": current_profile,
+            "models": models,
+            "current_model": current_model,
+        }
+
     # ----- SSE -----
 
     async def sse_events(self):
@@ -335,6 +531,10 @@ class WebChatManager:
         """
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._subscribers.add(queue)
+        # A client connected — cancel any pending auto-deny failsafe.
+        if self._hitl_failsafe is not None and not self._hitl_failsafe.done():
+            self._hitl_failsafe.cancel()
+            self._hitl_failsafe = None
         try:
             # Greet this client with the current session id so the header
             # renders even before the first turn.
@@ -347,6 +547,40 @@ class WebChatManager:
                 yield {"data": json.dumps(frame)}
         finally:
             self._subscribers.discard(queue)
+            # Last client gone with HITL outstanding → arm the grace-period
+            # failsafe. A reconnect (page reload, bfcache restore) cancels it.
+            if not self._subscribers and (self._pending_approvals or self._pending_clarify):
+                self._arm_hitl_failsafe()
+
+    def _arm_hitl_failsafe(self, delay: float = 30.0) -> None:
+        if self._hitl_failsafe is not None and not self._hitl_failsafe.done():
+            return
+        self._hitl_failsafe = asyncio.create_task(self._hitl_failsafe_after(delay))
+
+    async def _hitl_failsafe_after(self, delay: float) -> None:
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            return
+        if not self._subscribers:
+            self._fail_pending_hitl()
+
+    def _fail_pending_hitl(self) -> None:
+        """Resolve outstanding approvals/clarify as denied so a turn never hangs
+        on a closed browser. Only fires after the grace period with no reconnect."""
+        for future in list(self._pending_approvals.values()):
+            if not future.done():
+                future.set_result(
+                    ApprovalResponse(
+                        approved=False, feedback="(browser disconnected — auto-denied)"
+                    )
+                )
+        self._pending_approvals.clear()
+        if self._pending_clarify is not None and not self._pending_clarify.done():
+            self._pending_clarify.set_result(
+                ClarifyResponse(selected_index=None, selected_text=None, free_text=False)
+            )
+        self._pending_clarify = None
 
     def dashboard(self) -> dict[str, Any]:
         """A snapshot for the activity sidebar (Slice 3): tokens, minions, files.

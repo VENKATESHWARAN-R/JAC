@@ -9,8 +9,15 @@ import yaml
 from pydantic import ValidationError
 
 from jac.errors import JacConfigError
-from jac.profiles import Profile
-from jac.profiles_crud import add_or_update_profile, list_profiles
+from jac.profiles import (
+    A2APeerConfig,
+    A2AProfileConfig,
+    ApiKeyAuth,
+    BearerAuth,
+    OAuth2ClientCredentialsAuth,
+    Profile,
+)
+from jac.profiles_crud import add_or_update_profile, get_profile, list_profiles
 from jac.profiles_io import detect_old_profiles, migrate_old_profiles
 from jac.providers.registry import reset_provider_registry_cache
 from jac.workspace import paths
@@ -400,3 +407,102 @@ def test_edit_command_invalid_yaml_aborts_when_user_declines(
 
     # On-disk profile is intact.
     assert list_profiles()["claude"].default_model() == "anthropic:claude-sonnet-4-5"
+
+
+# ---------- A2A peer auth discriminator round-trip (regression) ----------
+#
+# `exclude_defaults=True` (used by both add_or_update_profile and profile_to_yaml)
+# stripped the auth `type:` discriminator because it equals its Literal default,
+# producing a peer that no longer validated through the PeerAuth union and made
+# the whole profile unloadable. A wrap serializer on the auth models now
+# re-injects it. These guard the round-trip on every serialization path.
+
+
+def _profile_with_bearer_peer() -> Profile:
+    return Profile(
+        tiers={"medium": ["anthropic:claude-sonnet-4-5"]},
+        active_tier="medium",
+        a2a=A2AProfileConfig(
+            peers={
+                "peer1": A2APeerConfig(
+                    url="http://127.0.0.1:8001",
+                    auth=BearerAuth(token="secret-token"),
+                )
+            }
+        ),
+    )
+
+
+def test_add_or_update_profile_round_trips_a2a_bearer_peer() -> None:
+    # The exact repro: persist a profile with a bearer peer, then reload it.
+    # Before the fix this raised JacConfigError (union_tag_not_found).
+    add_or_update_profile("peered", _profile_with_bearer_peer(), set_default=True)
+
+    reloaded = get_profile("peered")
+    auth = reloaded.a2a.peers["peer1"].auth
+    assert isinstance(auth, BearerAuth)
+    assert auth.token == "secret-token"
+
+
+def test_persisted_profile_yaml_keeps_auth_type_discriminator() -> None:
+    add_or_update_profile("peered", _profile_with_bearer_peer())
+    on_disk = paths.USER_CONFIG_FILE.read_text(encoding="utf-8")
+    assert "type: bearer" in on_disk
+
+
+def test_profile_to_yaml_round_trips_a2a_bearer_peer() -> None:
+    from jac.profiles_io import load_profile_from_yaml, profile_to_yaml
+
+    text = profile_to_yaml(_profile_with_bearer_peer())
+    assert "type: bearer" in text  # the YAML shown in `jac profiles edit`
+    rt = load_profile_from_yaml(text)
+    auth = rt.a2a.peers["peer1"].auth
+    assert isinstance(auth, BearerAuth)
+    assert auth.token == "secret-token"
+
+
+@pytest.mark.parametrize(
+    "auth",
+    [
+        BearerAuth(token="tok"),
+        ApiKeyAuth(header="X-API-Key", value="k"),
+        OAuth2ClientCredentialsAuth(
+            token_url="https://t/token", client_id="cid", client_secret="sec"
+        ),
+    ],
+    ids=["bearer", "api_key", "oauth2"],
+)
+def test_every_auth_strategy_survives_exclude_defaults_round_trip(auth) -> None:
+    # The discriminator must survive for every member of the PeerAuth union,
+    # not just bearer — each one's `type` equals its Literal default.
+    profile = Profile(
+        tiers={"medium": ["anthropic:claude-sonnet-4-5"]},
+        active_tier="medium",
+        a2a=A2AProfileConfig(peers={"p": A2APeerConfig(url="http://127.0.0.1:9000", auth=auth)}),
+    )
+    dumped = profile.model_dump(exclude_none=True, exclude_defaults=True)
+    rt = Profile.model_validate(dumped)
+    assert rt.a2a.peers["p"].auth == auth
+
+
+def test_exclude_defaults_still_trims_non_discriminator_defaults() -> None:
+    # The fix must be surgical: only the discriminator is forced back in. A
+    # field sitting at its default (oauth2 `scope=""`) is still trimmed.
+    profile = Profile(
+        tiers={"medium": ["anthropic:claude-sonnet-4-5"]},
+        active_tier="medium",
+        a2a=A2AProfileConfig(
+            peers={
+                "p": A2APeerConfig(
+                    url="http://127.0.0.1:9000",
+                    auth=OAuth2ClientCredentialsAuth(
+                        token_url="https://t/token", client_id="cid", client_secret="sec"
+                    ),
+                )
+            }
+        ),
+    )
+    dumped = profile.model_dump(exclude_none=True, exclude_defaults=True)
+    auth_block = dumped["a2a"]["peers"]["p"]["auth"]
+    assert auth_block["type"] == "oauth2_client_credentials"
+    assert "scope" not in auth_block

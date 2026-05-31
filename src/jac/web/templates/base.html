@@ -5,23 +5,47 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>JAC — {% block title %}{{ active|capitalize }}{% endblock %}</title>
   <link rel="stylesheet" href="/static/jac.css">
+  <script src="/static/htmx.min.js" defer></script>
 </head>
 <body>
-  <button id="nav-reopen" class="nav-reopen" title="Show sidebar" aria-label="Show sidebar">☰</button>
-  <div class="layout" id="app-layout">
-    <aside class="sidebar" id="nav-sidebar">
-      <div class="sidebar-top">
-        <div class="brand-row">
-          <div>
-            <div class="brand">JAC</div>
-            <div class="brand-sub">web · v{{ version }}</div>
-          </div>
-          <button id="nav-collapse" class="icon-btn" title="Hide sidebar" aria-label="Hide sidebar">‹</button>
-        </div>
+  <!-- top bar: persistent on every surface -->
+  <header class="topbar">
+    <button class="tb-rail-toggle" id="rail-toggle" title="Toggle sidebar" aria-label="Toggle sidebar">☰</button>
+    <a href="/chat" class="tb-brand">JAC <span class="ver">v{{ version }}</span></a>
+    <span class="tb-spacer"></span>
+
+    <span class="tb-chip" title="Workspace scope (follows the launch directory)">
+      <span class="k">scope</span> {{ sb_scope.label }}
+    </span>
+    <span class="tb-switch">
+      <button class="tb-chip actionable" id="tb-profile-btn" title="Switch profile (rebuilds the live agent)">
+        <span class="k">profile</span> <span id="tb-profile-name">{{ sb_profile or "—" }}</span> <span class="caret">▾</span>
+      </button>
+      <div class="tb-menu" id="tb-profile-menu" hidden></div>
+    </span>
+    <span class="tb-switch">
+      <button class="tb-chip actionable mono" id="tb-model-btn" title="Switch model (rebuilds the live agent)">
+        <span id="tb-model-name">{{ sb_model or "no model" }}</span> <span class="caret">▾</span>
+      </button>
+      <div class="tb-menu" id="tb-model-menu" hidden></div>
+    </span>
+
+    <button class="tb-doctor" id="tb-doctor" title="Readiness — what's blocking a run"
+            hx-get="/panel/dashboard" hx-target="#drawer-body" data-drawer-open data-title="Dashboard">
+      <span class="tb-dot" id="tb-dot"></span>
+    </button>
+    <span class="tb-tokens" id="tb-tokens"></span>
+  </header>
+
+  <div class="shell">
+    <!-- left rail: new chat, sessions, management nav -->
+    <aside class="sidebar">
+      <div class="side-actions">
         <a href="/chat?new=1" class="new-chat">+ New chat</a>
       </div>
 
-      <nav class="sidebar-sessions" aria-label="Sessions">
+      <div class="side-label">Chats</div>
+      <nav class="side-sessions" aria-label="Sessions">
         {% if sb_sessions %}
           {% for s in sb_sessions %}
           <div class="sess-row {{ 'on' if s.id == active_session }}">
@@ -41,34 +65,47 @@
         {% endif %}
       </nav>
 
-      <div class="sidebar-bottom">
-        <a href="/settings" class="settings-btn {{ 'on' if active in ['settings', 'profiles', 'keys'] }}">
-          <span class="gear" aria-hidden="true">⚙</span> Settings
-        </a>
-      </div>
+      <div class="side-label">Manage</div>
+      <nav class="side-manage" aria-label="Management">
+        {% set nav = [
+          ("dashboard", "◳", "Dashboard"),
+          ("profiles", "◈", "Profiles & models"),
+          ("keys", "🔑", "Keys & secrets"),
+          ("config", "⚙", "Config"),
+          ("skills", "✦", "Skills"),
+          ("mcp", "⧉", "MCP servers"),
+          ("a2a", "⇄", "A2A"),
+          ("context", "✎", "Context & prompts"),
+          ("memory", "❋", "Memory"),
+          ("providers", "▤", "Providers"),
+        ] %}
+        {% for key, ico, label in nav %}
+        <button class="nav-item" hx-get="/panel/{{ key }}" hx-target="#drawer-body"
+                data-drawer-open data-title="{{ label }}">
+          <span class="ico">{{ ico }}</span> {{ label }}
+        </button>
+        {% endfor %}
+      </nav>
     </aside>
 
-    <main class="content {% block main_class %}{% endblock %}">
+    <main class="main {% block main_class %}{% endblock %}">
       {% if ok %}<div class="flash ok">{{ ok }}</div>{% endif %}
       {% if err %}<div class="flash err">{{ err }}</div>{% endif %}
       {% block content %}{% endblock %}
     </main>
   </div>
 
-  <script>
-    // Left-sidebar collapse (works on every page; chat.js handles the right drawer).
-    // Toggle on <body> so the sidebar, the floating reopen button (a sibling of
-    // the layout), and the content padding all match the .nav-collapsed selector.
-    (() => {
-      const collapse = document.getElementById("nav-collapse");
-      const reopen = document.getElementById("nav-reopen");
-      const KEY = "jac.nav.collapsed";
-      const apply = (on) => document.body.classList.toggle("nav-collapsed", on);
-      try { apply(localStorage.getItem(KEY) === "1"); } catch (e) {}
-      const set = (on) => { apply(on); try { localStorage.setItem(KEY, on ? "1" : "0"); } catch (e) {} };
-      if (collapse) collapse.addEventListener("click", () => set(true));
-      if (reopen) reopen.addEventListener("click", () => set(false));
-    })();
-  </script>
+  <!-- drawer: Control Panel slides over the Console; chat stays live underneath -->
+  <div class="drawer-scrim" data-drawer-close></div>
+  <aside class="drawer" id="drawer" aria-hidden="true">
+    <div class="drawer-head">
+      <div class="drawer-title" id="drawer-title">Manage</div>
+      <button class="icon-btn" id="drawer-expand" title="Expand / shrink">⤢</button>
+      <button class="icon-btn" data-drawer-close title="Close">✕</button>
+    </div>
+    <div class="drawer-body" id="drawer-body"></div>
+  </aside>
+
+  <script src="/static/ui.js" defer></script>
 </body>
 </html>
