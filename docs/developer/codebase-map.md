@@ -124,6 +124,7 @@ src/jac/
 ├── workspace/
 │   ├── paths.py             # All path constants (SSOT) + load_prompt
 │   ├── config_loader.py     # YAML layering for Settings
+│   ├── config_io.py         # Scope-aware config-group writes + per-field precedence (web Config panel)
 │   ├── bootstrap.py         # ensure_user_workspace / init_project_workspace
 │   ├── context.py           # AGENTS.md + memory.md loaders (+ load_agents_context for sub-agents)
 │   └── session_ctx.py       # ContextVar session id (consumed by memory + history)

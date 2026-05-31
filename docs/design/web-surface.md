@@ -1,7 +1,14 @@
 # Web surface — local-first UI (design)
 
 > **Status:** Slices 1 (control panel), 2 (streaming chat + HITL), and 3 (activity
-> dashboard) shipped. Remaining: visual/theming polish.
+> dashboard) shipped, then **redesigned (R0–R5, 2026-05-31)**: a chat-first,
+> light, full-bleed Console plus a full Control Panel (every config domain as an
+> htmx drawer over the live chat), a top-bar model/profile switcher, and a
+> HITL-disconnect failsafe. **This doc still describes the charter, engine seam,
+> scoping, and risks — all unchanged.** The redesigned IA, visual language, and
+> the per-domain management surface are specified in
+> [`web-ui-redesign.md`](web-ui-redesign.md). Remaining: visual polish + a
+> narrow-width responsive breakpoint.
 > **Decision:** [`architecture.md`](../architecture.md) §5 **D48**.
 
 JAC has two surfaces today: the **CLI** (interactive REPL) and **A2A** (a
@@ -224,9 +231,11 @@ server). `app.py` is the thin CLI wrapper, parallel to `cli/a2a.py`.
    exactly one EventSource and closes it on `pagehide`/`beforeunload`, reconnecting
    on `pageshow` when restored from bfcache. (Verified: clicking through 6 sessions
    leaves the pool free — fetches stay <35 ms.)
-   **Next: visual/theming polish** — animations, imagery, a richer minion
-   aesthetic (this is the home for that, and the point where a heavier reactive
-   frontend like Reflex could earn its place).
+   **Superseded by the R0–R5 redesign (2026-05-31)** — the chat-centric shell,
+   dark theme, and settings-as-pages IA were replaced by the light full-bleed
+   Console + drawer-based Control Panel in [`web-ui-redesign.md`](web-ui-redesign.md).
+   The engine seam, SSE/HITL plumbing, and bfcache/connection handling described
+   above are unchanged and still in force.
 
 ## Risks & how we scope around them
 
