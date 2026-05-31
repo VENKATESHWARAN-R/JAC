@@ -34,10 +34,8 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
-import os
 from typing import Any
 
-from jac.config import reset_settings_cache
 from jac.errors import JacConfigError
 from jac.profiles_crud import (
     get_default_profile_name,
@@ -45,12 +43,11 @@ from jac.profiles_crud import (
     list_profiles,
     resolve_active_profile_name,
 )
-from jac.providers.registry import get_provider_registry, provider_prefix
 from jac.runtime.bootstrap import (
     SessionRuntime,
     build_session_runtime,
-    resolve_summarizer_model,
 )
+from jac.runtime.control import SessionController
 from jac.runtime.events import (
     ApprovalRequest,
     ApprovalResponse,
@@ -60,16 +57,11 @@ from jac.runtime.events import (
     SubAgentSpawned,
     ToolCallStarted,
 )
-from jac.runtime.gru import build_gru
 from jac.runtime.session import Session
 from jac.runtime.sub_agent import _BIDIRECTIONAL_ROUND_TRIP_CAP, _pending_spawns
 from jac.runtime.sub_agent_usage import get_sub_agent_stats
-from jac.runtime.tool_summarize import set_summarizer_model
 from jac.secrets import (
-    apply_ad_hoc_model_env,
     apply_profile_env,
-    restore_env,
-    snapshot_env,
 )
 from jac.workspace import paths
 
@@ -127,6 +119,10 @@ class WebChatManager:
 
     def __init__(self) -> None:
         self.runtime: SessionRuntime | None = None
+        # Surface-agnostic control plane over `runtime` — the same one the CLI
+        # REPL drives. Built in `_attach`; the switch / MCP / skills verbs go
+        # through it so the web and CLI share one mutation implementation.
+        self.controller: SessionController | None = None
         self.session: Session | None = None
         self.history: list[Any] = []
         # One queue per live SSE connection (broadcast). A single shared queue
@@ -212,6 +208,7 @@ class WebChatManager:
         except JacConfigError as exc:
             self.session = session
             self.runtime = None
+            self.controller = None
             self._emit({"type": "Error", "error": f"can't start chat — {exc}"})
             return
 
@@ -219,6 +216,7 @@ class WebChatManager:
             self._consumer.cancel()
         self.session = session
         self.runtime = runtime
+        self.controller = SessionController(runtime)
         self.history = list(session.message_history)
         self._pending_approvals.clear()
         self._pending_clarify = None
@@ -350,89 +348,28 @@ class WebChatManager:
         self._emit({"type": "SessionStarted", "id": session.session_id})
         return {"ok": True, "id": session.session_id}
 
-    # ----- live model / profile switch (mid-session Gru rebuild) -----
+    # ----- live model / profile switch + capability reloads -----
+    #
+    # Every runtime mutation goes through the shared control plane
+    # (``self.controller``), which owns the env snapshot/rollback + Gru rebuild
+    # and mutates the runtime in place. These methods translate that into the
+    # web's JSON-ack + SSE-frame idiom; the CLI renders the same verbs to a
+    # terminal. No rebuild logic is duplicated here anymore.
 
-    def _rebuild(self, *, new_model_id: str, new_profile_name: str | None) -> tuple[bool, str]:
-        """Rebuild Gru in place for a new model/profile, snapshot/rollback on failure.
+    def _sync_shadow_from_runtime(self) -> None:
+        """Re-derive the manager's shadow fields after a controller mutation.
 
-        Mirrors the REPL's ``_rebuild_gru``: snapshot every env key either profile
-        (or the new model's provider) could touch, apply the new env, rebuild Gru
-        against the **same** bus + capabilities, and on a missing-key / bad-profile
-        error restore the snapshot and keep the old Gru. The history, bus, consumer,
-        and pending approvals are untouched — only the agent swaps.
+        The controller updates the runtime in place (``model_id``,
+        ``active_profile``, ``profile_name``). The manager keeps ``profile_name``
+        + ``model_override`` for the top-bar dropdowns and the next session
+        build, so pull them back from the runtime.
         """
         rt = self.runtime
-        assert rt is not None
-        new_profile = None
-        if new_profile_name is not None:
-            try:
-                new_profile = get_profile(new_profile_name)
-            except JacConfigError as exc:
-                return False, str(exc)
-
-        keys: set[str] = {"JAC_MODEL"}
-        if rt.active_profile is not None:
-            keys.update(rt.active_profile.env)
-            keys.update(rt.active_profile.required_env_keys())
-        if new_profile is not None:
-            keys.update(new_profile.env)
-            keys.update(new_profile.required_env_keys())
-        keys.update(get_provider_registry().required_env_for_prefix(provider_prefix(new_model_id)))
-        snap = snapshot_env(list(keys))
-
-        try:
-            if new_profile_name is None:
-                apply_ad_hoc_model_env(new_model_id)
-            elif new_profile is not None and new_profile_name != self.profile_name:
-                apply_profile_env(new_profile_name, new_profile)
-                if new_model_id != new_profile.default_model():
-                    os.environ["JAC_MODEL"] = new_model_id
-            else:
-                apply_ad_hoc_model_env(new_model_id)
-            reset_settings_cache()
-            resolved = resolve_summarizer_model(
-                new_profile_name if new_profile_name is not None else self.profile_name
-            )
-            # Pass model_override explicitly: get_settings() is cached, so the
-            # env change alone wouldn't be seen by build_gru's fallback.
-            new_gru = build_gru(
-                model_override=new_model_id,
-                extra_capabilities=rt.persisted_capabilities,
-                bus=rt.bus,
-                summarizer_model=resolved,
-            )
-            set_summarizer_model(resolved)
-        except Exception as exc:
-            # Any switch failure rolls back to the prior agent: JacConfigError
-            # (missing key), pydantic-ai UserError (unknown model), or a provider
-            # construction error. Snapshot/restore keeps the running agent intact.
-            restore_env(snap)
-            reset_settings_cache()
-            return False, str(exc)
-
-        target_profile = new_profile if new_profile is not None else rt.active_profile
-        target_profile_name = (
-            new_profile_name if new_profile_name is not None else self.profile_name
-        )
-
-        rt.gru = new_gru
-        rt.driver.gru = new_gru
-        rt.model_id = new_model_id
-        rt.active_profile = target_profile
-        self.profile_name = target_profile_name
-        default_model = target_profile.default_model() if target_profile is not None else None
-        self.model_override = None if new_model_id == default_model else new_model_id
-
-        a2a = rt.a2a_capability
-        if a2a is not None:
-            a2a.model = new_model_id
-            a2a.profile_name = target_profile_name
-            if target_profile is not None:
-                a2a.retention_days = target_profile.a2a.context_retention_days
-                a2a.allow_private_peers = target_profile.a2a.allow_private_peers
-                a2a.profile_peers.clear()
-                a2a.profile_peers.update(target_profile.a2a.peers)
-        return True, new_model_id
+        if rt is None:
+            return
+        self.profile_name = rt.profile_name
+        default = rt.active_profile.default_model() if rt.active_profile is not None else None
+        self.model_override = None if rt.model_id == default else rt.model_id
 
     async def switch_model(self, model_id: str) -> dict[str, Any]:
         """Switch the active model (ad-hoc, keeping the current profile)."""
@@ -441,7 +378,7 @@ class WebChatManager:
             return {"ok": False, "reason": "empty model id"}
         async with self._start_lock:
             await self._ensure_started_locked()
-            if self.runtime is None:
+            if self.runtime is None or self.controller is None:
                 return {
                     "ok": False,
                     "reason": "no model bound — configure a profile under Profiles",
@@ -451,39 +388,88 @@ class WebChatManager:
                     "ok": False,
                     "reason": "a turn is in progress — try again after it finishes",
                 }
-            ok, msg = self._rebuild(new_model_id=model_id, new_profile_name=self.profile_name)
-        if not ok:
-            self._emit({"type": "Notice", "level": "warn", "text": f"model switch failed: {msg}"})
-            return {"ok": False, "reason": msg}
-        self._emit({"type": "Notice", "text": f"switched model → {msg}"})
-        self._emit({"type": "ModelSwitched", "model": msg, "profile": self.profile_name})
-        return {"ok": True, "model": msg, "profile": self.profile_name}
+            result = self.controller.switch_model(model_id)
+        if not result.ok:
+            self._emit(
+                {
+                    "type": "Notice",
+                    "level": "warn",
+                    "text": f"model switch failed: {result.message}",
+                }
+            )
+            return {"ok": False, "reason": result.message}
+        self._sync_shadow_from_runtime()
+        model = self.runtime.model_id
+        self._emit({"type": "Notice", "text": f"switched model → {model}"})
+        self._emit({"type": "ModelSwitched", "model": model, "profile": self.profile_name})
+        return {"ok": True, "model": model, "profile": self.profile_name}
 
     async def switch_profile(self, name: str) -> dict[str, Any]:
         """Switch the active profile (binds its active-tier default model)."""
         name = (name or "").strip()
         if not name:
             return {"ok": False, "reason": "empty profile name"}
-        try:
-            profile = get_profile(name)
-        except JacConfigError as exc:
-            return {"ok": False, "reason": str(exc)}
         async with self._start_lock:
             await self._ensure_started_locked()
-            if self.runtime is None:
+            if self.runtime is None or self.controller is None:
                 return {"ok": False, "reason": "no runtime — configure a profile first"}
             if self._busy:
                 return {
                     "ok": False,
                     "reason": "a turn is in progress — try again after it finishes",
                 }
-            ok, msg = self._rebuild(new_model_id=profile.default_model(), new_profile_name=name)
-        if not ok:
-            self._emit({"type": "Notice", "level": "warn", "text": f"profile switch failed: {msg}"})
-            return {"ok": False, "reason": msg}
-        self._emit({"type": "Notice", "text": f"switched profile → {name} ({msg})"})
-        self._emit({"type": "ModelSwitched", "model": msg, "profile": name})
-        return {"ok": True, "model": msg, "profile": name}
+            result = self.controller.switch_profile(name)
+        if not result.ok:
+            self._emit(
+                {
+                    "type": "Notice",
+                    "level": "warn",
+                    "text": f"profile switch failed: {result.message}",
+                }
+            )
+            return {"ok": False, "reason": result.message}
+        self._sync_shadow_from_runtime()
+        model = self.runtime.model_id
+        self._emit({"type": "Notice", "text": f"switched profile → {name} ({model})"})
+        self._emit({"type": "ModelSwitched", "model": model, "profile": self.profile_name})
+        return {"ok": True, "model": model, "profile": self.profile_name}
+
+    def reload_mcp_if_live(self) -> None:
+        """Reload the live MCP catalog + rebuild Gru after a control-panel edit.
+
+        The control panel writes ``mcp.json`` directly (a file editor) — a
+        *future* session picks that up at build time. To make the change take
+        effect in the *running* session too (the parity gap the CLI's ``/mcp
+        reload|enable|disable`` already closed), re-scan + rebuild via the
+        controller. No-op when no session is live or a turn is in flight; the
+        file write still lands and applies on the next start.
+        """
+        if self.controller is None or self._busy:
+            return
+        self.controller.reload_mcp()
+
+    def reload_skills_if_live(self) -> None:
+        """Reload the live skill catalog after a control-panel edit.
+
+        No Gru rebuild needed — the skills tool reads the catalog live.
+        """
+        if self.controller is None:
+            return
+        self.controller.reload_skills()
+
+    async def use_skill(self, name: str) -> dict[str, Any]:
+        """Run a turn seeded with a loaded skill's body (mirrors CLI ``/skill use``)."""
+        name = (name or "").strip()
+        if not name:
+            return {"ok": False, "reason": "empty skill name"}
+        await self.ensure_started()
+        if self.runtime is None:
+            return {"ok": False, "reason": "no model bound — configure a profile under Profiles"}
+        try:
+            body = self.runtime.skills_capability.load_skill(name)
+        except (ValueError, AttributeError) as exc:
+            return {"ok": False, "reason": str(exc)}
+        return await self.send(body)
 
     def switcher_options(self) -> dict[str, Any]:
         """Data for the top-bar profile/model dropdowns (profiles + tier models)."""

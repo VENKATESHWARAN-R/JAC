@@ -111,6 +111,18 @@
     }
   };
 
+  // ----- "Use in chat" from the Skills drawer -----
+  // Mirrors the CLI's `/skill use NAME`: seed a turn with the skill's body.
+  // On success close the drawer so the turn is visible in the console behind it.
+  document.addEventListener("click", async (e) => {
+    const el = e.target.closest("[data-use-skill]");
+    if (!el) return;
+    e.preventDefault();
+    const r = await jpost("/chat/use-skill", { name: el.dataset.useSkill });
+    if (r && r.ok) closeDrawer();
+    else alert((r && r.reason) || "could not use skill");
+  });
+
   async function openProfileMenu() {
     if (!pMenu) return;
     closeMenus();

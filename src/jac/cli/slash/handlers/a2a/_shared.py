@@ -37,16 +37,6 @@ def desc_tail(peer) -> str:
     return f"  [dim]— {desc}[/dim]"
 
 
-def profile_defaults(ctx: SlashContext) -> tuple[str, int]:
-    """Pull bind defaults from the active profile, fall back to schema defaults."""
-    if ctx.profile is not None:
-        return ctx.profile.a2a.host, ctx.profile.a2a.port
-    from jac.profiles import A2AProfileConfig
-
-    default = A2AProfileConfig()
-    return default.host, default.port
-
-
 def prompt_secret(label: str, ctx: SlashContext) -> str | None:
     """Read a secret from stdin with no echo. Empty input → cancel.
 

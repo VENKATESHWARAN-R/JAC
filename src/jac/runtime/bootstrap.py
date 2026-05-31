@@ -105,6 +105,7 @@ class SessionRuntime:
     mcp_capability: Any
     persisted_capabilities: list[Any]
     active_profile: Profile | None
+    profile_name: str | None
     model_id: str
 
 
@@ -260,5 +261,6 @@ def build_session_runtime(
         mcp_capability=mcp_capability,
         persisted_capabilities=persisted_capabilities,
         active_profile=active_profile,
+        profile_name=profile_name,
         model_id=model_id,
     )

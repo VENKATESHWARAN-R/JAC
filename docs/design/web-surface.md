@@ -10,6 +10,15 @@
 > [`web-ui-redesign.md`](web-ui-redesign.md). Remaining: visual polish + a
 > narrow-width responsive breakpoint.
 > **Decision:** [`architecture.md`](../architecture.md) §5 **D48**.
+>
+> **Update (D49, 2026-05-31):** the top-bar switcher and the control panel's
+> MCP/skill edits now drive the shared **`SessionController`** control plane
+> (`runtime/control.py`) — the *same* verbs the CLI slash commands call. The
+> web's hand-copied `_rebuild` is gone (no more drift with the REPL), and a bug
+> where toggling MCP in the panel wrote the file but never rebuilt the running
+> Gru is fixed: `reload_*_if_live` re-scans + rebuilds after a control-panel
+> write. Each skill also gets a **"Use in chat"** action (`/chat/use-skill`,
+> mirroring CLI `/skill use`). See [`architecture.md`](../architecture.md) §5 D49.
 
 JAC has two surfaces today: the **CLI** (interactive REPL) and **A2A** (a
 headless server that lets peer agents drive a read-only guest Gru). This adds a

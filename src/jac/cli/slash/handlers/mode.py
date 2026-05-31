@@ -7,7 +7,7 @@
   everything else still prompt.
 - ``/mode normal`` — default HITL: every risky call prompts.
 
-Setting a mode rebuilds Gru in place (``RefreshToolsets``) so the matching
+Setting a mode rebuilds Gru in place via the control plane so the matching
 system-prompt guidance is applied. YOLO is intentionally absent — per D43 it
 ships only with sandboxing (v2).
 """
@@ -18,7 +18,7 @@ from typing import cast
 
 from jac.cli.slash.context import SlashContext
 from jac.cli.slash.registry import register
-from jac.cli.slash.result import Handled, RefreshToolsets, SlashResult
+from jac.cli.slash.result import Handled, SlashResult
 from jac.runtime.modes import MODES, Mode, get_mode, set_mode
 
 _DESC = {
@@ -58,4 +58,11 @@ def mode_handler(ctx: SlashContext, args: str) -> SlashResult:
 
     set_mode(cast(Mode, arg))  # arg validated against MODES above
     ctx.console.print(f"[green]✓[/green] {arg} mode [dim]— {_DESC[arg]}[/dim]")
-    return RefreshToolsets(note=f"{arg} mode active")
+    # Rebuild Gru via the control plane so the new mode's system-prompt
+    # guidance is applied. set_mode (a module global) must run first — build_gru
+    # reads it. A rebuild failure (e.g. no model bound) leaves the mode set.
+    if ctx.controller is not None:
+        outcome = ctx.controller.refresh_toolsets()
+        if not outcome.ok:
+            ctx.console.print(f"[yellow]{outcome.message}[/yellow]")
+    return Handled()

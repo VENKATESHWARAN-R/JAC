@@ -1,54 +1,16 @@
-"""Mini argument parsers for ``/a2a`` subcommands.
+"""Mini argument parser for ``/a2a peer add``.
 
-Slash input is a single string; ``/a2a serve`` and ``/a2a peer add`` accept
-flags. These parsers convert the trailing string into typed values, raising
-``ValueError`` with an actionable message on bad input. The dispatchers
-catch and render the error so the REPL never crashes on a typo.
+Slash input is a single string; ``/a2a peer add`` accepts auth flags. This
+parser converts the trailing string into typed values, raising ``ValueError``
+with an actionable message on bad input. The dispatcher catches and renders
+the error so the REPL never crashes on a typo.
+
+(Server-lifecycle subcommands — ``serve``/``stop``/``status``/``token`` — were
+removed from the REPL; the A2A server is started only via ``jac a2a serve``,
+which parses its own flags through Typer.)
 """
 
 from __future__ import annotations
-
-
-def parse_serve_args(rest: str, *, default_host: str, default_port: int) -> tuple[str, int, bool]:
-    """Mini parser for ``[--port N] [--host ADDR] [--unsafe]``.
-
-    Order doesn't matter; unknown args raise ``ValueError``. The headless
-    ``jac a2a serve`` typer command parses its own flags upstream and
-    never needs this.
-    """
-    if not rest:
-        return default_host, default_port, False
-
-    host = default_host
-    port = default_port
-    unsafe = False
-
-    tokens = rest.split()
-    i = 0
-    while i < len(tokens):
-        tok = tokens[i]
-        if tok == "--unsafe":
-            unsafe = True
-            i += 1
-            continue
-        if tok in {"--host", "--port"}:
-            if i + 1 >= len(tokens):
-                raise ValueError(f"{tok} requires a value")
-            value = tokens[i + 1]
-            if tok == "--host":
-                host = value
-            else:
-                try:
-                    port = int(value)
-                except ValueError as exc:
-                    raise ValueError(f"--port must be an integer; got {value!r}") from exc
-                if not (1 <= port <= 65535):
-                    raise ValueError(f"--port must be 1-65535; got {port}")
-            i += 2
-            continue
-        raise ValueError(f"unknown arg {tok!r}; expected --host ADDR | --port N | --unsafe")
-
-    return host, port, unsafe
 
 
 def parse_peer_add(args: str) -> tuple[str, str, dict | None]:

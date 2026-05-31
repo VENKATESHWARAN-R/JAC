@@ -19,9 +19,11 @@ from types import SimpleNamespace
 import pytest
 from starlette.testclient import TestClient
 
+import jac.runtime.control as controlmod
 import jac.web.chat as chatmod
 from jac.config import reset_settings_cache
 from jac.providers.registry import reset_provider_registry_cache
+from jac.runtime.control import SessionController
 from jac.runtime.events import EventBus
 from jac.web.chat import WebChatManager
 from jac.web.server import create_app
@@ -52,12 +54,15 @@ def _isolate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 def _fake_runtime(model_id: str = "ollama:llama3") -> SimpleNamespace:
     return SimpleNamespace(
         active_profile=None,
+        profile_name=None,
         persisted_capabilities=[],
         bus=EventBus(),
         driver=SimpleNamespace(gru="OLD_GRU"),
         gru="OLD_GRU",
         model_id=model_id,
         a2a_capability=None,
+        mcp_capability=None,
+        skills_capability=None,
     )
 
 
@@ -89,38 +94,73 @@ def test_switcher_options_shape_without_profile() -> None:
     assert opts["models"] == []
 
 
-# ---------- the rebuild guard ----------
+# ---------- the rebuild guard (now via the shared control plane) ----------
+#
+# The rebuild dance itself (snapshot/rollback, env apply, Gru swap) lives in
+# SessionController and is unit-tested in test_control.py. Here we assert the
+# *web manager* drives it correctly through switch_model: surfacing a failure
+# as a JSON refusal, and syncing its shadow fields on success.
 
 
-def test_rebuild_rolls_back_on_missing_key() -> None:
+def test_switch_model_rolls_back_on_missing_key() -> None:
     # Switching to an anthropic model with no ANTHROPIC_API_KEY must fail and
-    # leave the running agent + env untouched (snapshot/restore).
+    # leave the running agent + env untouched (snapshot/restore in the controller).
     mgr = WebChatManager()
     mgr.runtime = _fake_runtime()  # type: ignore[assignment]
+    mgr.controller = SessionController(mgr.runtime)  # type: ignore[arg-type]
     mgr.profile_name = None
-    ok, msg = mgr._rebuild(new_model_id="anthropic:claude-sonnet-4-6", new_profile_name=None)
-    assert ok is False
-    assert "ANTHROPIC_API_KEY" in msg
+    r = asyncio.run(mgr.switch_model("anthropic:claude-sonnet-4-6"))
+    assert r["ok"] is False
+    assert "ANTHROPIC_API_KEY" in r["reason"]
     assert mgr.runtime.model_id == "ollama:llama3"  # unchanged
     assert mgr.runtime.gru == "OLD_GRU"  # agent not swapped
     assert os.environ.get("JAC_MODEL") is None  # env restored
 
 
-def test_rebuild_swaps_agent_on_success(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_switch_model_swaps_agent_on_success(monkeypatch: pytest.MonkeyPatch) -> None:
     # Monkeypatch model construction so no provider is needed; assert the agent
-    # and model id are swapped in place (history/bus untouched is implicit —
-    # _rebuild never touches them).
-    monkeypatch.setattr(chatmod, "build_gru", lambda **kw: "NEW_GRU")
+    # and model id are swapped in place and the manager's shadow is synced.
+    monkeypatch.setattr(controlmod, "build_gru", lambda **kw: "NEW_GRU")
     mgr = WebChatManager()
     mgr.runtime = _fake_runtime()  # type: ignore[assignment]
+    mgr.controller = SessionController(mgr.runtime)  # type: ignore[arg-type]
     mgr.profile_name = None
-    ok, msg = mgr._rebuild(new_model_id="ollama:llama3.2", new_profile_name=None)
-    assert ok is True
-    assert msg == "ollama:llama3.2"
+    r = asyncio.run(mgr.switch_model("ollama:llama3.2"))
+    assert r["ok"] is True
+    assert r["model"] == "ollama:llama3.2"
     assert mgr.runtime.gru == "NEW_GRU"
     assert mgr.runtime.driver.gru == "NEW_GRU"
     assert mgr.runtime.model_id == "ollama:llama3.2"
     assert mgr.model_override == "ollama:llama3.2"  # ad-hoc model, no profile
+
+
+# ---------- live capability reloads (control-panel edits → running session) ----------
+
+
+def test_reload_mcp_if_live_rebuilds_when_live() -> None:
+    """A control-panel MCP edit reloads + rebuilds the running session."""
+    mgr = WebChatManager()
+    calls: list[int] = []
+    mgr.controller = SimpleNamespace(reload_mcp=lambda: calls.append(1))  # type: ignore[assignment]
+    mgr._busy = False
+    mgr.reload_mcp_if_live()
+    assert calls == [1]
+
+
+def test_reload_mcp_if_live_noop_when_busy_or_no_session() -> None:
+    mgr = WebChatManager()
+    calls: list[int] = []
+    fake = SimpleNamespace(reload_mcp=lambda: calls.append(1))
+    mgr.controller = fake  # type: ignore[assignment]
+    mgr._busy = True  # mid-turn → skip (file write still lands for next start)
+    mgr.reload_mcp_if_live()
+    mgr.controller = None  # no live session → skip
+    mgr.reload_mcp_if_live()
+    assert calls == []
+
+
+def test_use_skill_empty_is_rejected() -> None:
+    assert asyncio.run(WebChatManager().use_skill(""))["ok"] is False
 
 
 # ---------- routes ----------

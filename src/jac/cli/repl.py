@@ -27,22 +27,16 @@ from prompt_toolkit.document import Document
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.styles import Style
-from pydantic_ai import Agent
 from rich.console import Console
 
 from jac import __version__
 from jac.capabilities.history import estimate_tokens, force_compact
-from jac.cli._a2a_banner import print_server_started_banner
 from jac.cli.renderer import CliRenderer
 from jac.cli.slash import (
     CompactNow,
     Exit,
     InjectUserText,
-    RebuildGru,
-    RefreshToolsets,
     SlashContext,
-    StartA2AServer,
-    StopA2AServer,
     SwitchSession,
     UnknownSlashCommand,
     command_names,
@@ -51,26 +45,16 @@ from jac.cli.slash import (
 from jac.cli.statusbar import StatusState, format_toolbar
 from jac.config import resolve_context_budget, set_session_context_budget
 from jac.errors import JacConfigError
-from jac.profiles import Profile
-from jac.profiles_crud import get_profile
-from jac.providers.registry import get_provider_registry, provider_prefix
 from jac.runtime.bootstrap import build_session_runtime, resolve_summarizer_model
+from jac.runtime.control import SessionController
 from jac.runtime.driver import SessionDriver
 from jac.runtime.events import (
     EventBus,
     PlanReplaced,
 )
-from jac.runtime.gru import build_gru
 from jac.runtime.modes import reset_mode
 from jac.runtime.session import Session
-from jac.runtime.tool_summarize import set_summarizer_model
 from jac.runtime.usage import make_usage_tracker
-from jac.secrets import (
-    apply_ad_hoc_model_env,
-    apply_profile_env,
-    restore_env,
-    snapshot_env,
-)
 from jac.workspace import paths
 from jac.workspace.session_ctx import set_current_session_id
 
@@ -255,9 +239,11 @@ async def _repl_loop(
         console.print(f"[red]config error:[/red] {exc}")
         return
 
-    # hooks / approval / clarify live inside persisted_capabilities; the REPL
-    # only needs the handles it references by name below (status, slash, finally).
-    gru = rt.gru
+    # hooks / approval / clarify / persisted_capabilities live on `rt`; the REPL
+    # only names the handles it references below (status, slash, finally). Gru
+    # itself is reached via `driver.gru` — the control plane swaps it in place
+    # on `rt.driver` during a model/profile/toolset change, so the REPL never
+    # holds its own `gru` reference.
     bus = rt.bus
     driver = rt.driver
     usage_tracker = rt.usage_tracker
@@ -266,10 +252,15 @@ async def _repl_loop(
     a2a_capability = rt.a2a_capability
     skills_capability = rt.skills_capability
     mcp_capability = rt.mcp_capability
-    persisted_capabilities = rt.persisted_capabilities
     active_profile = rt.active_profile
     model_id = rt.model_id
     message_history: list = list(session.message_history)
+
+    # Surface-agnostic control plane: every runtime mutation a slash command
+    # triggers (switch model/profile, toggle/reload MCP, reload skills) goes
+    # through this, mutating `rt` in place. The web surface drives the same
+    # verbs. After each dispatch the REPL re-syncs its display locals from `rt`.
+    controller = SessionController(rt)
 
     # Status bar — the toolbar callable reads from this on every render.
     # We keep the same reference across the session and mutate fields in
@@ -325,6 +316,7 @@ async def _repl_loop(
                     a2a=a2a_capability,
                     skills=skills_capability,
                     mcp=mcp_capability,
+                    controller=controller,
                 )
                 try:
                     result = dispatch(text, ctx)
@@ -334,6 +326,18 @@ async def _repl_loop(
                         "[dim](try [bold]/help[/bold])[/dim]"
                     )
                     continue
+
+                # A control-plane verb (via ctx.controller) may have switched
+                # model/profile or rebuilt Gru in place on `rt`. Re-sync the
+                # surface's view so the status bar + next SlashContext reflect
+                # it. No-op when the command changed nothing. The A2A metadata
+                # sync now lives in the controller, not here.
+                model_id = rt.model_id
+                profile_name = rt.profile_name
+                active_profile = rt.active_profile
+                status.model_id = model_id
+                status.profile_name = profile_name
+                status.profile = active_profile
 
                 if isinstance(result, Exit):
                     console.print("[dim]bye[/dim]")
@@ -362,72 +366,6 @@ async def _repl_loop(
                     status.message_history = message_history
                     status.budget_pct = usage_tracker.status_pct()
                     status.exact_context_tokens = None  # fresh session, no turn yet
-                elif isinstance(result, RebuildGru):
-                    rebuilt = _rebuild_gru(
-                        new_model_id=result.new_model_id,
-                        new_profile_name=result.new_profile_name,
-                        current_profile=active_profile,
-                        current_profile_name=profile_name,
-                        capabilities=persisted_capabilities,
-                        bus=bus,
-                    )
-                    if rebuilt is not None:
-                        gru, model_id, profile_name, active_profile = rebuilt
-                        driver.gru = gru
-                        status.model_id = model_id
-                        status.profile_name = profile_name
-                        status.profile = active_profile
-                        # Keep A2A capability's metadata in sync so a future
-                        # /a2a serve spawns its guest with the new model +
-                        # profile. The running server (if any) keeps its
-                        # already-bound model — switching mid-flight is a
-                        # follow-up (likely Phase 4.c).
-                        a2a_capability.model = model_id
-                        a2a_capability.profile_name = profile_name
-                        if active_profile is not None:
-                            a2a_capability.retention_days = (
-                                active_profile.a2a.context_retention_days
-                            )
-                            a2a_capability.allow_private_peers = (
-                                active_profile.a2a.allow_private_peers
-                            )
-                            # Mutate profile_peers in place so the outbound
-                            # tool closures (which capture the merged-view
-                            # getter) see the new peers immediately.
-                            # Session peers are NOT touched on /profile —
-                            # they're the operator's per-session overrides
-                            # and survive a profile switch.
-                            a2a_capability.profile_peers.clear()
-                            a2a_capability.profile_peers.update(active_profile.a2a.peers)
-                elif isinstance(result, RefreshToolsets):
-                    # /mcp reload|enable|disable: the MCP capability's catalog
-                    # already changed in place; rebuild Gru against the *same*
-                    # model so its get_toolset() is re-consulted. No env dance,
-                    # no model switch. Pass the active model explicitly so the
-                    # --model (no-profile) path doesn't fall back to settings.
-                    if model_id == "unknown":
-                        console.print(
-                            "[yellow]no model bound; cannot rebuild.[/yellow] "
-                            "Set one with [bold]/model[/bold] first."
-                        )
-                    else:
-                        try:
-                            gru = build_gru(
-                                model_override=model_id,
-                                extra_capabilities=persisted_capabilities,
-                                bus=bus,
-                                summarizer_model=resolve_summarizer_model(profile_name),
-                            )
-                        except JacConfigError as exc:
-                            console.print(f"[red]rebuild failed:[/red] {exc}")
-                        else:
-                            driver.gru = gru
-                            if result.note:
-                                console.print(f"[green]✓[/green] {result.note}")
-                elif isinstance(result, StartA2AServer):
-                    await _handle_start_a2a(a2a_capability, result)
-                elif isinstance(result, StopA2AServer):
-                    await _handle_stop_a2a(a2a_capability)
                 elif isinstance(result, CompactNow):
                     before = estimate_tokens(message_history)
                     summarizer = resolve_summarizer_model(profile_name)
@@ -497,9 +435,9 @@ async def _repl_loop(
             await process_capability.shutdown()
         except Exception as exc:
             console.print(f"[yellow]warning:[/yellow] process shutdown: {exc}")
-        # Reap the A2A server if /a2a stop wasn't called explicitly. Same
-        # best-effort posture as the process reaper — peers see the
-        # connection drop, but at least the port is freed for next time.
+        # Defensive: the REPL no longer starts an inbound A2A server (that's
+        # `jac a2a serve` only), so this is normally a no-op — kept as a
+        # best-effort reaper in case the capability ever holds a live task.
         try:
             await a2a_capability.shutdown()
         except Exception as exc:
@@ -507,36 +445,6 @@ async def _repl_loop(
         # Reset session-scoped policy so a fresh REPL starts in a clean state.
         reset_mode()
         set_session_context_budget(None)
-
-
-async def _handle_start_a2a(cap, request: StartA2AServer) -> None:
-    """REPL-side driver for the ``StartA2AServer`` slash result.
-
-    Lives here (not in the slash handler) so the uvicorn task is
-    created in the REPL's event loop — that's what keeps the server
-    alive after the slash returns. Mirrors how ``RebuildGru`` is
-    handled in :func:`_rebuild_gru`.
-    """
-    try:
-        info = await cap.start_server(host=request.host, port=request.port, unsafe=request.unsafe)
-    except RuntimeError as exc:
-        console.print(f"[yellow]{exc}[/yellow]")
-        return
-    except (JacConfigError, OSError) as exc:
-        console.print(f"[red]A2A serve failed:[/red] {exc}")
-        return
-
-    print_server_started_banner(info, console)
-
-
-async def _handle_stop_a2a(cap) -> None:
-    """REPL-side driver for ``StopA2AServer``. Best-effort, never raises."""
-    try:
-        await cap.stop_server(reason="user")
-    except Exception as exc:
-        console.print(f"[yellow]a2a stop:[/yellow] {exc}")
-        return
-    console.print("[green]✓ A2A server stopped[/green]")
 
 
 async def _refuse_if_over_token_budget(driver: SessionDriver) -> bool:
@@ -579,110 +487,6 @@ async def _refuse_if_over_budget(
         "budget), or switch [bold]compaction.strategy[/bold] to sliding.[/dim]"
     )
     return True
-
-
-def _rebuild_gru(
-    *,
-    new_model_id: str,
-    new_profile_name: str | None,
-    current_profile: Profile | None,
-    current_profile_name: str | None,
-    capabilities: list,
-    bus: EventBus,
-) -> tuple[Agent, str, str | None, Profile | None] | None:
-    """Attempt to rebuild Gru against a new model/profile.
-
-    Returns ``(new_gru, new_model_id, new_profile_name, new_profile)`` on
-    success, or ``None`` on failure (env is restored, warning printed; the
-    caller keeps the existing Gru).
-
-    The snapshot includes ``JAC_MODEL`` + every env key either profile could
-    touch (``env:`` block + ``required_env_keys()``) + the new model's
-    provider-required secrets, so a partial apply rolls back cleanly.
-    """
-    # Resolve the new profile (if any) up front so unknown names fail before
-    # we touch env.
-    new_profile: Profile | None = None
-    if new_profile_name is not None:
-        try:
-            new_profile = get_profile(new_profile_name)
-        except JacConfigError as exc:
-            _warn_switch_failed(exc, current_profile_name)
-            return None
-
-    keys_to_track: set[str] = {"JAC_MODEL"}
-    if current_profile is not None:
-        keys_to_track.update(current_profile.env)
-        keys_to_track.update(current_profile.required_env_keys())
-    if new_profile is not None:
-        keys_to_track.update(new_profile.env)
-        keys_to_track.update(new_profile.required_env_keys())
-    # Ad-hoc model (or in-profile model swap) — capture the new model's secrets too.
-    keys_to_track.update(
-        get_provider_registry().required_env_for_prefix(provider_prefix(new_model_id))
-    )
-
-    snap = snapshot_env(list(keys_to_track))
-
-    try:
-        if new_profile_name is None:
-            # Ad-hoc /model PROVIDER:ID — no profile change.
-            apply_ad_hoc_model_env(new_model_id)
-        elif new_profile is not None and new_profile_name != current_profile_name:
-            # Profile switch — apply the new profile fully. apply_profile_env
-            # sets JAC_MODEL to default_model(); override below if the caller
-            # picked a non-default model (won't fire for /profile NAME, which
-            # passes default_model() as new_model_id).
-            apply_profile_env(new_profile_name, new_profile)
-            if new_model_id != new_profile.default_model():
-                import os
-
-                os.environ["JAC_MODEL"] = new_model_id
-        else:
-            # /model picker — same profile, different model. Re-resolve the
-            # new model's required env (no-op when the union already covered it).
-            apply_ad_hoc_model_env(new_model_id)
-
-        resolved_summarizer = resolve_summarizer_model(new_profile_name)
-        new_gru = build_gru(
-            extra_capabilities=capabilities,
-            bus=bus,
-            summarizer_model=resolved_summarizer,
-        )
-        set_summarizer_model(resolved_summarizer)
-    except JacConfigError as exc:
-        restore_env(snap)
-        _warn_switch_failed(exc, current_profile_name)
-        return None
-
-    target_profile_name = new_profile_name if new_profile_name is not None else current_profile_name
-    target_profile = new_profile if new_profile is not None else current_profile
-
-    summary = f"[green]✓[/green] switched to [bold]{new_model_id}[/bold]"
-    if new_profile_name is not None and new_profile_name != current_profile_name:
-        summary += f"  [dim](profile: {new_profile_name})[/dim]"
-    elif new_profile_name is None:
-        summary += "  [dim](ad-hoc, no profile)[/dim]"
-    console.print(summary)
-
-    return new_gru, new_model_id, target_profile_name, target_profile
-
-
-def _warn_switch_failed(exc: JacConfigError, fallback_profile: str | None) -> None:
-    """Render a yellow panel explaining the failure and what stayed active."""
-    from rich.panel import Panel
-
-    fallback = (
-        f"staying on profile [bold]{fallback_profile}[/bold]"
-        if fallback_profile is not None
-        else "staying on the current model"
-    )
-    console.print(
-        Panel.fit(
-            f"[yellow]switch failed[/yellow]\n\n{exc}\n\n{fallback}",
-            border_style="yellow",
-        )
-    )
 
 
 def _switch_session(old: Session, new: Session) -> tuple[Session, list]:

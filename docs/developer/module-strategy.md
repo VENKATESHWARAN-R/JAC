@@ -45,29 +45,40 @@ Is the LLM going to invoke it?
 ### Concrete examples
 
 - `read_file`, `remember`, `web_search`, `a2a_call` → **capability tools**. The LLM decides when to invoke.
-- `/profile`, `/model`, `/sessions`, `/resume`, `/clear`, `/budget`, `/a2a serve` → **slash commands**. The operator drives them; the model has no say.
+- `/profile`, `/model`, `/sessions`, `/resume`, `/clear`, `/budget`, `/a2a peer remove` → **slash commands**. The operator drives them; the model has no say.
 - `jac init`, `jac profiles list`, `jac keys set` → **Typer commands**. Not interactive REPL state; out-of-session config management.
 
-### Where the line actually is: in-place mutation vs. `SlashResult`
+### Where the line actually is: capability mutation vs. control plane vs. `SlashResult`
 
 A slash handler receives the live capabilities it needs on `SlashContext`
-(`usage_tracker`, `a2a`, `skills`, `mcp`, …). It **may read and mutate those
-in place** — `/budget extend` calls `tracker.extend(...)`, `/skill reload`
-calls `skills.reload()`, `/mcp enable` calls `mcp.set_enabled(...)`, `/a2a peer
-remove` calls `cap.remove_session_peer(...)`. That's the simplest correct shape
-and it's the as-built convention; forcing a typed result for every in-session
-tweak would be ceremony without value.
+(`usage_tracker`, `a2a`, `skills`, `mcp`, …) plus the `controller`
+(`SessionController`). Three escalating tiers:
 
-What a handler must **not** do directly is anything the REPL owns: **rebuilding
-Gru** (toolset/instruction changes) or **session lifecycle** (switch / clear /
-start-server). Those return a typed `SlashResult` (`RebuildGru`,
-`RefreshToolsets`, `SwitchSession`, `StartA2AServer`, `CompactNow`, …) that the
-REPL applies — because the handler can't see the Gru instance or the turn loop,
-and shouldn't. See [`cli/slash/result.py`](../../src/jac/cli/slash/result.py)
-for the catalog.
+1. **Read/mutate a handed capability in place** — the simplest tweaks:
+   `/budget extend` calls `tracker.extend(...)`, `/a2a peer remove` calls
+   `cap.remove_session_peer(...)`. No Gru rebuild, no lifecycle change.
+2. **Rebuild Gru → call the control plane** (D49). Anything that changes the
+   model, profile, or a toolset/instruction — `/model`, `/profile`, `/mode`,
+   `/mcp reload|enable|disable`, `/skill reload` — calls a `ctx.controller`
+   verb (`switch_model`, `switch_profile`, `refresh_toolsets`,
+   `set_mcp_enabled`, `reload_mcp`, `reload_skills`). The controller owns the
+   env snapshot/rollback + `build_gru` and mutates the live `SessionRuntime`
+   **in place**, returning a `ControlResult` the handler renders (via
+   [`cli/slash/render.py`](../../src/jac/cli/slash/render.py)). The handler
+   then returns `Handled()` — the REPL re-syncs its display from the runtime
+   after every dispatch. The **same** verbs back the web endpoints, so no
+   rebuild logic is duplicated per surface.
+3. **Touch the turn loop / session lifecycle → return a typed `SlashResult`.**
+   Only things the REPL alone owns: `SwitchSession` (switch/clear/resume),
+   `InjectUserText` (`/skill use`), `CompactNow` (`/compact`), `Exit`. See
+   [`cli/slash/result.py`](../../src/jac/cli/slash/result.py).
 
-Rule of thumb: **mutate the capability you were handed; return a result for
-anything that touches Gru or the session.**
+Rule of thumb: **mutate the capability you were handed; call `ctx.controller`
+for anything that rebuilds Gru; return a `SlashResult` only for the turn loop /
+session lifecycle.** (Pre-D49 the rebuild cases used `RebuildGru` /
+`RefreshToolsets` result types and the inbound A2A server had
+`StartA2AServer` / `StopA2AServer` — all removed; the server is now
+headless-only via `jac a2a serve`.)
 
 ## Slash command file layout
 
@@ -91,7 +102,7 @@ One file per command — opening [`cli/slash/handlers/`](../../src/jac/cli/slash
 | `skill.py` | `/skill` |
 | `spawns.py` | `/spawns` |
 | `mcp.py` | `/mcp` |
-| `a2a/` (subpackage) | `/a2a serve|stop|status|token|peers|peer …` — one file per subcommand, plus `_args.py` (parsers) and `_shared.py` (rendering / prompts) |
+| `a2a/` (subpackage) | `/a2a peers|peer …` — outbound peers only (the server is headless-only via `jac a2a serve`, D49), plus `_args.py` (parse_peer_add) and `_shared.py` (rendering / prompts) |
 
 (`meta.py` and `memory_edit.py` are the two deliberate exceptions to strict filename=command — each pairs two tightly-related one-liners. The set is drift-guarded by `just drift`.)
 

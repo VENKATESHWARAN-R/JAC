@@ -57,14 +57,11 @@ src/jac/
 │           ├── skill.py     # /skill list|use|reload (D21)
 │           ├── spawns.py    # /spawns — active bidirectional sub-agent channels (Phase E)
 │           ├── mcp.py       # /mcp list|reload|enable|disable (Phase F / D46)
-│           └── a2a/         # /a2a multi-subcommand subpackage
-│               ├── __init__.py  # /a2a dispatcher
-│               ├── _args.py     # parsers
+│           ├── render.py    # render a ControlResult to the console (D49)
+│           └── a2a/         # /a2a multi-subcommand subpackage (outbound peers only — D49)
+│               ├── __init__.py  # /a2a dispatcher (peers/peer; serve/stop/status/token redirect to `jac a2a serve`)
+│               ├── _args.py     # parse_peer_add
 │               ├── _shared.py   # auth label, desc tail, secret prompt
-│               ├── serve.py     # /a2a serve
-│               ├── stop.py      # /a2a stop
-│               ├── status.py    # /a2a status
-│               ├── token.py     # /a2a token
 │               ├── peers.py     # /a2a peers
 │               └── peer.py      # /a2a peer add|remove
 ├── web/                     # Local-first web UI surface (D48) — mirrors cli/
@@ -78,6 +75,7 @@ src/jac/
 ├── runtime/
 │   ├── gru.py               # build_gru, _default_tool_capabilities, sub_agent_capabilities
 │   ├── bootstrap.py         # build_session_runtime — shared engine wiring (CLI + web), D48
+│   ├── control.py           # SessionController — surface-agnostic runtime mutations (switch/MCP/skills), D49
 │   ├── driver.py            # SessionDriver — surface-agnostic turn pipeline + budget guards (R5)
 │   ├── session.py           # Session persistence, plan.json, delete/prune
 │   ├── events.py            # Typed JacEvent union + EventBus
@@ -175,7 +173,7 @@ drift-guarded by `just drift`.
 | `/skill list\|use\|reload` | `handlers/skill.py` | Community-format skill loader (Phase D / D21) |
 | `/spawns` | `handlers/spawns.py` | List active bidirectional sub-agent channels (Phase E) |
 | `/mcp list\|reload\|enable\|disable` | `handlers/mcp.py` | External MCP server control (Phase F / D46) |
-| `/a2a serve\|stop\|status\|token\|peers\|peer` | `handlers/a2a/<sub>.py` | A2A server + peers (one file per subcommand) |
+| `/a2a peers\|peer` | `handlers/a2a/<sub>.py` | A2A **outbound peers** only (D49). The inbound server starts via `jac a2a serve`; `/a2a serve\|stop\|status\|token` redirect there. |
 
 Registration: import handlers in `jac/cli/slash/handlers/__init__.py`. Completer: `command_names()` in `repl.py`.
 
