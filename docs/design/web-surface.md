@@ -143,6 +143,8 @@ server). `app.py` is the thin CLI wrapper, parallel to `cli/a2a.py`.
    scope, default profile, secrets backend, model, token totals). No agent
    driving, no streaming, no concurrency concerns. Highest reuse, lowest risk.
    Useful on its own as a GUI for `jac init` / `profiles` / `keys` / `sessions`.
+   *(The overview card and standalone Sessions tab were later folded away by the
+   chat-centric shell — see 4; Profiles + Keys remain as settings pages.)*
 2. **Slice 2 — chat + HITL (shipped).** [`web/chat.py`](../../src/jac/web/chat.py)
    drives one live session through the **shared engine**: the REPL's bootstrap
    was extracted to [`runtime/bootstrap.py`](../../src/jac/runtime/bootstrap.py)
@@ -154,6 +156,15 @@ server). `app.py` is the thin CLI wrapper, parallel to `cli/a2a.py`.
    approval + clarify are resolved by browser POSTs that complete the
    `asyncio.Future` the approval handler is awaiting — the same future the CLI
    resolves at a terminal prompt. One turn at a time (single-user charter).
+   HITL prompts render **one-at-a-time in a pinned bar** between the transcript
+   and the input — never inline in the scroll-back — with a queue (`+N more
+   waiting`) so concurrent approvals from a parallel spawn can't be missed or
+   buried; only a one-line `notice` is left in the transcript once resolved.
+   Tool args are shown as labelled rows (long/structured values in a scrollable
+   `<pre>`), not one raw JSON blob. Assistant replies are rendered through a
+   small escape-first **markdown renderer** (`renderMarkdown` in `chat.js` —
+   vendored rather than a CDN dependency, local-first; escapes before tokenizing
+   so model output can't inject markup).
    Because `jac web serve` doesn't activate a profile at boot, the chat resolves
    the default profile lazily on first message and fails *gracefully* (an error
    frame) when none is configured.
@@ -171,15 +182,51 @@ server). `app.py` is the thin CLI wrapper, parallel to `cli/a2a.py`.
      Each connection gets its own queue, discarded on disconnect.
 3. **Slice 3 — activity dashboard (shipped).** A live, **collapsible** sidebar on
    the chat page: a **token/cost meter** (session in/out/total, cache %, project
-   total), **minion cards** (one per active sub-agent from `_pending_spawns` —
-   tier, model, objective, round-trips/turns), and a **files-changed** list
+   total), **minion cards** (one per active sub-agent — `running` workers from
+   the `SubAgentSpawned`/`SubAgentCompleted` bus lifecycle the consumer records,
+   plus `waiting` workers parked in `_pending_spawns` with their round-trip/turn
+   counts; `_pending_spawns` alone would miss parallel batches that never park),
+   and a **files-changed** list
    (paths the session wrote/edited, tracked from `write_file`/`edit_file` tool
    events, minions included, **filtered to files that actually exist on disk** so
    a denied/phantom write never shows). Backed by a `GET /chat/status` snapshot
    the browser polls (faster while a turn is active). Reuses the same registries
-   the CLI's `/spawns` and `/tokens` read. **Next: visual/theming polish** — animations, imagery, a
-   richer minion aesthetic (this is the home for that, and the point where a
-   heavier reactive frontend like Reflex could earn its place).
+   the CLI's `/spawns` and `/tokens` read. Below the dashboard, an **Environment**
+   block lists the session's **A2A peers**, **MCP servers** (transport, enabled,
+   `hitl` flag), and **loaded skills** (name + source) — read straight off the
+   live `a2a_capability.peers` / `mcp_capability.catalog` / `skills_capability.skills`
+   the runtime was built with (the same data the CLI's `/a2a peers`, `/mcp list`,
+   `/skills` render). Served by `GET /chat/environment` and fetched **once** per
+   session (on `SessionStarted` / new chat), not polled — it only changes on a
+   session swap or config reload.
+4. **Chat-centric shell (shipped).** The shell was reframed from a settings panel
+   with a chat tab into a **chat-first app**. The chat fills the full content
+   width; the left rail is **collapsible** (toggle on `<body>` so the rail, the
+   floating reopen button, and the content padding all match `.nav-collapsed`)
+   and becomes the navigator — **"+ New chat"**, the **session list** (from
+   `panel.sidebar_context()`, rendered on every page so the settings pages keep
+   the same rail), and a pinned **⚙ Settings** entry that opens a `/settings`
+   landing page (shows the active profile/model/scope once and links out to
+   Profiles and Keys — per-session model/profile switching is a flagged future
+   CLI-parity feature). Overview and the standalone Sessions tab were removed
+   (`/` → `/chat`; deleting a session from the rail also redirects to `/chat`,
+   not the gone `/sessions` page). **Opening an old session
+   repaints its transcript** from `WebChatManager.history_messages()` via
+   `GET /chat/history`, rendered on the `SessionStarted` frame when the session id
+   changes; `?new=1` forces a fresh session before the stream connects (and stays
+   out of the persistent EventSource URL, so reconnects can't spawn sessions).
+   **One SSE per page, closed on `pagehide`.** A `/chat/stream` EventSource is a
+   *persistent* connection that holds one of the browser's ~6 connections-per-host
+   (HTTP/1.1). Because switching sessions now reloads `/chat` (a new SSE each time)
+   and browsers can retain the prior page — with its open SSE — in the
+   back/forward cache, an unclosed stream would let a few session clicks saturate
+   the pool and stall *every* request ("loads and loads"). So `chat.js` keeps
+   exactly one EventSource and closes it on `pagehide`/`beforeunload`, reconnecting
+   on `pageshow` when restored from bfcache. (Verified: clicking through 6 sessions
+   leaves the pool free — fetches stay <35 ms.)
+   **Next: visual/theming polish** — animations, imagery, a richer minion
+   aesthetic (this is the home for that, and the point where a heavier reactive
+   frontend like Reflex could earn its place).
 
 ## Risks & how we scope around them
 

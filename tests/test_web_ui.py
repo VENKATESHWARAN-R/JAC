@@ -56,11 +56,17 @@ def client() -> TestClient:
 # ---------- page rendering ----------
 
 
-@pytest.mark.parametrize("path", ["/", "/profiles", "/keys", "/sessions"])
+@pytest.mark.parametrize("path", ["/chat", "/profiles", "/keys", "/settings"])
 def test_pages_render(client: TestClient, path: str) -> None:
     resp = client.get(path)
     assert resp.status_code == 200
     assert "JAC" in resp.text
+
+
+def test_root_redirects_to_chat(client: TestClient) -> None:
+    resp = client.get("/", follow_redirects=False)
+    assert resp.status_code == 307
+    assert resp.headers["location"] == "/chat"
 
 
 def test_static_css_served(client: TestClient) -> None:
@@ -140,10 +146,13 @@ def test_session_listed_and_deleted(client: TestClient) -> None:
     session = Session.new()
     session.save([])  # empty history is enough to register the session on disk
 
-    listing = client.get("/sessions")
+    # Sessions now live in the shared left rail, present on every page.
+    listing = client.get("/chat")
     assert session.session_id in listing.text
 
     resp = client.post("/sessions/delete", data={"id": session.session_id}, follow_redirects=False)
     assert resp.status_code == 303
+    # Lands back on chat (home), not the removed /sessions page (which would 404).
+    assert resp.headers["location"].startswith("/chat?")
     assert "ok=" in resp.headers["location"]
-    assert session.session_id not in client.get("/sessions").text
+    assert session.session_id not in client.get("/chat").text

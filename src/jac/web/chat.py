@@ -44,6 +44,8 @@ from jac.runtime.events import (
     ApprovalResponse,
     ClarifyRequest,
     ClarifyResponse,
+    SubAgentCompleted,
+    SubAgentSpawned,
     ToolCallStarted,
 )
 from jac.runtime.session import Session
@@ -121,6 +123,12 @@ class WebChatManager:
         self._busy = False
         # path -> last action ("write"/"edit") for the dashboard files panel.
         self.files_changed: dict[str, str] = {}
+        # spawn_id -> {tier, model, objective} for sub-agents currently running.
+        # Sourced from the SubAgentSpawned/SubAgentCompleted bus events because
+        # ``_pending_spawns`` only holds *suspended* (bidirectional) workers —
+        # a parallel ``spawn_sub_agents`` batch runs to completion without ever
+        # parking, so it would otherwise never appear in the dashboard.
+        self.active_minions: dict[str, dict[str, Any]] = {}
         # Surface config the bootstrap resolved (e.g. the active profile name),
         # so a future settings change can be reflected; for now informational.
         self.model_override: str | None = None
@@ -190,6 +198,7 @@ class WebChatManager:
         self._pending_clarify = None
         self._busy = False
         self.files_changed.clear()
+        self.active_minions.clear()
         self._consumer = asyncio.create_task(self._consume(runtime), name="jac.web.chat.consumer")
 
     async def _start(self, *, session_id: str | None) -> None:
@@ -220,6 +229,14 @@ class WebChatManager:
                 action = _MUTATING_FILE_TOOLS.get(event.tool_name)
                 if action and isinstance(event.args, dict) and event.args.get("path"):
                     self.files_changed[str(event.args["path"])] = action
+            elif isinstance(event, SubAgentSpawned):
+                self.active_minions[event.spawn_id] = {
+                    "tier": event.tier,
+                    "model": event.model,
+                    "objective": event.objective,
+                }
+            elif isinstance(event, SubAgentCompleted):
+                self.active_minions.pop(event.spawn_id, None)
             self._emit(event_to_frame(event))
 
     # ----- turns -----
@@ -348,8 +365,25 @@ class WebChatManager:
             "budget_pct": tracker.status_pct() if tracker else None,
         }
         stats = get_sub_agent_stats()
-        minions = [
-            {
+        # Merge two sources of "active" workers, keyed by spawn_id:
+        #   * ``active_minions`` — running workers, from the lifecycle bus events
+        #     (covers parallel batches + sequential workers before they park).
+        #   * ``_pending_spawns`` — suspended bidirectional workers waiting on a
+        #     reply; richer (round-trip + turn counts), so it wins on overlap.
+        by_id: dict[str, dict[str, Any]] = {}
+        for sid, m in self.active_minions.items():
+            by_id[sid] = {
+                "spawn_id": sid,
+                "tier": m["tier"],
+                "model": m["model"],
+                "round_trips": 0,
+                "cap": _BIDIRECTIONAL_ROUND_TRIP_CAP,
+                "turns_used": 0,
+                "objective": m["objective"],
+                "status": "running",
+            }
+        for sid, p in _pending_spawns.items():
+            by_id[sid] = {
                 "spawn_id": sid,
                 "tier": p.resolved.resolved,
                 "model": p.resolved.model,
@@ -357,9 +391,9 @@ class WebChatManager:
                 "cap": _BIDIRECTIONAL_ROUND_TRIP_CAP,
                 "turns_used": p.turns_used,
                 "objective": p.objective,
+                "status": "waiting",
             }
-            for sid, p in sorted(_pending_spawns.items())
-        ]
+        minions = [by_id[sid] for sid in sorted(by_id)]
         return {
             "session_id": self.session.session_id if self.session else None,
             "model": self.runtime.model_id if self.runtime else None,
@@ -374,6 +408,106 @@ class WebChatManager:
             },
             "files": self._files_on_disk(),
         }
+
+    def history_messages(self) -> list[dict[str, Any]]:
+        """Serialize the attached session's history into transcript items.
+
+        Used to repaint past messages when an old session is opened in the
+        browser. Best-effort and display-only: each user prompt becomes a user
+        bubble, each assistant ``TextPart`` an assistant bubble, each tool call
+        a completed tool chip; system prompts, tool returns, thinking, and
+        retries are skipped (they'd just be noise in the scroll-back). Mirrors
+        the shape the live event frames produce so a reopened chat reads the
+        same as a live one.
+        """
+        from pydantic_ai.messages import (
+            ModelRequest,
+            ModelResponse,
+            TextPart,
+            ToolCallPart,
+            UserPromptPart,
+        )
+
+        def _text(content: Any) -> str:
+            if isinstance(content, str):
+                return content
+            if isinstance(content, (list, tuple)):
+                return " ".join(c for c in content if isinstance(c, str))
+            return ""
+
+        out: list[dict[str, Any]] = []
+        for msg in self.history:
+            if isinstance(msg, ModelRequest):
+                for part in msg.parts:
+                    if isinstance(part, UserPromptPart):
+                        text = _text(part.content).strip()
+                        if text:
+                            out.append({"role": "user", "content": text})
+            elif isinstance(msg, ModelResponse):
+                for part in msg.parts:
+                    if isinstance(part, TextPart):
+                        if part.content and part.content.strip():
+                            out.append({"role": "assistant", "content": part.content})
+                    elif isinstance(part, ToolCallPart):
+                        reason = ""
+                        try:
+                            args = part.args_as_dict()
+                            reason = str(args.get("reason", "")) if isinstance(args, dict) else ""
+                        except (ValueError, TypeError):
+                            reason = ""
+                        out.append({"role": "tool", "name": part.tool_name, "reason": reason})
+        return out
+
+    def environment(self) -> dict[str, Any]:
+        """Static-per-session view of the connected environment.
+
+        A2A outbound peers, MCP servers, and loaded skills — read straight off
+        the live capabilities the session was built with (the same objects the
+        CLI's ``/a2a peers``, ``/mcp list`` and ``/skills`` render). Fetched
+        *once* by the browser (not polled like :meth:`dashboard`) because it
+        only changes on a session swap or a config reload.
+        """
+        rt = self.runtime
+        if rt is None:
+            return {"a2a": [], "mcp": [], "skills": []}
+
+        a2a: list[dict[str, Any]] = []
+        a2a_cap = rt.a2a_capability
+        if a2a_cap is not None:
+            session_names = set(getattr(a2a_cap, "session_peers", {}) or {})
+            for name, peer in sorted(a2a_cap.peers.items()):
+                a2a.append(
+                    {
+                        "name": name,
+                        "url": peer.url,
+                        "auth": type(peer.auth).__name__.replace("Auth", "").lower()
+                        if peer.auth
+                        else "none",
+                        "source": "session" if name in session_names else "profile",
+                    }
+                )
+
+        mcp: list[dict[str, Any]] = []
+        mcp_cap = rt.mcp_capability
+        if mcp_cap is not None:
+            for name, srv in sorted(mcp_cap.catalog.servers.items()):
+                mcp.append(
+                    {
+                        "name": name,
+                        "transport": srv.transport,
+                        "enabled": srv.knobs.enabled,
+                        "approval": srv.knobs.requires_approval,
+                        "source": srv.source,
+                    }
+                )
+
+        skills: list[dict[str, Any]] = []
+        sk_cap = rt.skills_capability
+        if sk_cap is not None:
+            for _name, sk in sorted(sk_cap.skills.items()):
+                skills.append({"name": sk.name, "description": sk.description, "source": sk.source})
+
+        return {"a2a": a2a, "mcp": mcp, "skills": skills}
 
     def _files_on_disk(self) -> list[dict[str, str]]:
         """Changed files that actually exist now.

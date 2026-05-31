@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>JAC Integrated Dashboard</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&amp;family=Geist:wght@400;600;700;800;900&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-secondary-fixed-variant": "#474746",
+                        "on-secondary-container": "#b7b5b4",
+                        "outline-variant": "#4b4734",
+                        "on-tertiary-container": "#646363",
+                        "inverse-surface": "#e5e2e1",
+                        "secondary": "#c8c6c5",
+                        "on-primary-container": "#726300",
+                        "on-primary": "#393000",
+                        "surface-container-highest": "#353534",
+                        "secondary-container": "#474746",
+                        "primary-fixed": "#ffe24c",
+                        "surface-variant": "#353534",
+                        "on-background": "#e5e2e1",
+                        "secondary-fixed-dim": "#c8c6c5",
+                        "on-tertiary": "#303030",
+                        "inverse-primary": "#6d5e00",
+                        "error-container": "#93000a",
+                        "tertiary-fixed-dim": "#c8c6c6",
+                        "primary": "#fffcff",
+                        "primary-container": "#fde047",
+                        "surface-container-low": "#1c1b1b",
+                        "on-surface": "#e5e2e1",
+                        "outline": "#97917a",
+                        "surface-container": "#201f1f",
+                        "tertiary-container": "#e2e0df",
+                        "tertiary": "#f9feff",
+                        "error": "#ffb4ab",
+                        "tertiary-fixed": "#e4e2e1",
+                        "on-tertiary-fixed": "#1b1c1c",
+                        "inverse-on-surface": "#313030",
+                        "primary-fixed-dim": "#e2c62d",
+                        "surface-bright": "#3a3939",
+                        "background": "#131313",
+                        "surface-container-high": "#2a2a2a",
+                        "surface": "#131313",
+                        "on-surface-variant": "#cec6ad",
+                        "on-secondary": "#303030",
+                        "on-error": "#690005",
+                        "surface-dim": "#131313",
+                        "on-error-container": "#ffdad6",
+                        "secondary-fixed": "#e5e2e1",
+                        "on-primary-fixed": "#211b00",
+                        "surface-tint": "#e2c62d",
+                        "on-secondary-fixed": "#1b1b1c",
+                        "on-primary-fixed-variant": "#524600",
+                        "surface-container-lowest": "#0e0e0e",
+                        "on-tertiary-fixed-variant": "#474747"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "gutter": "16px",
+                        "sidebar-width": "260px",
+                        "margin-page": "24px",
+                        "stack-gap": "8px",
+                        "padding-card": "20px"
+                    },
+                    "fontFamily": {
+                        "headline-lg": ["Geist"],
+                        "body-md": ["JetBrains Mono"],
+                        "label-sm": ["JetBrains Mono"],
+                        "headline-md": ["Geist"],
+                        "body-lg": ["JetBrains Mono"]
+                    },
+                    "fontSize": {
+                        "headline-lg": ["24px", {"lineHeight": "32px", "fontWeight": "600"}],
+                        "body-md": ["13px", {"lineHeight": "18px", "fontWeight": "400"}],
+                        "label-sm": ["11px", {"lineHeight": "16px", "letterSpacing": "0.05em", "fontWeight": "500"}],
+                        "headline-md": ["18px", {"lineHeight": "24px", "fontWeight": "600"}],
+                        "body-lg": ["14px", {"lineHeight": "20px", "fontWeight": "400"}]
+                    }
+                },
+            },
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            display: inline-block;
+            line-height: 1;
+            text-transform: none;
+            letter-spacing: normal;
+            word-wrap: normal;
+            white-space: nowrap;
+            direction: ltr;
+        }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #2D2D2D; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: #474746; }
+
+        .chat-container {
+            mask-image: linear-gradient(to bottom, transparent, black 20px, black calc(100% - 100px), transparent);
+        }
+
+        .side-nav-collapsed { width: 64px; }
+        .drawer-collapsed { width: 0; padding: 0; border-left: none; overflow: hidden; }
+    </style>
+</head>
+<body class="bg-background text-on-surface font-body-md overflow-hidden flex h-screen">
+<!-- SideNavBar Component -->
+<aside class="bg-surface-container-lowest border-r border-outline-variant w-[260px] h-screen flex flex-col py-gutter px-4 flex-shrink-0 transition-all duration-300" id="main-sidebar">
+<div class="flex items-center justify-between mb-8 px-2">
+<div class="flex items-center gap-3">
+<img alt="Minion mascot" class="w-8 h-8 rounded-lg" data-alt="A stylized digital minion mascot icon with a vibrant yellow background, featuring a minimalist robotic design with technical details, matching the black and yellow theme of a professional developer coding environment." src="https://lh3.googleusercontent.com/aida-public/AB6AXuD8DnfGRfnJcOHi4rLropjlj1ofavN0v8UGbxyisc1gcotltDmIn_eE9D3hhb-BR4_33f5dJx3OjlcpOc4bVM5NaUQ2Mndtxw8qSI6UxQs-J9p3CVrtpWVnlrhzJDZDbqJ7VP_A_Nlnf6Tb7Vj1db79h2qqWH2kiCR4iPEaFfbJY_Pa7iwfesVdBBWRHURw3t1YaN-VIxpTANDd6ktfdgenPmfMZbIavy4fVVZ8FWEx9ChPqKkiLLVFwqr9DG6LwintkflmFWtnrGTb"/>
+<span class="text-headline-lg font-headline-lg font-black text-on-surface">JAC</span>
+</div>
+<button class="text-on-surface-variant hover:text-on-surface transition-colors" onclick="toggleSidebar()">
+<span class="material-symbols-outlined">first_page</span>
+</button>
+</div>
+<nav class="flex-grow space-y-1">
+<!-- Active Navigation -->
+<a class="bg-primary-container text-on-primary-container rounded-lg font-bold flex items-center px-4 py-3 gap-3 scale-95 transition-transform" href="#">
+<span class="material-symbols-outlined" data-icon="chat">chat</span>
+<span class="nav-label">Chat</span>
+</a>
+<!-- Inactive Navigation -->
+<a class="text-on-surface-variant hover:text-on-surface flex items-center px-4 py-3 gap-3 transition-colors hover:bg-surface-container-highest rounded-lg" href="#">
+<span class="material-symbols-outlined" data-icon="dashboard">dashboard</span>
+<span class="nav-label">Overview</span>
+</a>
+<a class="text-on-surface-variant hover:text-on-surface flex items-center px-4 py-3 gap-3 transition-colors hover:bg-surface-container-highest rounded-lg" href="#">
+<span class="material-symbols-outlined" data-icon="person">person</span>
+<span class="nav-label">Profiles</span>
+</a>
+<a class="text-on-surface-variant hover:text-on-surface flex items-center px-4 py-3 gap-3 transition-colors hover:bg-surface-container-highest rounded-lg" href="#">
+<span class="material-symbols-outlined" data-icon="key">key</span>
+<span class="nav-label">Keys &amp; secrets</span>
+</a>
+<a class="text-on-surface-variant hover:text-on-surface flex items-center px-4 py-3 gap-3 transition-colors hover:bg-surface-container-highest rounded-lg" href="#">
+<span class="material-symbols-outlined" data-icon="folder">folder</span>
+<span class="nav-label">Sessions</span>
+</a>
+</nav>
+<div class="mt-auto pt-4 border-t border-outline-variant/30">
+<div class="px-2 mb-4">
+<p class="text-[10px] text-on-surface-variant opacity-50 uppercase tracking-tighter">local-first · single-user · loopback only</p>
+</div>
+<div class="flex items-center px-4 py-3 gap-3 hover:bg-surface-container-highest transition-all duration-200 rounded-lg cursor-pointer">
+<img alt="Venkat Max" class="w-8 h-8 rounded-full border border-primary-container/20" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCAh9I0E6mlMS314hZyZNuVu2U66zpwOURrRcO8Za9E7oBwvSyfAo0VBHfHYWwxTQI06SXnJDK4Cz6sWRBZnS6PKjDCJ3zyvq2BYcJ-04S_PJAx0jyZz2pznLVlkzffs0uBwlpS0q2MGSZw4B5x6HIq3WXAGFj2BvZ51Vnq95ezVE-7q70xCOJBpyx8wVNVS5FgDOKJ9cTZ7L3MVWUsD8QCVcVDp-oC7eVn-JYHPKnHVKQL49ldYyFbDfLdg2l3Kn6BJ9wpOUhuKEoU"/>
+<span class="font-label-sm text-label-sm nav-label">Venkat · Max</span>
+</div>
+</div>
+</aside>
+<!-- Main Content Area -->
+<main class="flex-grow flex flex-col min-w-0 bg-background relative">
+<!-- TopAppBar Component -->
+<header class="flex justify-between items-center w-full px-margin-page h-16 bg-transparent">
+<div class="flex items-center gap-4">
+<div class="flex items-center gap-2">
+<img alt="Gru avatar" class="w-8 h-8 rounded-full" src="https://lh3.googleusercontent.com/aida-public/AB6AXuC5WzIS0BwW9kNcKzZ_E5tU6yXq-sLes1I1ZQpHP8EY8asGogQlG0knKgFdJTscD55aP1o5CTURAaCVRyxKaF8qoZTQ2hoOYKxOjSW92yvQQdVq1hyNd-6uFYKI4dAvSKOi1gpGhT0-sk2ld6Hj1AMXQ4FEeuoqV4i2pQJLrPY2d3vm7raNpmEGaOUycq6gOuP9048NiaBjeHePnj7gCyOg1LTPAp5zOTl_QSyGuG-CHPaC9aodDla1ljt5cHxiU-x_2eBjQ7y6uB_W"/>
+<h1 class="font-headline-md text-headline-md font-bold text-on-surface">Gru</h1>
+</div>
+<div class="h-4 w-[1px] bg-outline-variant"></div>
+<div class="flex items-center gap-2 text-on-surface-variant">
+<span class="material-symbols-outlined text-[18px]">terminal</span>
+<span class="font-label-sm text-label-sm uppercase tracking-widest">Main Instance</span>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<button class="bg-primary-container text-on-primary-container px-4 py-1.5 rounded-lg font-bold font-label-sm text-label-sm flex items-center gap-2 hover:opacity-90 active:scale-95 transition-all">
+<span class="material-symbols-outlined text-[16px]">add</span>
+                    New chat
+                </button>
+<button class="text-on-surface-variant hover:text-on-surface transition-colors p-2" onclick="toggleContext()">
+<span class="material-symbols-outlined">dock_to_left</span>
+</button>
+</div>
+</header>
+<!-- Chat Canvas -->
+<section class="flex-grow overflow-y-auto px-margin-page pb-32">
+<div class="max-w-4xl mx-auto space-y-12 py-10">
+<!-- Message: User -->
+<div class="flex flex-col items-end gap-3 group">
+<div class="bg-surface-container-high border border-outline-variant rounded-2xl rounded-tr-none px-6 py-4 max-w-[80%] text-on-surface">
+<p class="font-body-lg text-body-lg leading-relaxed">What is the best shexd medicnt?</p>
+</div>
+</div>
+<!-- Message: AI (Gru) -->
+<div class="flex items-start gap-4 group">
+<img alt="Gru avatar" class="w-10 h-10 rounded-full flex-shrink-0" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBHCERxwfDOY-BP7CBBMLH2468zu6ob4orZTPCiEEB0M7GZ6RlthTxo34L-TOvAxOzBet5swTPGBgT9QhacQc1b4L_mb7PlliesY3xyzaV_u-0DtbAfg3PL13JEbPi-y9R4PGp9OUe9YuO0FNW7BenKv-j28tIivSIGD87LX8Yqk1CuAVYnE_y5ZJxtkSTfglXnf4ocCtw0d9_qu4cxydRRiDl4dqfYgeoktIeQE66t6HYbZn0meyZtMTHQjwtGNQoQU1I1gESGsIKw"/>
+<div class="space-y-4 max-w-[85%]">
+<div class="flex items-center gap-3">
+<span class="font-bold text-on-surface">Gru</span>
+<span class="text-[10px] bg-outline-variant/30 px-2 py-0.5 rounded text-on-surface-variant">MINION-COORDINATOR</span>
+</div>
+<div class="text-on-surface-variant font-body-lg text-body-lg leading-relaxed space-y-4">
+<p>Hey I'm up tonight! I'm at the top minion well by <span class="text-primary-container font-bold">minion-coder</span>.</p>
+<p>When yet, I'll be barning your minion honts warning the mixer of the nights.</p>
+<p>You until homecoming at Gru; minionray respons. 😊</p>
+</div>
+<div class="flex gap-2">
+<button class="text-on-secondary-fixed-variant hover:text-on-surface transition-colors">
+<span class="material-symbols-outlined text-[18px]">content_copy</span>
+</button>
+<button class="text-on-secondary-fixed-variant hover:text-on-surface transition-colors">
+<span class="material-symbols-outlined text-[18px]">thumb_up</span>
+</button>
+<button class="text-on-secondary-fixed-variant hover:text-on-surface transition-colors">
+<span class="material-symbols-outlined text-[18px]">refresh</span>
+</button>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- Message Input UI -->
+<div class="absolute bottom-0 left-0 right-0 p-margin-page bg-gradient-to-t from-background via-background/95 to-transparent pt-12">
+<div class="max-w-4xl mx-auto">
+<div class="relative bg-surface-container border border-outline-variant rounded-xl p-1 shadow-2xl transition-all focus-within:border-outline focus-within:ring-1 focus-within:ring-outline/30">
+<textarea class="w-full bg-transparent border-none text-on-surface placeholder:text-on-secondary-fixed-variant focus:ring-0 resize-none py-4 px-6 font-body-lg h-[64px]" placeholder="Message Gru... (Enter to send, Shift+Enter for newline)"></textarea>
+<div class="absolute right-4 bottom-3 flex items-center gap-3">
+<button class="text-on-secondary-fixed-variant hover:text-on-surface transition-colors">
+<span class="material-symbols-outlined">attach_file</span>
+</button>
+<button class="bg-primary-container text-on-primary-container px-6 py-2 rounded-lg font-bold font-label-sm text-label-sm hover:opacity-90 active:scale-95 transition-all">
+                            Send
+                        </button>
+</div>
+</div>
+<div class="mt-3 flex justify-center">
+<p class="text-[10px] text-on-surface-variant uppercase tracking-[0.2em] opacity-40">Powered by JAC LLM V3.2-Minion</p>
+</div>
+</div>
+</div>
+</main>
+<!-- NavigationDrawer Component (Collapsible Right Sidebar) -->
+<aside class="bg-surface-container-lowest border-l border-outline-variant w-[280px] h-screen flex flex-col p-gutter gap-stack-gap transition-all duration-300 overflow-y-auto" id="context-drawer">
+<div class="flex items-center justify-between mb-4">
+<div class="flex items-center gap-3">
+<div class="w-6 h-6 bg-primary-container/20 rounded flex items-center justify-center">
+<span class="material-symbols-outlined text-primary-container text-[16px]" style="font-variation-settings: 'FILL' 1;">analytics</span>
+</div>
+<h2 class="font-headline-md text-headline-md text-on-surface">Context</h2>
+</div>
+<button class="text-on-surface-variant hover:text-on-surface" onclick="toggleContext()">
+<span class="material-symbols-outlined">close</span>
+</button>
+</div>
+<div class="space-y-6">
+<!-- Active Minions Section -->
+<section>
+<header class="flex items-center justify-between mb-3">
+<span class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider">Active Minions</span>
+<span class="text-primary-container text-[10px] font-bold">3 ALIVE</span>
+</header>
+<div class="space-y-2">
+<div class="bg-surface-container p-3 rounded-lg border border-outline-variant/30 flex items-center gap-3 hover:bg-surface-container-high transition-colors group cursor-pointer">
+<img alt="Minion" class="w-10 h-10 rounded-md" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBiAvtB1gVZ65a2aSmpbHie0_2sVkC5tpq523OnAG1kOCMuRJ_rBzmi10p9VRLUORjhTyc-J40FzwnhMT-I4ULpznWoPWgGrT8l6JyLL_yl2BJt1vbCfQClRs8IrD4VdtP5T3SZ_vdVrATKswefLoJzTobqiwpUxMiGtosO2ZSKotVBDiAj3Uy-h87BPP_QJ5SsOPf3PUc24Vt5e9f2_p8D_VW6Yk6hV3xIAnJxViwv6QfRlsejr1PFZJLhr775r994R3QAdeYGah7I"/>
+<div class="flex flex-col">
+<span class="text-body-md font-bold text-on-surface">minion-coder</span>
+<span class="text-[10px] text-primary-container font-medium">(running)</span>
+</div>
+</div>
+<div class="bg-surface-container p-3 rounded-lg border border-outline-variant/30 flex items-center gap-3 hover:bg-surface-container-high transition-colors group cursor-pointer opacity-60">
+<img alt="Minion" class="w-10 h-10 rounded-md" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDuVf6cd_cJVZYWs1mgcMcpOahWQjy7SyXFVO7Lk5AEYkI1LeI4MZsazg76wfpE4VHoLQa-XPc_4Vlt78GLXkPmgeIN6y2blIsOqBUB1tHyViibAd2n2PVfKahNAePFF7T_tTmYuU_MxJvU0o-SGeSe6Lq_jo-f8dPAxm3Dxonbko551pxjei_LiE7YCf0tn7uJqyVp45IN3nagu5cTQc-0Ts8BNce6A84_fX4TY2hFXgbPqwk8518lELbHzHwK1NCoX3HAmX8_dmix"/>
+<div class="flex flex-col">
+<span class="text-body-md font-bold text-on-surface">minion-tester</span>
+<span class="text-[10px] text-on-surface-variant font-medium">(idle)</span>
+</div>
+</div>
+<div class="bg-surface-container p-3 rounded-lg border border-outline-variant/30 flex items-center gap-3 hover:bg-surface-container-high transition-colors group cursor-pointer">
+<img alt="Minion" class="w-10 h-10 rounded-md" src="https://lh3.googleusercontent.com/aida-public/AB6AXuA2yWsOWDvLzTlSVTR5lrdWX3dNYJSUA2HjdXCUAMOrqwYpnppWkT-Tf1ozcffRL5Ubua9hnS_R6hY2WMT6NemiiW6cuThp3nPQI_1LBIURvOzon9KxPFFH4nFIwc827EXdYfnCfd7SZwmzNLELwvgRDUShZ0lmLxop7hab8ZZDcQ9Xfly99S32z4Y_yRaUggZu0u4iE81LBl65deLFacqHLmz4N6dVaetPIRqqVFVjiGwxDgdfJ8zh4ECLTUKu6SEETWjtdMiDDr7c"/>
+<div class="flex flex-col">
+<span class="text-body-md font-bold text-on-surface">minion-deployer</span>
+<span class="text-[10px] text-primary-container font-medium">(running)</span>
+</div>
+</div>
+</div>
+</section>
+<!-- Session Stats Section -->
+<section class="bg-surface-container-high/50 rounded-xl p-4 border border-outline-variant">
+<header class="mb-4">
+<span class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider">Session Stats</span>
+</header>
+<div class="space-y-3 font-body-md text-on-surface-variant">
+<div class="flex justify-between items-center">
+<span>Tokens Used:</span>
+<span class="text-on-surface font-bold tabular-nums">1,450,082</span>
+</div>
+<div class="flex justify-between items-center">
+<span>Time Elapsed:</span>
+<span class="text-on-surface font-bold tabular-nums">01:23:45</span>
+</div>
+<div class="flex justify-between items-center">
+<span>Cost:</span>
+<span class="text-primary-container font-bold tabular-nums">$0.12</span>
+</div>
+</div>
+<button class="w-full mt-4 py-2 border border-outline-variant rounded-lg text-[11px] font-bold uppercase tracking-widest hover:bg-surface-container transition-all">
+                    Reset Session
+                </button>
+</section>
+<!-- Quick Logs -->
+<section>
+<span class="font-label-sm text-label-sm text-on-secondary-fixed-variant uppercase tracking-wider block mb-2">Recent Events</span>
+<div class="text-[10px] font-mono text-on-secondary-container bg-surface-container-lowest p-3 rounded-lg space-y-1">
+<p><span class="text-primary-container">09:42:11</span> coder compiled index.ts</p>
+<p><span class="text-primary-container">09:43:05</span> deployer hooked to prod</p>
+<p><span class="text-primary-container">09:44:12</span> token-cap reached 75%</p>
+</div>
+</section>
+</div>
+</aside>
+<script>
+        function toggleSidebar() {
+            const sidebar = document.getElementById('main-sidebar');
+            const labels = document.querySelectorAll('.nav-label');
+            sidebar.classList.toggle('side-nav-collapsed');
+            sidebar.classList.toggle('w-[260px]');
+            sidebar.classList.toggle('w-20');
+            labels.forEach(label => label.classList.toggle('hidden'));
+        }
+
+        function toggleContext() {
+            const drawer = document.getElementById('context-drawer');
+            drawer.classList.toggle('drawer-collapsed');
+            drawer.classList.toggle('w-[280px]');
+            drawer.classList.toggle('p-gutter');
+            drawer.classList.toggle('border-l');
+        }
+
+        // Add some micro-interactions
+        document.querySelectorAll('a, button').forEach(el => {
+            el.addEventListener('mousedown', () => {
+                el.classList.add('scale-95');
+            });
+            el.addEventListener('mouseup', () => {
+                el.classList.remove('scale-95');
+            });
+            el.addEventListener('mouseleave', () => {
+                el.classList.remove('scale-95');
+            });
+        });
+    </script>
+</body></html>

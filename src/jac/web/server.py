@@ -34,13 +34,20 @@ templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
 
 
 def _render(request: Request, name: str, active: str, ctx: dict[str, object]) -> Response:
-    """Render ``name`` with the shared chrome context (version, nav, flash)."""
+    """Render ``name`` with the shared chrome context (version, nav, flash).
+
+    Every page also gets the shared left-rail data (``sidebar_context``): the
+    session list, active profile + model, and scope — so the chat-centric nav
+    is present on the settings pages too.
+    """
     base: dict[str, object] = {
         "version": __version__,
         "active": active,
         "ok": request.query_params.get("ok"),
         "err": request.query_params.get("err"),
+        "active_session": None,
     }
+    base.update(panel.sidebar_context())
     base.update(ctx)
     return templates.TemplateResponse(request, name, base)
 
@@ -54,8 +61,9 @@ def _redirect(path: str, result: actions.ActionResult) -> RedirectResponse:
 # ---------- GET pages ----------
 
 
-async def overview(request: Request) -> Response:
-    return _render(request, "overview.html", "overview", panel.overview_context())
+async def root(request: Request) -> Response:
+    """The UI is chat-first now — the old Overview page is gone; land on chat."""
+    return RedirectResponse("/chat", status_code=307)
 
 
 async def profiles(request: Request) -> Response:
@@ -66,8 +74,13 @@ async def keys(request: Request) -> Response:
     return _render(request, "keys.html", "keys", panel.keys_context())
 
 
-async def sessions(request: Request) -> Response:
-    return _render(request, "sessions.html", "sessions", panel.sessions_context())
+async def settings(request: Request) -> Response:
+    """Settings landing page — links out to Profiles and Keys & secrets.
+
+    Active profile + model come from the shared ``sidebar_context`` already in
+    the chrome, so this page needs no context of its own.
+    """
+    return _render(request, "settings.html", "settings", {})
 
 
 # ---------- POST actions ----------
@@ -110,14 +123,28 @@ async def key_unset(request: Request) -> Response:
 async def session_delete(request: Request) -> Response:
     form = await request.form()
     result = actions.delete_session_action(str(form.get("id", "")))
-    return _redirect("/sessions", result)
+    # Sessions live in the rail now; there's no /sessions page to land on, so
+    # go home (chat) — it resumes the latest remaining session.
+    return _redirect("/chat", result)
 
 
 # ---------- chat (Slice 2) ----------
 
 
 async def chat_page(request: Request) -> Response:
-    return _render(request, "chat.html", "chat", {"resume": request.query_params.get("session")})
+    from jac.runtime.session import Session
+
+    resume = request.query_params.get("session")
+    new = request.query_params.get("new")
+    # Highlight the session that'll actually load: the one asked for, else the
+    # latest that auto-resumes (unless this is an explicit New chat).
+    active = resume if resume else (None if new else Session.latest_id())
+    return _render(
+        request,
+        "chat.html",
+        "chat",
+        {"resume": resume, "new": bool(new), "active_session": active},
+    )
 
 
 async def chat_stream(request: Request) -> Response:
@@ -164,10 +191,20 @@ async def chat_status(request: Request) -> Response:
     return JSONResponse(get_manager().dashboard())
 
 
+async def chat_history(request: Request) -> Response:
+    """Past messages of the attached session, for repainting the transcript."""
+    return JSONResponse({"messages": get_manager().history_messages()})
+
+
+async def chat_environment(request: Request) -> Response:
+    """Connected environment: A2A peers, MCP servers, skills. Fetched once."""
+    return JSONResponse(get_manager().environment())
+
+
 def create_app() -> Starlette:
     """Build the JAC web-UI ASGI app (Slice 1 control panel)."""
     routes = [
-        Route("/", overview, name="overview"),
+        Route("/", root, name="root"),
         Route("/profiles", profiles, name="profiles"),
         Route("/profiles/default", profile_set_default, methods=["POST"]),
         Route("/profiles/delete", profile_delete, methods=["POST"]),
@@ -175,7 +212,7 @@ def create_app() -> Starlette:
         Route("/keys", keys, name="keys"),
         Route("/keys/set", key_set, methods=["POST"]),
         Route("/keys/unset", key_unset, methods=["POST"]),
-        Route("/sessions", sessions, name="sessions"),
+        Route("/settings", settings, name="settings"),
         Route("/sessions/delete", session_delete, methods=["POST"]),
         Route("/chat", chat_page, name="chat"),
         Route("/chat/stream", chat_stream, name="chat_stream"),
@@ -184,6 +221,8 @@ def create_app() -> Starlette:
         Route("/chat/clarify", chat_clarify, methods=["POST"]),
         Route("/chat/new", chat_new, methods=["POST"]),
         Route("/chat/status", chat_status, name="chat_status"),
+        Route("/chat/history", chat_history, name="chat_history"),
+        Route("/chat/environment", chat_environment, name="chat_environment"),
         Mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static"),
     ]
     return Starlette(routes=routes)

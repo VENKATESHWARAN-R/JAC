@@ -6,7 +6,6 @@
   <h1>Chat</h1>
   <div class="chat-meta">
     <span id="chat-session" class="mono">—</span>
-    <button id="chat-new" class="small ghost">New chat</button>
     <button id="act-toggle" class="small ghost">activity ›</button>
   </div>
 </div>
@@ -14,6 +13,13 @@
 <div class="chat-layout" id="chat-layout">
   <div class="chat-col">
     <div id="transcript" class="transcript" aria-live="polite"></div>
+    <!-- HITL prompts (approval / clarify) render here one-at-a-time as a
+         pinned alert bar — never inline in the transcript, so scroll-back
+         stays clean and a queued approval can't be missed. -->
+    <div id="hitl-bar" class="hitl-bar" hidden>
+      <div class="hitl-count" id="hitl-count" hidden></div>
+      <div class="hitl-body" id="hitl-body"></div>
+    </div>
     <form id="chat-form" class="chat-input">
       <textarea id="chat-text" rows="1" placeholder="Message Gru…  (Enter to send, Shift+Enter for newline)"></textarea>
       <button type="submit" id="chat-send">Send</button>
@@ -33,9 +39,27 @@
       <div class="act-title">Files <span id="act-file-count" class="badge act-count">0</span></div>
       <div id="act-files" class="act-body"><span class="dim">none yet</span></div>
     </section>
+
+    <div class="act-divider">Environment</div>
+
+    <section class="act-sec">
+      <div class="act-title">A2A agents <span id="act-a2a-count" class="badge act-count">0</span></div>
+      <div id="act-a2a" class="act-body"><span class="dim">none</span></div>
+    </section>
+    <section class="act-sec">
+      <div class="act-title">MCP servers <span id="act-mcp-count" class="badge act-count">0</span></div>
+      <div id="act-mcp" class="act-body"><span class="dim">none</span></div>
+    </section>
+    <section class="act-sec">
+      <div class="act-title">Skills <span id="act-skills-count" class="badge act-count">0</span></div>
+      <div id="act-skills" class="act-body"><span class="dim">none</span></div>
+    </section>
   </aside>
 </div>
 
-<script>window.JAC_RESUME = {{ (resume | tojson) if resume else "null" }};</script>
+<script>
+  window.JAC_RESUME = {{ (resume | tojson) if resume else "null" }};
+  window.JAC_NEW = {{ "true" if new else "false" }};
+</script>
 <script src="/static/chat.js" defer></script>
 {% endblock %}

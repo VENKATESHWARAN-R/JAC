@@ -174,6 +174,119 @@ def test_dashboard_reports_existing_changed_files(tmp_path: Path) -> None:
     assert all(f["path"] != "ghost.py" for f in files)
 
 
+def test_dashboard_lists_running_minions_from_events() -> None:
+    # Parallel/sequential workers run to completion without ever parking in
+    # ``_pending_spawns``, so the dashboard's active list must come from the
+    # SubAgentSpawned/SubAgentCompleted lifecycle the consumer records.
+    mgr = WebChatManager()
+    mgr.active_minions["minion-1"] = {
+        "tier": "small",
+        "model": "anthropic:claude-haiku",
+        "objective": "summarize module a",
+    }
+    active = mgr.dashboard()["sub_agents"]["active"]
+    assert len(active) == 1
+    assert active[0]["spawn_id"] == "minion-1"
+    assert active[0]["tier"] == "small"
+    assert active[0]["status"] == "running"
+    assert active[0]["objective"] == "summarize module a"
+
+    # Completion drops it back off the dashboard.
+    mgr.active_minions.pop("minion-1", None)
+    assert mgr.dashboard()["sub_agents"]["active"] == []
+
+
+def test_history_messages_serializes_transcript() -> None:
+    from pydantic_ai.messages import (
+        ModelRequest,
+        ModelResponse,
+        TextPart,
+        ToolCallPart,
+        UserPromptPart,
+    )
+
+    mgr = WebChatManager()
+    mgr.history = [
+        ModelRequest(parts=[UserPromptPart(content="write a file")]),
+        ModelResponse(
+            parts=[
+                TextPart(content="On it."),
+                ToolCallPart(
+                    tool_name="write_file",
+                    args={"reason": "create it", "path": "a.txt"},
+                ),
+            ]
+        ),
+        ModelRequest(parts=[UserPromptPart(content="thanks")]),
+    ]
+    msgs = mgr.history_messages()
+    assert msgs == [
+        {"role": "user", "content": "write a file"},
+        {"role": "assistant", "content": "On it."},
+        {"role": "tool", "name": "write_file", "reason": "create it"},
+        {"role": "user", "content": "thanks"},
+    ]
+
+
+def test_history_messages_empty_without_history() -> None:
+    assert WebChatManager().history_messages() == []
+
+
+def test_chat_history_route() -> None:
+    client = TestClient(create_app())
+    resp = client.get("/chat/history")
+    assert resp.status_code == 200
+    assert resp.json() == {"messages": []}
+
+
+def test_environment_empty_without_runtime() -> None:
+    env = WebChatManager().environment()
+    assert env == {"a2a": [], "mcp": [], "skills": []}
+
+
+def test_environment_reads_live_capabilities() -> None:
+    # No live model in the test workspace, so stub a runtime carrying the three
+    # capabilities the panel reads. The shapes mirror the real objects.
+    from types import SimpleNamespace
+
+    mgr = WebChatManager()
+    peer = SimpleNamespace(url="http://127.0.0.1:8001", auth=None, description="")
+    skill = SimpleNamespace(name="jac-cli", description="how to run X", source="package")
+    server = SimpleNamespace(
+        transport="stdio",
+        knobs=SimpleNamespace(enabled=True, requires_approval=True),
+        source="project",
+    )
+    mgr.runtime = SimpleNamespace(  # type: ignore[assignment]
+        a2a_capability=SimpleNamespace(peers={"peer-a": peer}, session_peers={}),
+        mcp_capability=SimpleNamespace(catalog=SimpleNamespace(servers={"srv": server})),
+        skills_capability=SimpleNamespace(skills={"jac-cli": skill}),
+    )
+    env = mgr.environment()
+    assert env["a2a"] == [
+        {"name": "peer-a", "url": "http://127.0.0.1:8001", "auth": "none", "source": "profile"}
+    ]
+    assert env["mcp"] == [
+        {
+            "name": "srv",
+            "transport": "stdio",
+            "enabled": True,
+            "approval": True,
+            "source": "project",
+        }
+    ]
+    assert env["skills"] == [
+        {"name": "jac-cli", "description": "how to run X", "source": "package"}
+    ]
+
+
+def test_chat_environment_route() -> None:
+    client = TestClient(create_app())
+    resp = client.get("/chat/environment")
+    assert resp.status_code == 200
+    assert set(resp.json()) == {"a2a", "mcp", "skills"}
+
+
 def test_chat_status_route() -> None:
     client = TestClient(create_app())
     resp = client.get("/chat/status")

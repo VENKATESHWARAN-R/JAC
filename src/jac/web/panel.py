@@ -11,11 +11,9 @@ and the resolution source. The panel can write a key but never echoes one back.
 
 from __future__ import annotations
 
-import json
-
 from jac.config import get_settings
 from jac.errors import JacConfigError
-from jac.profiles_crud import get_default_profile_name, list_profiles
+from jac.profiles_crud import get_default_profile_name, get_profile, list_profiles
 from jac.profiles_io import profile_to_yaml
 from jac.providers.registry import get_provider_registry
 from jac.runtime.session import Session
@@ -35,48 +33,6 @@ def workspace_scope() -> dict[str, object]:
         "label": "project" if in_project else "global",
         "root": str(paths.project_root()) if in_project else str(paths.USER_WORKSPACE),
         "sessions_dir": str(paths.project_sessions_dir()),
-    }
-
-
-def _project_token_total() -> int | None:
-    """Best-effort sum of all tokens logged to ``usage.jsonl`` for this scope.
-
-    Returns ``None`` if the ledger is absent or unreadable — the overview just
-    omits the figure rather than failing the page.
-    """
-    usage_file = paths.project_usage_file()
-    if not usage_file.is_file():
-        return 0
-    total = 0
-    try:
-        for line in usage_file.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            row = json.loads(line)
-            total += int(row.get("input_tokens", 0)) + int(row.get("output_tokens", 0))
-    except (OSError, json.JSONDecodeError, ValueError, TypeError):
-        return None
-    return total
-
-
-def overview_context() -> dict[str, object]:
-    """Top-level dashboard: scope, defaults, backend, model, and counts."""
-    settings = get_settings()
-    try:
-        profile_count: int | None = len(list_profiles())
-    except JacConfigError:
-        # Legacy/malformed config — the Profiles page renders the actual error.
-        profile_count = None
-
-    return {
-        "scope": workspace_scope(),
-        "default_profile": get_default_profile_name(),
-        "secrets_backend": settings.secrets.backend,
-        "model": settings.model,
-        "profile_count": profile_count,
-        "session_count": len(Session.list_ids()),
-        "token_total": _project_token_total(),
     }
 
 
@@ -140,15 +96,36 @@ def keys_context() -> dict[str, object]:
     }
 
 
-def sessions_context() -> dict[str, object]:
-    """Sessions for the current scope, newest first."""
-    summaries = Session.list_summaries()
-    rows = [
+def sidebar_context() -> dict[str, object]:
+    """Shared left-rail data rendered on *every* page (chat-centric nav).
+
+    The session list (newest first, clickable into the chat), the active
+    profile + the model it resolves to, and the workspace scope. Profile/model
+    resolution fails soft: a fresh workspace with no usable profile just shows
+    nothing rather than 500-ing the whole UI.
+    """
+    sessions = [
         {
             "id": s.session_id,
             "count": s.message_count,
-            "created": s.created.isoformat(sep=" ", timespec="seconds") if s.created else None,
+            "created": s.created.strftime("%b %d · %H:%M") if s.created else s.session_id,
         }
-        for s in reversed(summaries)
+        for s in reversed(Session.list_summaries())
     ]
-    return {"sessions": rows, "scope": workspace_scope()}
+
+    profile_name: str | None = None
+    model: str | None = None
+    try:
+        profile_name = get_default_profile_name()
+        if profile_name:
+            model = get_profile(profile_name).default_model()
+    except JacConfigError:
+        profile_name = None
+        model = None
+
+    return {
+        "sb_sessions": sessions,
+        "sb_profile": profile_name,
+        "sb_model": model,
+        "sb_scope": workspace_scope(),
+    }

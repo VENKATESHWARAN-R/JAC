@@ -7,20 +7,44 @@
   <link rel="stylesheet" href="/static/jac.css">
 </head>
 <body>
-  <div class="layout">
-    <aside class="sidebar">
-      <div class="brand">JAC</div>
-      <div class="brand-sub">web · v{{ version }}</div>
-      <nav>
-        <a href="/chat" class="{{ 'on' if active == 'chat' }}">Chat</a>
-        <a href="/" class="{{ 'on' if active == 'overview' }}">Overview</a>
-        <a href="/profiles" class="{{ 'on' if active == 'profiles' }}">Profiles</a>
-        <a href="/keys" class="{{ 'on' if active == 'keys' }}">Keys &amp; secrets</a>
-        <a href="/sessions" class="{{ 'on' if active == 'sessions' }}">Sessions</a>
+  <button id="nav-reopen" class="nav-reopen" title="Show sidebar" aria-label="Show sidebar">☰</button>
+  <div class="layout" id="app-layout">
+    <aside class="sidebar" id="nav-sidebar">
+      <div class="sidebar-top">
+        <div class="brand-row">
+          <div>
+            <div class="brand">JAC</div>
+            <div class="brand-sub">web · v{{ version }}</div>
+          </div>
+          <button id="nav-collapse" class="icon-btn" title="Hide sidebar" aria-label="Hide sidebar">‹</button>
+        </div>
+        <a href="/chat?new=1" class="new-chat">+ New chat</a>
+      </div>
+
+      <nav class="sidebar-sessions" aria-label="Sessions">
+        {% if sb_sessions %}
+          {% for s in sb_sessions %}
+          <div class="sess-row {{ 'on' if s.id == active_session }}">
+            <a class="sess-link" href="/chat?session={{ s.id }}" title="{{ s.id }}">
+              <span class="sess-when">{{ s.created }}</span>
+              <span class="sess-meta">{{ s.count if s.count is not none else "?" }} msg</span>
+            </a>
+            <form method="post" action="/sessions/delete" class="sess-del"
+                  onsubmit="return confirm('Delete session {{ s.id }}?')">
+              <input type="hidden" name="id" value="{{ s.id }}">
+              <button type="submit" title="Delete session" aria-label="Delete session">✕</button>
+            </form>
+          </div>
+          {% endfor %}
+        {% else %}
+          <div class="sess-empty">No sessions yet.</div>
+        {% endif %}
       </nav>
-      <div class="sidebar-foot">
-        local-first &middot; single-user<br>
-        loopback only
+
+      <div class="sidebar-bottom">
+        <a href="/settings" class="settings-btn {{ 'on' if active in ['settings', 'profiles', 'keys'] }}">
+          <span class="gear" aria-hidden="true">⚙</span> Settings
+        </a>
       </div>
     </aside>
 
@@ -30,5 +54,21 @@
       {% block content %}{% endblock %}
     </main>
   </div>
+
+  <script>
+    // Left-sidebar collapse (works on every page; chat.js handles the right drawer).
+    // Toggle on <body> so the sidebar, the floating reopen button (a sibling of
+    // the layout), and the content padding all match the .nav-collapsed selector.
+    (() => {
+      const collapse = document.getElementById("nav-collapse");
+      const reopen = document.getElementById("nav-reopen");
+      const KEY = "jac.nav.collapsed";
+      const apply = (on) => document.body.classList.toggle("nav-collapsed", on);
+      try { apply(localStorage.getItem(KEY) === "1"); } catch (e) {}
+      const set = (on) => { apply(on); try { localStorage.setItem(KEY, on ? "1" : "0"); } catch (e) {} };
+      if (collapse) collapse.addEventListener("click", () => set(true));
+      if (reopen) reopen.addEventListener("click", () => set(false));
+    })();
+  </script>
 </body>
 </html>
