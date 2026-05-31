@@ -22,7 +22,7 @@ JAC's docs site is built with [Zensical](https://zensical.org/) (`just docs-serv
 | Product vision & scope | [`idea.md`](../idea.md) | No | What JAC is and is not |
 | Locked design & decisions | [`architecture.md`](../architecture.md) §5 | No | Decision IDs (D14, D20, …) live here |
 | Implementation status | [`progress.md`](../progress.md) | No | Live dashboard; update when work lands. Detailed history lives in `progress-history.md`, `progress-a2a.md`, and `progress-roadmap.md` |
-| Released behavior (versions) | [`changelog.md`](../changelog.md) | Optional one-liner | User-facing releases |
+| Released behavior (versions) | [`changelog.md`](../changelog.md) | Optional one-liner | User-facing releases. **Single source — `docs/changelog.md` only; there is no root `CHANGELOG.md`.** GitHub Releases mirror each version. |
 | Install & first run | [`user-guide/getting-started.md`](../user-guide/getting-started.md) | — | README duplicates quickstart; link to docs |
 | CLI commands & slash | [`user-guide/cli-reference.md`](../user-guide/cli-reference.md) | — | Must match `jac.cli` and `jac.cli.slash` |
 | Web UI operation | [`user-guide/web-ui.md`](../user-guide/web-ui.md) | — | Task-oriented `jac web serve`; design charter in [`design/web-surface.md`](web-surface.md) |
