@@ -20,7 +20,14 @@ from __future__ import annotations
 import re
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Discriminator, Field, model_validator
+from pydantic import (
+    BaseModel,
+    Discriminator,
+    Field,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+    model_validator,
+)
 
 from jac.errors import JacConfigError
 from jac.providers.registry import get_provider_registry, provider_prefix
@@ -38,7 +45,31 @@ def validate_profile_name(name: str) -> None:
         )
 
 
-class BearerAuth(BaseModel):
+class _AuthStrategy(BaseModel):
+    """Base for the :data:`PeerAuth` union members.
+
+    The ``type`` field on each member is the union *discriminator*, but it also
+    equals its ``Literal`` default — so a ``model_dump(exclude_defaults=True)``
+    (how profiles are written back to YAML in :mod:`jac.profiles_crud` and
+    :mod:`jac.profiles_io`) strips it. A peer dumped that way no longer
+    re-validates through :data:`PeerAuth` (``union_tag_not_found``), making the
+    whole profile unloadable. This wrap serializer re-injects ``type`` whenever a
+    parent dump has dropped it, so every serialization path round-trips while the
+    rest of the ``exclude_defaults`` cleanup is preserved. Subclasses still
+    declare ``type: Literal[...]`` for validation/discrimination.
+    """
+
+    @model_serializer(mode="wrap")
+    def _preserve_discriminator(self, handler: SerializerFunctionWrapHandler) -> Any:
+        data = handler(self)
+        if isinstance(data, dict) and "type" not in data:
+            # getattr (not self.type): the base has no `type` field — only the
+            # concrete subclasses do — so attribute access wouldn't typecheck.
+            return {"type": getattr(self, "type"), **data}  # noqa: B009
+        return data
+
+
+class BearerAuth(_AuthStrategy):
     """Static HTTP Bearer token. Sent as ``Authorization: Bearer <token>``.
 
     The cheapest scheme that's still secure-by-default. Use for JAC↔JAC,
@@ -52,7 +83,7 @@ class BearerAuth(BaseModel):
     time via the configured secrets backend."""
 
 
-class ApiKeyAuth(BaseModel):
+class ApiKeyAuth(_AuthStrategy):
     """API key in a custom HTTP header. Sent as ``<header>: <value>``.
 
     For peers that use non-Bearer header conventions like
@@ -69,7 +100,7 @@ class ApiKeyAuth(BaseModel):
     """The header value, or a ``${ENV_VAR}`` reference."""
 
 
-class OAuth2ClientCredentialsAuth(BaseModel):
+class OAuth2ClientCredentialsAuth(_AuthStrategy):
     """OAuth2 client_credentials flow (RFC 6749 §4.4).
 
     Standard server-to-server flow. We POST to ``token_url`` with the
