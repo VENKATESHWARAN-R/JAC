@@ -1,0 +1,72 @@
+{% from "panel/_hx.html" import form_attrs %}
+<div data-drawer-title="A2A">
+  {% if flash %}<div class="flash {{ flash.kind }}">{{ flash.msg }}</div>{% endif %}
+  <h1>A2A — agent-to-agent</h1>
+  {% if a2a_error %}
+    <div class="flash err">{{ a2a_error }}</div>
+    <p class="note">Add a default profile under Profiles to manage A2A.</p>
+  {% else %}
+  <p class="note">Outbound peers + server defaults for profile <b>{{ a2a_profile or "—" }}</b>.
+    Start the server from the chat (<span class="mono">/a2a serve</span>) or headless
+    (<span class="mono">jac a2a serve</span>).</p>
+
+  <div class="row">
+    <div class="row-head"><span class="row-title">Server defaults</span></div>
+    <div class="row-body">
+      <p class="note">Bind <span class="mono">{{ a2a_host }}:{{ a2a_port }}</span> ·
+        context retention {{ a2a_retention }}d · (edit host/port/retention in the Profiles YAML).</p>
+      <form class="knob-row" {{ form_attrs("/a2a/allow-private", in_drawer) }}>
+        <span class="knob-label">allow private peers (disables SSRF guard)</span>
+        <label class="toggle">
+          <input type="checkbox" name="value" {{ "checked" if a2a_allow_private }}
+                 onchange="(this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit())">
+          <span class="track"></span>
+        </label>
+      </form>
+    </div>
+  </div>
+
+  <h2>Peers</h2>
+  {% if not a2a_peers %}<p class="note">No peers configured.</p>{% endif %}
+  {% for p in a2a_peers %}
+  <div class="row">
+    <div class="row-head">
+      <span class="row-title mono">{{ p.name }}</span>
+      <span class="badge">{{ p.auth }}</span>
+      <span class="row-meta">{{ p.url }}</span>
+    </div>
+    <div class="row-body">
+      {% if p.description %}<p class="note">{{ p.description }}</p>{% endif %}
+      <form {{ form_attrs("/a2a/remove-peer", in_drawer, confirm="Remove peer " ~ p.name ~ "?") }}>
+        <input type="hidden" name="name" value="{{ p.name }}">
+        <button class="danger" type="submit">Remove</button>
+      </form>
+    </div>
+  </div>
+  {% endfor %}
+
+  <h2>Add a peer</h2>
+  <form class="stack" {{ form_attrs("/a2a/add-peer", in_drawer) }}>
+    <label>Name <input type="text" name="name" class="mono" placeholder="research-agent"></label>
+    <label>URL <input type="text" name="url" class="mono" placeholder="http://127.0.0.1:8001"></label>
+    <label>Bearer token <input type="password" name="token" autocomplete="off"
+      placeholder="optional — leave blank for an --unsafe peer"></label>
+    <button type="submit">Add peer</button>
+  </form>
+  {% endif %}
+
+  <h2>Inbound calls</h2>
+  {% if not a2a_audit %}
+    <p class="note">No inbound calls logged{{ "" if a2a_profile else " (project scope only)" }}.</p>
+  {% else %}
+    {% for r in a2a_audit %}
+    <div class="audit-row">
+      <span class="mono">{{ r.ts or r.timestamp or "?" }}</span>
+      · <b>{{ r.state or "?" }}</b>
+      {% if r.peer_id %}· peer {{ r.peer_id }}{% endif %}
+      {% if r.duration_ms is defined %}· {{ r.duration_ms }}ms{% endif %}
+      {% if r.message_preview %}<div class="dim">{{ r.message_preview }}</div>{% endif %}
+    </div>
+    {% endfor %}
+  {% endif %}
+</div>

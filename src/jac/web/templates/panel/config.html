@@ -1,0 +1,85 @@
+{% from "panel/_hx.html" import form_attrs %}
+<div data-drawer-title="Config">
+  {% if flash %}<div class="flash {{ flash.kind }}">{{ flash.msg }}</div>{% endif %}
+  <h1>Config</h1>
+  <p class="note">Each field shows its <b>effective</b> value and which layer supplies it.
+    Edits write to the chosen layer only; a field a higher layer overrides is locked.</p>
+
+  <div class="scope-toggle">
+    <span class="dim">Editing layer:</span>
+    {% if in_drawer %}
+      <select name="scope" hx-get="/panel/config" hx-target="#drawer-body" hx-trigger="change">
+        <option value="project" {{ "selected" if cfg_scope == "project" }} {{ "disabled" if not cfg_in_project }}>Project — .agents/config.yaml</option>
+        <option value="user" {{ "selected" if cfg_scope == "user" }}>User — ~/.jac/config.yaml</option>
+      </select>
+    {% else %}
+      <form method="get" action="/config" style="display:inline">
+        <select name="scope" onchange="this.form.submit()">
+          <option value="project" {{ "selected" if cfg_scope == "project" }} {{ "disabled" if not cfg_in_project }}>Project — .agents/config.yaml</option>
+          <option value="user" {{ "selected" if cfg_scope == "user" }}>User — ~/.jac/config.yaml</option>
+        </select>
+      </form>
+    {% endif %}
+    <span class="dim">source:</span>
+    <span class="cfg-src project">project</span>
+    <span class="cfg-src user">user</span>
+    <span class="cfg-src">defaults</span>
+    <span class="cfg-src env">env / .env</span>
+  </div>
+
+  {% for g in cfg_groups %}
+  <div class="row">
+    <div class="row-head"><span class="row-title">{{ g.title }}</span></div>
+    <div class="row-body">
+      <p class="note">{{ g.help }}</p>
+      {% for f in g.fields %}
+      <div class="cfg-field {{ 'cfg-locked' if f.locked }}">
+        <div class="cfg-row">
+          <div class="cfg-label">{{ f.label }}<span class="cfg-key">{{ g.key }}.{{ f.name }}</span></div>
+          <form class="cfg-control" {{ form_attrs("/config/set", in_drawer) }}>
+            <input type="hidden" name="scope" value="{{ cfg_scope }}">
+            <input type="hidden" name="group" value="{{ g.key }}">
+            <input type="hidden" name="field" value="{{ f.name }}">
+            <input type="hidden" name="type" value="{{ f.type }}">
+            {% if f.type in ("select", "bool") %}
+              {% set opts = f.options if f.type == "select" else ["true", "false"] %}
+              <select name="value" {{ "disabled" if f.locked }}>
+                {% for o in opts %}<option value="{{ o }}" {{ "selected" if o == f.value_str }}>{{ o }}</option>{% endfor %}
+              </select>
+            {% elif f.type in ("int", "int_opt") %}
+              <input type="number" name="value" value="{{ f.value_str }}"
+                     placeholder="{{ 'unlimited' if f.type == 'int_opt' else '' }}" {{ "disabled" if f.locked }}>
+            {% else %}
+              <input type="text" name="value" value="{{ f.value_str }}" {{ "disabled" if f.locked }}>
+            {% endif %}
+            <span class="cfg-src {{ f.origin }}">{{ f.origin }}</span>
+            {% if not f.locked %}<button class="small" type="submit">Set</button>{% endif %}
+          </form>
+          {% if f.in_scope and not f.locked %}
+          <form {{ form_attrs("/config/unset", in_drawer) }}>
+            <input type="hidden" name="scope" value="{{ cfg_scope }}">
+            <input type="hidden" name="group" value="{{ g.key }}">
+            <input type="hidden" name="field" value="{{ f.name }}">
+            <button class="small ghost" type="submit" title="Remove from this layer">Reset</button>
+          </form>
+          {% endif %}
+        </div>
+        {% if f.locked %}
+        <div class="cfg-lock-note">set by <b>{{ f.origin }}</b> — editing {{ cfg_scope }} won't take effect</div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+
+  <details>
+    <summary>Advanced — raw {{ cfg_scope }} config.yaml</summary>
+    <p class="note">The whole file for this layer, including profiles. Validated as YAML on save.</p>
+    <form class="stack" {{ form_attrs("/config/raw", in_drawer) }}>
+      <input type="hidden" name="scope" value="{{ cfg_scope }}">
+      <textarea name="text" rows="14" class="mono">{{ cfg_raw }}</textarea>
+      <button type="submit">Save raw YAML</button>
+    </form>
+  </details>
+</div>

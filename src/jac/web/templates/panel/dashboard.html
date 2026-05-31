@@ -1,0 +1,33 @@
+<div data-drawer-title="Dashboard">
+  {% if flash %}<div class="flash {{ flash.kind }}">{{ flash.msg }}</div>{% endif %}
+  <h1>Dashboard</h1>
+
+  <h2>Readiness</h2>
+  {% for d in doctor_items %}
+  <div class="doctor-item">
+    <span class="tb-dot {{ 'ok' if d.level == 'ok' else 'warn' if d.level == 'warn' else 'bad' }}"></span>
+    <div class="d-msg">{{ d.msg }}{% if d.fix %}<div class="d-fix">{{ d.fix }}</div>{% endif %}</div>
+  </div>
+  {% endfor %}
+
+  <h2>Cost &amp; usage</h2>
+  {% set t = dash.tokens %}
+  <div class="row"><div class="row-body">
+    <div class="big">{{ "{:,}".format(t.total) }}<span class="unit"> tokens this session</span></div>
+    <p class="note">in {{ "{:,}".format(t.input) }} · out {{ "{:,}".format(t.output) }}
+      {% if t.cache_pct is not none %}· cache {{ t.cache_pct }}%{% endif %}
+      {% if t.budget_pct is not none %}· budget {{ t.budget_pct }}%{% endif %}</p>
+    <p class="note">project total: <b>{{ "{:,}".format(t.project_total) }}</b> tokens</p>
+  </div></div>
+
+  {% set sa = dash.sub_agents %}
+  {% if sa.spawns %}
+  <h2>Sub-agents</h2>
+  <div class="row"><div class="row-body">
+    <p class="note">{{ sa.spawns }} spawned · {{ "{:,}".format(sa.tokens) }} tokens
+      {% if sa.by_tier %}({% for tier, n in sa.by_tier.items() %}{{ tier }}: {{ "{:,}".format(n) }}{% if not loop.last %}, {% endif %}{% endfor %}){% endif %}</p>
+  </div></div>
+  {% endif %}
+
+  <p class="note">Live token meter and minion cards stream in the chat's activity rail.</p>
+</div>

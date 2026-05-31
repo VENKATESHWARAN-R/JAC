@@ -1,0 +1,23 @@
+<div data-drawer-title="Settings">
+  {% if flash %}<div class="flash {{ flash.kind }}">{{ flash.msg }}</div>{% endif %}
+  <h1>Settings</h1>
+  <p class="note">
+    Active profile <b>{{ sb_profile or "none" }}</b> ·
+    model <span class="mono">{{ sb_model or "none bound" }}</span> ·
+    <b>{{ sb_scope.label }}</b> workspace.
+  </p>
+  <p class="note">Everything is reachable from the <b>Manage</b> menu in the left rail —
+    profiles, keys, config, skills, MCP, A2A, and more.</p>
+  <div class="cards">
+    <a class="card link-card" href="/profiles">
+      <div class="card-label">Profiles</div>
+      <div class="card-value">Models &amp; tiers</div>
+      <div class="card-foot">Add or edit profiles, set the default, choose tier models.</div>
+    </a>
+    <a class="card link-card" href="/keys">
+      <div class="card-label">Keys &amp; secrets</div>
+      <div class="card-value">Credentials</div>
+      <div class="card-foot">Set provider API keys and optional feature tokens.</div>
+    </a>
+  </div>
+</div>

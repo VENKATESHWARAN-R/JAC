@@ -1,0 +1,10 @@
+{# Shared form-attr macro so one panel template works two ways:
+   - in a drawer (in_drawer=True): submit over htmx, swapping the re-rendered
+     fragment back into #drawer-body — the Console underneath stays live.
+   - as a full page (in_drawer=False): a plain POST that the server answers with
+     a Post/Redirect/Get (the legacy/deep-link path the tests exercise). #}
+{% macro form_attrs(url, in_drawer, confirm="") -%}
+method="post" action="{{ url }}"
+{%- if in_drawer %} hx-post="{{ url }}" hx-target="#drawer-body" hx-swap="innerHTML"{% endif %}
+{%- if confirm %} onsubmit="return confirm('{{ confirm }}')"{% endif %}
+{%- endmacro %}

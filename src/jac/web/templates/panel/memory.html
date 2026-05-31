@@ -1,0 +1,47 @@
+{% from "panel/_hx.html" import form_attrs %}
+<div data-drawer-title="Memory">
+  {% if flash %}<div class="flash {{ flash.kind }}">{{ flash.msg }}</div>{% endif %}
+  <h1>Memory</h1>
+  <p class="note">JAC-managed notes the agent recalls. Normally written by the
+    <span class="mono">remember</span> tool — edit raw only if you know what you're doing.</p>
+
+  {% macro mem_view(sections) %}
+    {% if not sections %}<p class="note">Empty.</p>{% endif %}
+    {% for category, items in sections.items() %}
+      <div class="side-label">{{ category }}</div>
+      {% for item in items %}<div class="note">• {{ item }}</div>{% endfor %}
+    {% endfor %}
+  {% endmacro %}
+
+  <div class="row">
+    <div class="row-head"><span class="row-title">User memory</span><span class="row-meta">~/.jac/memory.md</span></div>
+    <div class="row-body">
+      {{ mem_view(mem_user) }}
+      <details>
+        <summary>Edit raw</summary>
+        <form class="stack" {{ form_attrs("/memory/raw", in_drawer) }}>
+          <input type="hidden" name="scope" value="user">
+          <textarea name="text" rows="10" class="mono">{{ mem_user_raw }}</textarea>
+          <button type="submit">Save</button>
+        </form>
+      </details>
+    </div>
+  </div>
+
+  {% if mem_in_project %}
+  <div class="row">
+    <div class="row-head"><span class="row-title">Project memory</span><span class="row-meta">.agents/memory.md</span></div>
+    <div class="row-body">
+      {{ mem_view(mem_project) }}
+      <details>
+        <summary>Edit raw</summary>
+        <form class="stack" {{ form_attrs("/memory/raw", in_drawer) }}>
+          <input type="hidden" name="scope" value="project">
+          <textarea name="text" rows="10" class="mono">{{ mem_project_raw }}</textarea>
+          <button type="submit">Save</button>
+        </form>
+      </details>
+    </div>
+  </div>
+  {% endif %}
+</div>
