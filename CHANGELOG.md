@@ -5,6 +5,42 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); this project
 uses [Semantic Versioning](https://semver.org/) (pre-1.0, so minor versions may
 carry behavioural changes).
 
+## [0.9.0] — 2026-05-31
+
+The local-first **web UI** (`jac web serve`) and the **SDK control plane** that makes every
+surface a thin adapter over one engine. 768 tests.
+
+### Added
+
+- **Web surface (D48).** `jac web serve` — a local-first, single-user browser UI (Starlette +
+  HTMX + SSE, zero new deps): a streaming chat with HITL approvals resolved in the browser, plus
+  an activity dashboard (tokens/cost, minion cards, files changed). Then the **R0–R5 redesign**:
+  a chat-first light full-bleed Console + a full Control Panel (profiles, keys, scope/precedence-
+  aware config, MCP, A2A, skills, context, providers, memory, dashboard) as htmx drawers over the
+  live chat, a top-bar model/profile switcher, and a HITL-disconnect failsafe. New
+  `workspace/config_io.py`. It drives the same engine, tools, and approvals as the CLI — a
+  renderer, **not** a new runtime mode. Binds `127.0.0.1`; non-loopback `--host` warns loudly.
+  Guide: `docs/user-guide/web-ui.md`.
+- **SDK control plane (`SessionController`, D49).** Every runtime mutation — switch model/profile,
+  refresh toolsets, enable/disable/reload MCP, reload skills — lives once in `runtime/control.py`;
+  CLI and web are thin adapters over its verbs. `SessionRuntime` gains a `profile_name` field.
+
+### Changed
+
+- **The inbound A2A server starts only via `jac a2a serve`** (like `jac web serve`); the
+  `/a2a serve|stop|status|token` REPL slash commands were removed. `/a2a peers` and
+  `/a2a peer add|remove` (outbound peer config) remain.
+
+### Fixed
+
+- **Web MCP toggle now rebuilds Gru** (was: wrote the config file but had no effect until
+  restart); the A2A bearer-peer auth discriminator round-trips on save/load.
+
+### Removed
+
+- Internal slash-result types `RebuildGru` / `RefreshToolsets` / `StartA2AServer` /
+  `StopA2AServer` and the web's forked `_rebuild` — superseded by the control plane.
+
 ## [0.8.0] — 2026-05-30
 
 End-stage review remediation (R1–R20, tracked in
@@ -157,6 +193,7 @@ after v0.6.0 but were never released on their own.
   memory, tool-surface polish, coworker experience (compaction, status bar,
   slash commands, budgets), and A2A (inbound + outbound + file transfer).
 
+[0.9.0]: https://github.com/VENKATESHWARAN-R/JAC/releases/tag/v0.9.0
 [0.8.0]: https://github.com/VENKATESHWARAN-R/JAC/releases/tag/v0.8.0
 [0.7.0]: https://github.com/VENKATESHWARAN-R/JAC/releases/tag/v0.7.0
 [0.6.0]: https://github.com/VENKATESHWARAN-R/JAC/releases/tag/v0.6.0

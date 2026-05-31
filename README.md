@@ -6,7 +6,7 @@ JAC is a Python CLI that wraps an LLM with persistent memory, tools,
 human-in-the-loop gates, multi-provider credentials, and session continuity.
 It runs on your machine — your keys, your files, your context.
 
-> **Status:** **v0.8.0** (pre-release). Latest: an end-stage review hardening pass — sub-agent `allowed_tools` now genuinely sandboxes a worker, bidirectional comms redesigned to a suspend/resume `ask_supervisor` flow, and a surface-agnostic `SessionDriver` + `jac.sdk` facade that unlocks non-CLI surfaces. Earlier: interaction modes (`/mode plan|accept-edits`), compaction control (`/compact`, `/context`), the MCP loader (Phase F), parallel sub-agents (Phase E), the skill loader (Phase D), context-cost controls + sequential sub-agents (Phases A/B). Phase 4 A2A is feature-complete for v1 scope.
+> **Status:** **v0.9.0** (pre-release). Latest: a local-first **web UI** (`jac web serve`) — a browser chat + full control panel over the same engine, tools, and approvals as the CLI — and the **SDK control plane** (`SessionController`) that makes every surface a thin adapter over one engine (no per-surface rebuild logic). Earlier: the end-stage review hardening pass (sub-agent `allowed_tools` sandboxing, suspend/resume sub-agent comms, the `SessionDriver` + `jac.sdk` facade), interaction modes (`/mode plan|accept-edits`), compaction control (`/compact`, `/context`), the MCP loader (Phase F), parallel sub-agents (Phase E), the skill loader (Phase D), context-cost controls + sequential sub-agents (Phases A/B). Phase 4 A2A is feature-complete for v1 scope.
 > See [implementation progress](https://venkateshwaran-r.github.io/JAC/progress/) for the live state.
 
 ## What it does
@@ -17,7 +17,7 @@ It runs on your machine — your keys, your files, your context.
 - Session persistence with `jac --resume`. Multi-provider profiles via `jac profiles`.
 - Token-aware history compaction; token budgets; `/` slash commands in-REPL.
 - A2A interop — expose this Gru to peer agents or call other A2A-compatible agents, with bidirectional file transfer and pluggable peer auth (bearer / API key / OAuth2). See [`examples/data-analyst-a2a/`](examples/data-analyst-a2a/) for a working reference peer.
-- Local-first web UI (`jac web serve`) — a single-user browser control panel for profiles, keys, and sessions (streaming chat is next). Binds loopback by default; it is **not** a hosted, multi-tenant service.
+- Local-first web UI (`jac web serve`) — a single-user browser surface: a streaming chat with in-browser HITL approvals plus a full control panel (profiles, keys, config, MCP, A2A, skills, …) and an activity dashboard, all over the same engine as the CLI. Binds loopback by default; it is **not** a hosted, multi-tenant service. See [`docs/user-guide/web-ui.md`](docs/user-guide/web-ui.md).
 - Logfire tracing out of the box.
 
 ## Requirements

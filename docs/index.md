@@ -86,6 +86,10 @@ It runs on your machine — your keys, your files, your context.
 
     Expose JAC as an A2A agent, talk to peer agents, transfer files, and coordinate work across agent boundaries.
 
+-   :lucide-layout-dashboard: **Local web UI**
+
+    Prefer a browser? `jac web serve` gives you a streaming chat plus a full control panel — same engine, same tools, same approvals. Local-first, single-user, loopback-bound. See the [Web UI guide](user-guide/web-ui.md).
+
 </div>
 
 ## Where to go
@@ -93,6 +97,7 @@ It runs on your machine — your keys, your files, your context.
 | I want to… | Start here |
 | --- | --- |
 | **Install and run JAC** | [Getting started](user-guide/getting-started.md) |
+| **Use the browser UI instead of the terminal** | [Web UI](user-guide/web-ui.md) |
 | **See the A2A superpower** | [A2A operator guide](user-guide/a2a-operator.md) |
 | **Look up commands and slash commands** | [CLI reference](user-guide/cli-reference.md) |
 | **Configure profiles, tiers, and budgets** | [Configuration](user-guide/configuration.md) |

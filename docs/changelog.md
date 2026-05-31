@@ -4,11 +4,15 @@ All notable changes to JAC are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.9.0] - 2026-05-31
+
+**v0.9.0** — the local-first **web UI** (`jac web serve`) and the **SDK control plane** that makes every surface a thin adapter over one engine. Pre-1.0 API. 768 tests.
 
 ### Added
 
-- **SDK control plane (`SessionController`, D49).** A surface-agnostic Layer-2 class (`runtime/control.py`) owning every runtime mutation — switch model/profile, refresh toolsets, enable/disable/reload MCP, reload skills. CLI and web now drive the identical verbs instead of each re-implementing the rebuild dance.
+- **Web surface (D48) — a third surface.** `jac web serve` opens a local-first, single-user browser UI under `src/jac/web/` (Starlette + Jinja2 + HTMX + SSE, **zero new dependencies**): a streaming **chat Console** with HITL approvals resolved in the browser (the same `asyncio.Future` the CLI resolves at a terminal prompt), plus an **activity dashboard** (token/cost meter, minion cards, files-changed, environment). It drives the *same* `build_session_runtime` engine, tools, and approvals as the CLI — a renderer, **not** a new runtime mode. Binds `127.0.0.1`; a non-loopback `--host` warns loudly. Guide: [`user-guide/web-ui.md`](user-guide/web-ui.md).
+- **Web UI redesign (R0–R5).** Rebuilt the surface as a chat-first **light full-bleed Console** plus a full **Control Panel** — profiles, keys, scope/precedence-aware **config**, MCP, A2A, skills, context/prompts, providers, memory, dashboard/doctor — opened as htmx drawers *over* the live chat (the chat never reloads), with a top-bar **model/profile switcher** and a HITL-disconnect failsafe (auto-deny after a grace period so a closed tab can't hang a turn). New module `workspace/config_io.py` (scope-aware config writes + per-field precedence).
+- **SDK control plane (`SessionController`, D49).** A surface-agnostic Layer-2 class (`runtime/control.py`) owning every runtime mutation — switch model/profile, refresh toolsets, enable/disable/reload MCP, reload skills. CLI and web now drive the identical verbs instead of each re-implementing the rebuild dance. `SessionRuntime` gains a `profile_name` field as the single source of truth.
 - **Web parity with the CLI:** the control panel reloads the live MCP/skill catalog into the running chat after an edit (no restart needed), and each skill gets a **"Use in chat"** action (mirrors the CLI `/skill use`).
 
 ### Changed
@@ -18,10 +22,15 @@ All notable changes to JAC are documented here. Format follows
 ### Fixed
 
 - **Web MCP toggle now takes effect immediately.** Previously, enabling/disabling an MCP server in the web UI wrote the config file but never rebuilt Gru, so the change did nothing until restart.
+- **A2A peer auth discriminator round-trips correctly** — a bearer-auth peer no longer drops its `type` on save/load.
 
 ### Removed
 
 - Internal slash-result types `RebuildGru` / `RefreshToolsets` / `StartA2AServer` / `StopA2AServer` and the web's forked `_rebuild` — superseded by the control plane.
+
+### Architecture decisions
+
+- D48 — Web UI as a third surface (local-first, single-user, loopback-bound) · D49 — SDK control plane (`SessionController`); surfaces are thin adapters over one engine
 
 ## [0.8.0] - 2026-05-30
 
@@ -250,7 +259,7 @@ First **alpha** release (Phase 1 + Phase 1.5). Pre-1.0 API; expect breaking chan
 - Python 3.13+
 - Provider API keys (via `jac init` / `jac keys` / env)
 
-[Unreleased]: https://github.com/VENKATESHWARAN-R/JAC/compare/v0.8.0...HEAD
+[0.9.0]: https://github.com/VENKATESHWARAN-R/JAC/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/VENKATESHWARAN-R/JAC/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/VENKATESHWARAN-R/JAC/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/VENKATESHWARAN-R/JAC/compare/v0.5.0...v0.6.0
