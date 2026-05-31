@@ -17,6 +17,7 @@ It runs on your machine — your keys, your files, your context.
 - Session persistence with `jac --resume`. Multi-provider profiles via `jac profiles`.
 - Token-aware history compaction; token budgets; `/` slash commands in-REPL.
 - A2A interop — expose this Gru to peer agents or call other A2A-compatible agents, with bidirectional file transfer and pluggable peer auth (bearer / API key / OAuth2). See [`examples/data-analyst-a2a/`](examples/data-analyst-a2a/) for a working reference peer.
+- Local-first web UI (`jac web serve`) — a single-user browser control panel for profiles, keys, and sessions (streaming chat is next). Binds loopback by default; it is **not** a hosted, multi-tenant service.
 - Logfire tracing out of the box.
 
 ## Requirements
@@ -44,6 +45,7 @@ git clone https://github.com/VENKATESHWARAN-R/JAC.git && cd JAC && uv sync
 jac init        # set secrets backend, create first profile, store API key
 jac             # start a session
 jac --resume    # continue the last session
+jac web serve   # local browser control panel (loopback, single-user)
 ```
 
 Full user guide: **[Getting started](https://venkateshwaran-r.github.io/JAC/user-guide/getting-started/)**

@@ -235,7 +235,8 @@ First **alpha** release (Phase 1 + Phase 1.5). Pre-1.0 API; expect breaking chan
 - Python 3.13+
 - Provider API keys (via `jac init` / `jac keys` / env)
 
-[Unreleased]: https://github.com/VENKATESHWARAN-R/JAC/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/VENKATESHWARAN-R/JAC/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/VENKATESHWARAN-R/JAC/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/VENKATESHWARAN-R/JAC/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/VENKATESHWARAN-R/JAC/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/VENKATESHWARAN-R/JAC/compare/v0.4.0...v0.5.0

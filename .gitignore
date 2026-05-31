@@ -226,3 +226,6 @@ __marimo__/
 .agents/cache/
 .agents/a2a/
 .agents/memory.md
+
+# macOS
+.DS_Store

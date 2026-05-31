@@ -168,6 +168,7 @@ Phases in dependency order:
 - **Phase G — Plan Mode (D23).** Pulled forward from v2; demoted from old Phase F to follow MCP.
 - **Phase H — A2A Phase 4.e (OIDC/GCP) + broader test coverage.** Lower priority than A-G.
 - **Phase 7 stream — Evaluation via Logfire span replay (D44).** Trajectory tests asserting span shape, not output text. Ongoing; not a numbered phase.
+- **Web surface — local-first control panel + chat + dashboard (D48). Slices 1–3 shipped.** A third surface alongside CLI and A2A: a Starlette + HTMX + SSE browser UI under `src/jac/web/` (mirrors `src/jac/cli/`), reached via `jac web serve`. It is a *renderer + management API* over the same engine the CLI drives — **not** a new runtime mode (refuse any change that makes it one). The chat surface reuses the engine via `runtime/bootstrap.py::build_session_runtime`, **extracted from the REPL so both surfaces wire the identical Gru + capabilities + driver** (don't re-duplicate that bootstrap; extend it). **Local-first, single-user by charter: binds `127.0.0.1`, no accounts, never multi-tenant.** The loopback boundary *is* the security model; a non-loopback `--host` is allowed but warns loudly because the settings panel reads and writes API keys in the clear. Session scope follows the launch directory via `paths.project_state_root()` — **project-only in v1** (running in project A shows project A's sessions); cross-project browsing is deliberately deferred. Slices: 1 = config/session control panel (done), 2 = streaming chat + HITL over SSE (done — HITL resolves the same `asyncio.Future` the CLI does, from a browser POST), 3 = activity dashboard (done — token meter + minion cards from `_pending_spawns` + files-changed, via a polled `/chat/status`). Remaining: visual/theming polish. Design: [`docs/design/web-surface.md`](docs/design/web-surface.md).
 
 What's still genuinely v2:
 
@@ -176,7 +177,7 @@ What's still genuinely v2:
 - Stuck-loop detection — low value in HITL; mandatory only for YOLO. (Watch Harness PR #186.)
 - Night Shift / cron-triggered headless runs.
 - User-tier predict-calibrate memory extraction (the `~/.jac/memory.md` *file* already exists per Phase 2a.1; what's deferred is *automatic extraction*).
-- Other browser / native SDK surfaces (post-ACP).
+- Other native SDK / editor surfaces beyond the local web UI (post-ACP).
 
 **Harness alignment policy:** several JAC capabilities overlap with `pydantic-ai-harness` PRs (sub-agents #178, skills #183, compaction #191, post-processor #185, budgets #182, etc.). Today they're PR-tracked in Harness, shipped in JAC. **We keep ours** because they're tightly coupled to JAC's HITL / `/tokens` UX and instrumentation; we revisit migration only when a Harness PR lands a clean stable API. **We don't reinvent** infrastructure with no UX (`pydantic-monty` for sandboxing; pydantic-ai's `ApprovalRequiredToolset`/`deferred_tool_calls`/`Instrumentation`/`ProcessHistory`). Full reuse-vs-build table: [`docs/progress-roadmap.md`](docs/progress-roadmap.md) "Harness alignment" section.
 

@@ -22,7 +22,7 @@ src/jac/
 ├── secrets.py               # keyring / dotenv / env-only backends
 ├── sdk.py                   # jac.sdk — documented embedding facade (R5d)
 ├── cli/
-│   ├── app.py               # Typer root: jac, init, sessions; sub-apps profiles/keys/a2a
+│   ├── app.py               # Typer root: jac, init, sessions; sub-apps profiles/keys/a2a/web
 │   ├── repl.py              # Interactive loop, build_gru wiring, slash dispatch
 │   ├── renderer.py          # Rich UI, approval/clarify panels, compaction notices, mode markers
 │   ├── statusbar.py         # prompt-toolkit bottom toolbar (inline branch debounce)
@@ -67,8 +67,17 @@ src/jac/
 │               ├── token.py     # /a2a token
 │               ├── peers.py     # /a2a peers
 │               └── peer.py      # /a2a peer add|remove
+├── web/                     # Local-first web UI surface (D48) — mirrors cli/
+│   ├── app.py               # Typer `jac web serve` + uvicorn launch + loopback guard
+│   ├── server.py            # create_app() — Starlette app; `/`→/chat redirect, chat + settings routes, Jinja2
+│   ├── panel.py             # Read-side: view-model assembly; sidebar_context() (shared session list + profile/model)
+│   ├── actions.py           # Write-side: form POST handlers → profiles_crud/secrets/Session
+│   ├── chat.py              # WebChatManager (S2/S3) — live session; bus→SSE; HITL; dashboard()/environment()/history_messages()
+│   ├── templates/           # Jinja2: base (chat-centric rail: New chat + session list + ⚙ Settings) + chat/settings/profiles/keys
+│   └── static/              # jac.css + chat.js (EventSource; queued HITL bar; markdown; session repaint; /chat/status,environment,history)
 ├── runtime/
 │   ├── gru.py               # build_gru, _default_tool_capabilities, sub_agent_capabilities
+│   ├── bootstrap.py         # build_session_runtime — shared engine wiring (CLI + web), D48
 │   ├── driver.py            # SessionDriver — surface-agnostic turn pipeline + budget guards (R5)
 │   ├── session.py           # Session persistence, plan.json, delete/prune
 │   ├── events.py            # Typed JacEvent union + EventBus
@@ -215,6 +224,7 @@ History compaction is not a tool — `make_history_capability` registers a `Proc
 | `jac profiles` / `list` / `use` / `remove` / `edit` | `cli/profiles_cmd.py` |
 | `jac keys` / `list` / `set` / `unset` | `cli/keys_cmd.py` |
 | `jac a2a serve` | `cli/a2a.py` |
+| `jac web serve` | `web/app.py` → `web/server.py:create_app` |
 
 ## On-disk artifacts (project)
 

@@ -47,9 +47,9 @@ Five levers we pull (full design: [`design/cost-efficient-orchestration.md`](des
 
 - Compete on benchmarks against Claude Code, Devin, Aider, etc.
 - Run as a hosted/cloud service. Local-first means local execution.
-- Provide a managed/SaaS offering.
+- Provide a managed/SaaS offering. **The web UI (D48) is no exception: it is single-user and loopback-bound by charter — never a multi-tenant server.**
 - Ship its own LLM. Multi-provider via Pydantic AI.
-- Support every IDE/surface up front. **CLI first.**
+- Support every IDE/surface up front. **CLI first; a local-first, single-user web UI is the second human surface.**
 - Market "cost-effective tiered model routing" as a differentiator — tiered routing is an internal capability, not a marketed angle.
 - Win on raw autonomy — Devin and OpenHands already compete there.
 
@@ -95,6 +95,7 @@ The roadmap was reframed around the cost-efficiency thesis. Old Phase 3/5/6 entr
 - **Phase F — MCP loader** (promoted from old Phase G after 2026-05-27 review).
 - **Phase G — Plan Mode** (pulled forward from v2; demoted from old Phase F to follow MCP).
 - **Phase H — A2A Phase 4.e (OIDC/GCP) + broader test coverage.**
+- **Web surface (D48) — local-first browser UI.** A control panel (profiles, keys, sessions) + later a streaming chat, alongside the CLI and A2A. Single-user, loopback-bound, never multi-tenant. Slice 1 (control panel) shipped.
 
 Already shipped (do not redo): Phase 1.7 coworker experience, Phase 2a/2a.1 memory, Phase 4 A2A (PR1–PR4 + 4.d hotfixes + file transfer + demo peer).
 
