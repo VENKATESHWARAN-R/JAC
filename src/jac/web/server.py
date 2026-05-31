@@ -1,7 +1,7 @@
 """Starlette app factory for the web surface (D48; redesigned).
 
 :func:`create_app` builds the ASGI app — the embeddable entry point, testable
-without uvicorn. The surface has two natures (see ``docs/design/web-ui-redesign``):
+without uvicorn. The surface has two natures (see ``docs/design/web-surface.md``):
 
 - **Console** — the chat-first home: SSE event stream + HITL POSTs, driven by
   :class:`jac.web.chat.WebChatManager`.

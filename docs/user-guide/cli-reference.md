@@ -53,7 +53,7 @@ Subcommands (`init`, `sessions`, `profiles`, `keys`, `a2a`, `web`) do not activa
 | `--port` / `-p` | Port (default: `8770`) |
 | `--open` / `--no-open` | Open the UI in your browser on start (default: open) |
 
-The web UI is **local-first and single-user**: the loopback bind is the access boundary, there are no accounts. It serves a streaming chat (same engine, tools, and HITL approval as the CLI — you approve gated tool calls in the browser) plus a control panel for profiles, keys, and sessions. Which sessions it shows depends on where you launch it — inside a project it shows that project's sessions; in a loose folder, the global `~/.jac` pool. The chat binds the **default profile's** model (configure it under Profiles/Keys, or `jac init`). See [`design/web-surface.md`](https://venkateshwaran-r.github.io/JAC/web-surface/) for the full design.
+The web UI is **local-first and single-user**: the loopback bind is the access boundary, there are no accounts. It serves a streaming chat (same engine, tools, and HITL approval as the CLI — you approve gated tool calls in the browser) plus a full control panel for profiles, keys, config, MCP, A2A, skills, and more. Which sessions it shows depends on where you launch it — inside a project it shows that project's sessions; in a loose folder, the global `~/.jac` pool. The chat binds the **default profile's** model (configure it under Profiles/Keys, or `jac init`). See the [Web UI guide](web-ui.md) for the full walkthrough and [`design/web-surface.md`](../design/web-surface.md) for the design.
 
 ## REPL exit
 

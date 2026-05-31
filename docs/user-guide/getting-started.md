@@ -4,7 +4,7 @@
 
 JAC (**J**ust **A**nother **C**ompanion/CLI) is a Python CLI agent built on [Pydantic AI](https://ai.pydantic.dev/). It runs on your machine with your API keys, your files, and persistent sessions per git project.
 
-**Current release:** v0.8.0. Ships an end-stage review hardening pass — sub-agent `allowed_tools` now genuinely sandboxes a worker (Agent-layer filter), bidirectional sub-agent comms redesigned to a suspend/resume `ask_supervisor` flow, and a surface-agnostic `SessionDriver` + `jac.sdk` facade unlocking non-CLI surfaces. Earlier releases: v0.7.0 (interaction modes, compaction control, the MCP loader / Phase F), v0.6.0 (workspace loose-mode, session management, memory slash commands), v0.5.0 (parallel + bidirectional sub-agents), v0.4.0 (skill loader), v0.3.0 (context-cost controls + sub-agents) — see [Implementation progress](../progress.md) for the full history.
+**Current release:** v0.9.0. Adds the **local-first web UI** (`jac web serve`) — a browser chat plus a full control panel over the *same* engine, tools, and approvals as the CLI — and the **SDK control plane** (`SessionController`) that lets every surface share one set of runtime mutations instead of each re-implementing them. See the [Web UI guide](web-ui.md). Earlier releases: v0.8.0 (end-stage review hardening — sub-agent `allowed_tools` sandboxing, suspend/resume sub-agent comms, the `SessionDriver` + `jac.sdk` facade), v0.7.0 (interaction modes, compaction control, the MCP loader / Phase F), v0.6.0 (workspace loose-mode, session management, memory slash commands), v0.5.0 (parallel + bidirectional sub-agents), v0.4.0 (skill loader), v0.3.0 (context-cost controls + sub-agents) — see [Implementation progress](../progress.md) for the full history.
 
 ## Requirements
 
@@ -102,7 +102,17 @@ jac sessions
 
 Inside the REPL: `/sessions`, `/resume [ID]`, `/clear` — see [CLI reference](cli-reference.md).
 
-## What Gru can do in v0.8.0
+### Prefer a browser?
+
+```bash
+jac web serve
+```
+
+Opens a local-first web UI — a streaming chat plus a control panel for profiles, keys, config,
+MCP, A2A, and skills — over the same engine, tools, and approvals as the CLI. Loopback-bound and
+single-user. See the [Web UI guide](web-ui.md).
+
+## What Gru can do in v0.9.0
 
 - Read and search the repo (`read_file`, `grep`, `glob`, `list_dir`)
 - Edit files and run shell commands **with your approval**
@@ -126,6 +136,7 @@ JAC instruments model and tool calls with [Logfire](https://logfire.pydantic.dev
 | Topic | Page |
 | --- | --- |
 | All commands and tools | [CLI reference](cli-reference.md) |
+| Use the browser UI | [Web UI](web-ui.md) |
 | Profiles, budgets, compaction | [Configuration](configuration.md) |
 | Tool-result summarization & cost levers | [Cost controls](cost-controls.md) |
 | Sessions and memory files | [Sessions & memory](sessions-and-memory.md) |

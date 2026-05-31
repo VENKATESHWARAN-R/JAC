@@ -25,20 +25,21 @@ JAC is **not** trying to beat Claude Code at what Claude Code already does well.
 
 Cost is the dominant force. **Cost ≈ Σ over turns of `turn_tokens × turn_price`.** The model's price-per-token is set by the provider. What JAC controls is *how many tokens flow into each turn*. Every architectural decision is judged against that equation.
 
-Five levers we pull (full design: [`design/cost-efficient-orchestration.md`](design/cost-efficient-orchestration.md)):
+Four levers we pull (full design: [`design/cost-efficient-orchestration.md`](design/cost-efficient-orchestration.md)):
 
 1. **Sub-agents** — delegate context-heavy work (large file exploration, web research, long shell pipelines) to an isolated agent. Its intermediate tokens stay in *its* context; only the result returns to the main agent.
 2. **Tier-aware model selection** — small / medium / large per profile. The main agent picks a *tier* when it spawns a sub-agent; the user approves the tier (HITL). Specific model names never appear in the LLM's context.
 3. **Tool result post-processor** — when a tool returns above a configured threshold *and* a cheap tier is available, route the raw output through the small model to summarize before it lands in the main loop. Original is saved to disk; agent re-reads on demand.
 4. **Cache-friendly prompt assembly** — order system prompt + tools + memory + history to maximize prompt-cache hits.
-5. **Deterministic hooks** — post-flight validators (typecheck, tests, lint) that run after a sub-agent finishes. All pass → return verbatim, no extra LLM turn. Any fail → route the failure back into the same sub-agent for a fix.
+
+A fifth lever — *deterministic post-flight hooks* — was designed and dropped (D37): a sub-agent's `success_criteria` plus a post-return `run_shell` call cover verification without framework machinery, and JAC runs in any environment so baked-in hooks are wrong.
 
 ## What JAC focuses on
 
 - **One visible coworker ("Gru")** that owns the conversation, memory, mode selection, and final accountability.
 - **A single `spawn_sub_agent` tool** Gru calls when a task benefits from isolation. No bespoke "agent types" or "modes" — just one tool with a task packet, called many ways.
 - **Community-format skills** (Anthropic SKILL.md spec) as *loadable playbooks* — prompts and recipes the main agent reads when relevant. Skills are advice, not a runtime mode.
-- **Deterministic post-flight hooks** attached to sub-agent spawns: typecheck, tests, lint, format. Free cost reduction by avoiding "is this done?" LLM turns.
+- **Verification without framework machinery** — a sub-agent's `success_criteria` plus a post-return `run_shell` call (typecheck, tests, lint) replace the once-planned post-flight hook runner (D37). Cheaper than an "is this done?" LLM turn, and it works in any environment.
 - **HITL-first execution** with per-tool approval; sub-agent spawns are HITL-gated too (the user sees task summary + tier and can counter-propose).
 - **Tiered memory:** session, project, and user scopes — prose first, structured later.
 - **A2A interop** as a headline non-table-stakes feature (Phase 4 — feature-complete).
@@ -49,7 +50,7 @@ Five levers we pull (full design: [`design/cost-efficient-orchestration.md`](des
 - Run as a hosted/cloud service. Local-first means local execution.
 - Provide a managed/SaaS offering. **The web UI (D48) is no exception: it is single-user and loopback-bound by charter — never a multi-tenant server.**
 - Ship its own LLM. Multi-provider via Pydantic AI.
-- Support every IDE/surface up front. **CLI first; a local-first, single-user web UI is the second human surface.**
+- Support every IDE/surface up front. **CLI first; a local-first, single-user web UI is the second human surface.** Every surface is a thin renderer over one shared engine + control plane — never a new runtime mode (see [`architecture.md`](architecture.md) §1.5).
 - Market "cost-effective tiered model routing" as a differentiator — tiered routing is an internal capability, not a marketed angle.
 - Win on raw autonomy — Devin and OpenHands already compete there.
 
@@ -69,7 +70,7 @@ Gru ── receives result (full-fidelity, not compressed), decides next action
 
 **Gru** owns: the conversation, memory, mode, accountability, the decision to work inline vs. delegate.
 
-**Sub-agents** are disposable Pydantic AI `Agent` instances. They receive a task packet, run with their own toolset and tier, optionally have deterministic hooks attached, and return a result. They do not inherit Gru's conversation. They cannot spawn further sub-agents (depth cap = 1 in v1).
+**Sub-agents** are disposable Pydantic AI `Agent` instances. They receive a task packet, run with their own toolset and tier, and return a result. They do not inherit Gru's conversation. They cannot spawn further sub-agents (depth cap = 1 in v1).
 
 **Important separations (do not conflate):**
 
@@ -92,10 +93,10 @@ The roadmap was reframed around the cost-efficiency thesis. Old Phase 3/5/6 entr
 - **Phase C — Deterministic hooks.** **Dropped** — complexity didn't earn its keep; `success_criteria` + post-return `run_shell` covers verification.
 - **Phase D — Skill loader.** Anthropic community format; skills are loadable prompts, no `mode: minion`. **Shipped v0.4.0.**
 - **Phase E — Parallel sub-agents + bidirectional comms.** `spawn_sub_agents` fan-out; D41 bidirectional channel (on by default); `minion-N` IDs; sub-agent HITL/skills/A2A parity. **Shipped v0.5.0.**
-- **Phase F — MCP loader** (promoted from old Phase G after 2026-05-27 review).
-- **Phase G — Plan Mode** (pulled forward from v2; demoted from old Phase F to follow MCP).
-- **Phase H — A2A Phase 4.e (OIDC/GCP) + broader test coverage.**
-- **Web surface (D48) — local-first browser UI.** A control panel (profiles, keys, sessions) + later a streaming chat, alongside the CLI and A2A. Single-user, loopback-bound, never multi-tenant. Slice 1 (control panel) shipped.
+- **Phase F — MCP loader** (promoted from old Phase G after 2026-05-27 review). **Shipped 2026-05-29.**
+- **Phase G — Plan Mode + Accept-Edits** (pulled forward from v2; demoted from old Phase F to follow MCP). **Shipped v0.7.0.**
+- **Phase H — A2A Phase 4.e (OIDC/GCP) + broader test coverage.** Future.
+- **Web surface (D48) — local-first browser UI.** A streaming chat + a full control panel (profiles, keys, config, MCP, A2A, skills, …), alongside the CLI and A2A. Single-user, loopback-bound, never multi-tenant. **Slices 1–3 + the R0–R5 redesign shipped (2026-05-31); the SDK control plane (D49) makes it — and every surface — a thin adapter over one engine.**
 
 Already shipped (do not redo): Phase 1.7 coworker experience, Phase 2a/2a.1 memory, Phase 4 A2A (PR1–PR4 + 4.d hotfixes + file transfer + demo peer).
 

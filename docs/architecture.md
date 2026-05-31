@@ -43,12 +43,16 @@ Phase A (foundation, shipped v0.3.0) handles levers 3 and 4 — pure plumbing, b
 
 ## 1. System overview
 
-JAC is a thin orchestration layer over Pydantic AI. The model and agent loop are Pydantic AI's. JAC's contribution is: persona (Gru), packaged capabilities, its surfaces (CLI, A2A server, and a local-first web UI — D48), tiered memory, and cost-efficient delegation (sub-agents + tool-result summarization). Every surface is a renderer over the same `SessionDriver` / `EventBus` / capability engine (exposed as `jac.sdk`); adding one is never a new runtime mode.
+JAC is a thin orchestration layer over Pydantic AI. The model and agent loop are Pydantic AI's. JAC's contribution is: persona (Gru), packaged capabilities, its surfaces (CLI, A2A server, and a local-first web UI — D48), tiered memory, and cost-efficient delegation (sub-agents + tool-result summarization). Every surface is a renderer over the same `SessionDriver` / `EventBus` / capability engine (exposed as `jac.sdk`); adding one is never a new runtime mode. How the surfaces stay thin — and how a single control plane keeps their runtime mutations from drifting — is [§1.5](#15-surfaces-the-shared-engine).
 
 ```mermaid
 flowchart TB
     User([User])
-    CLI[CLI Surface]
+    subgraph Surfaces["Surfaces — thin renderers over jac.sdk"]
+        CLI[CLI REPL]
+        Web[Web UI · D48]
+        A2Asrv[A2A server · headless]
+    end
     Bus[Hooks / Event Bus]
     Gru[Gru Agent]
     SAC[SubAgentCapability - Phase B]
@@ -63,7 +67,10 @@ flowchart TB
     Skills[SkillsCapability - Phase D]
 
     User <--> CLI
+    User <--> Web
     CLI <--> Bus
+    Web <--> Bus
+    A2Asrv <--> Bus
     Bus <--> Gru
     Gru -.calls.-> Tools
     Tools -.large outputs.-> Sum
@@ -81,7 +88,72 @@ flowchart TB
     Gru -.uses.-> A2A
 ```
 
-**Core idea:** every box that isn't `Gru`, `Sub-agent`, or `CLI` is a **Pydantic AI Capability**. Capabilities are the atom of the system.
+**Core idea:** every box that isn't `Gru`, `Sub-agent`, or a **surface** is a **Pydantic AI Capability**. Capabilities are the atom of the system.
+
+## 1.5 Surfaces & the shared engine
+
+JAC has three human/agent-facing surfaces today — the **CLI REPL**, the **local web UI** (D48), and the **headless A2A server** — with a fourth (**ACP** editor, D45) designed but gated for v2. They look different but they are all the *same program*: a renderer wrapped around one engine. The rule that keeps it that way:
+
+> **A surface is a thin adapter. It never owns agent behaviour. Adding a surface is never a new runtime mode** — if a change would put agent logic into `cli/`, `web/`, or `a2a/`, it belongs in the engine instead.
+
+This is the direct application of the CLAUDE.md anti-pattern *"don't add another runtime mode when the answer is one more surface over the existing engine."* It is enforced by three layers (D48 + D49):
+
+```mermaid
+flowchart TB
+    subgraph L3["Layer 3 · Surface adapters — render + collect input, no agent logic"]
+        direction LR
+        CLI["CLI REPL<br/>cli/ · prints to terminal"]
+        Web["Web UI<br/>web/ · Starlette · HTMX · SSE"]
+        A2A["A2A server<br/>a2a/ · JSON-RPC guest"]
+        ACP["ACP editor<br/>v2 · D45"]
+    end
+
+    subgraph L2["Layer 2 · Control plane — runtime mutations live once"]
+        SC["SessionController · runtime/control.py<br/>switch_model · switch_profile · refresh_toolsets<br/>set_mcp_enabled · reload_mcp · reload_skills<br/>→ returns ControlResult (does not render)"]
+    end
+
+    subgraph L1["Layer 1 · Engine — the session, built once"]
+        Boot["build_session_runtime → SessionRuntime<br/>runtime/bootstrap.py"]
+        Driver["SessionDriver.run_turn<br/>turn pipeline + budget guards"]
+        BusE["EventBus<br/>lifecycle events"]
+        Caps["Capabilities<br/>tools · memory · sub-agents · MCP · A2A · skills"]
+        Gru2["Gru Agent"]
+        Boot --> Gru2
+        Boot --> Driver
+        Boot --> BusE
+        Boot --> Caps
+    end
+
+    CLI --> SC
+    Web --> SC
+    A2A --> SC
+    ACP -.v2.-> SC
+    SC -->|mutates in place| Boot
+
+    CLI -->|run_turn / consume bus| Driver
+    Web -->|run_turn / consume bus| Driver
+    A2A -->|run_task| Driver
+    Driver <--> BusE
+```
+
+**Layer 1 — Engine.** `build_session_runtime()` ([`runtime/bootstrap.py`](../src/jac/runtime/bootstrap.py)) wires Gru + every capability + the `SessionDriver` + the `EventBus` into one `SessionRuntime`. `SessionDriver.run_turn()` is the surface-agnostic turn pipeline (budget pre-flight, history recovery, bus events) — it returns data and emits events; it never renders. This half is shared verbatim by the CLI and the web; A2A drives the same capabilities through its guest worker.
+
+**Layer 2 — Control plane.** Every *runtime mutation* a surface can trigger — switch model or profile (with the env snapshot/rollback dance), refresh toolsets after a mode change, enable/disable/reload an MCP server, reload skills — is a verb on `SessionController` ([`runtime/control.py`](../src/jac/runtime/control.py)). It wraps a live `SessionRuntime`, mutates it **in place**, and returns a plain `ControlResult(ok, message, data)`. It does **not** render and does **not** emit on the bus, so each surface styles the outcome its own way. This is D49: before it, the rebuild logic was copy-pasted into the REPL and the web (and had already drifted — the web's copy carried a bug where toggling MCP wrote the file but never rebuilt Gru).
+
+**Layer 3 — Surface adapters.** Each surface only *renders the engine and collects input*: the CLI prints a `ControlResult` and paints the `EventBus` to the terminal; the web emits an SSE frame and swaps an HTMX fragment; the A2A server returns a JSON-RPC result. HITL is the clearest example of the shared seam — the approval `Future` the engine awaits is resolved by a terminal keypress in the CLI and by a browser `POST` in the web, with **no change to the engine**.
+
+### Boundaries each surface keeps
+
+These are structural, checked by import discipline (see [`developer/module-strategy.md`](developer/module-strategy.md)) — not conventions:
+
+| Rule | Why |
+| --- | --- |
+| `runtime/` and `capabilities/` never import `cli/`, `web/`, or `a2a/` | The engine cannot depend on a renderer; a surface is always optional. |
+| Mutations go through `SessionController`, never re-implemented per surface | One source of truth; the D49 fix proved per-surface copies drift and hide bugs. |
+| Surfaces render `ControlResult` / `EventBus` themselves; the engine emits neither prose nor HTML | The same event drives a terminal panel, an SSE frame, and (later) an ACP notification. |
+| A new surface adds an adapter under its own package, never a runtime concept | Keeps "one more surface" cheap and "one more runtime mode" impossible. |
+
+The web surface's own charter (single-user, local-first, loopback-bound) is **D48**; the control-plane split is **D49**; the per-surface operator details live in the [Web UI guide](user-guide/web-ui.md), [A2A operator guide](user-guide/a2a-operator.md), and [CLI reference](user-guide/cli-reference.md).
 
 ## 2. How JAC maps to Pydantic AI
 
@@ -217,7 +289,7 @@ Locked decisions — do not deviate without updating this table and `docs/progre
 | D45 | **Editor surface = ACP (Agent Client Protocol), v2, condition-gated (2026-05-27).** [ACP](https://agentclientprotocol.com) is the LSP analogue for coding agents — one spec, any compliant editor. JAC implements the **server side** as `ACPCapability` (same pattern as `A2ACapability`); editor extensions (VS Code, Zed, JetBrains) are generic ACP clients, not JAC-specific. Wire: JSON-RPC stdio (local, stable) + HTTP/WebSocket (remote, WIP). Python SDK exists. Maintained by Sergey Ignatov (JetBrains) under RFD governance. **Why ACP and not alternatives:** bespoke extensions → one per editor, breaks scaling; MCP → wrong shape (tool-centric, no sessions/turns/HITL); A2A → agent-to-agent, not editor-to-agent. **Protocol triangle:** MCP (tools → JAC, Phase F), A2A (JAC ↔ agents, Phase 4), ACP (editor → JAC, v2) — three non-overlapping protocols covering the full integration surface. **Concept mappings (key ones):** ACP sessions ↔ D3 session filesystem; ACP tool-call events ↔ D2 HITL approval queue; ACP slash commands ↔ JAC slash-command handlers; ACP diffs ↔ file-edit output; ACP terminals ↔ `ProcessCapability`. **Ship conditions (re-assessed 2026-05-31):** (1) ACP remote HTTP/WebSocket transport stabilises upstream — *still WIP, the remaining gate*; (2) a major editor (VS Code, Zed, or JetBrains) ships an ACP client — **now met** (Zed native, JetBrains shipping). Stays **design-only** until (1) clears, though stdio (what editors actually spawn) is already stable; the D49 control plane makes ACP a thin Layer-3 adapter when unblocked. Full drop-in design + concept-mapping table: [`design/acp-surface.md`](design/acp-surface.md); rationale/protocol-triangle in [`progress-roadmap.md`](progress-roadmap.md) "ACP — Editor surface". |
 | D46 | **MCP server config = standard `mcpServers` JSON (Phase F, 2026-05-29).** Servers are declared in `~/.jac/mcp.json` + `<repo>/.agents/mcp.json` using the de-facto ecosystem shape (Claude Desktop / Cursor / MCP spec), so an existing config pastes in verbatim and pydantic-ai's `load_mcp_toolsets` parses it directly (env expansion via `${VAR}` / `${VAR:-default}`). **Deliberate exception to the "YAML for human-edited config" rule:** MCP config is an *interop artifact* — like the community `AGENTS.md` — not JAC app config, and "don't invent a bespoke format when the community one exists" is already a stated anti-pattern. JAC-specific per-server knobs (`enabled`, `defer`, `requires_approval`) live in an **optional sibling `jac` block** so the file stays a valid standard catalog (`load_mcp_toolsets` ignores unknown top-level keys). Project shadows user **per server name**. Each enabled server's toolset is composed `MCPToolset → .prefixed(name) → .defer_loading() → summarizing_wrap(all) → .approval_required()`. **Tool search is bundled, not a later phase:** `.defer_loading()` + pydantic-ai's auto-injected `ToolSearch` keep MCP definitions out of the prompt (the direct answer to context bloat — native server-side search on Anthropic/OpenAI, local fallback elsewhere, append-only so prompt caching survives). The `reason:` discipline (§6a) is bypassed naturally (MCP toolsets never pass through `jac_function_toolset`) per D28. Programmatic tool calling / Monty code mode stays v2 (D43) — it conflicts with per-tool HITL, and sub-agents already capture most of its benefit. **Stdio servers are self-built (`_build_server_toolset`) rather than via `load_mcp_toolsets`**, so their stderr is redirected to a per-server log file (`<state>/cache/mcp/logs/<name>.log`): a server inheriting the TTY (notably Node-based ones) can flip it into raw mode and freeze the approval prompt. JAC also forces canonical mode around every prompt (`jac.cli.terminal.cooked_mode`) as defence-in-depth (relates to D47). |
 | D47 | **HITL approval prompt defaults to approve (2026-05-29).** Bare Enter on the `y`/`n`/`r` prompt means **yes**; explicit `n`/`r` reject; Ctrl-C / EOF still deny (an interrupt must never approve by accident). Rationale: most proposed tool calls are reasonable, so optimising the common path to a single keystroke beats forcing the user to type `y` repeatedly. Applies to the generic and `spawn_sub_agents` panels (shared `Prompt.ask`). New HITL surfaces (e.g. MCP-tool approvals) follow the same default-yes convention. |
-| D48 | **Web UI is a third surface — local-first & single-user (2026-05-31).** A browser control panel + streaming chat under `src/jac/web/`, served by `jac web serve`. **Stack:** Starlette + Jinja2 + HTMX, SSE (`sse-starlette`) for the agent event stream + browser POSTs for HITL replies — **zero new dependencies** (all transitive via fasta2a / pydantic-ai). It is a *renderer + management API* over the same `SessionDriver` / `EventBus` / capability stack the CLI uses (`jac.sdk`), **not** a new runtime mode. **Charter: single-user, local-first — binds `127.0.0.1`, no accounts, never multi-tenant.** The loopback boundary *is* the security model; a non-loopback `--host` is allowed but warns loudly (the settings panel reads/writes API keys in the clear). **Session scope = the launch directory's `paths.project_state_root()`** — project-only in v1 (server in project A shows project A's sessions; loose dir shows the global `~/.jac` pool); cross-project browsing deferred (a session references its project's files; resuming it elsewhere is ambiguous). **Slices:** 1 = control panel (profiles / providers-keys / secrets / sessions, shipped), 2 = streaming chat + HITL over SSE (shipped — drives the shared `build_session_runtime` engine extracted from the REPL into `runtime/bootstrap.py`; HITL resolves the same `asyncio.Future` the CLI does, from a browser POST), 3 = activity dashboard (shipped — polled `/chat/status` snapshot: token/cost meter, minion cards from `_pending_spawns`, files-changed list). **Redesign (R0–R5, 2026-05-31):** rebuilt the surface as a chat-first **light full-bleed Console** plus a full **Control Panel** — profiles, keys, scope/precedence-aware **config**, MCP, A2A, skills, context/prompts, providers, memory, dashboard/doctor — opened as htmx drawers *over* the live chat (chat never reloads), with a top-bar **model/profile switcher** (mid-session Gru rebuild + env snapshot/rollback guard, mirroring the REPL) and a HITL-disconnect failsafe (auto-deny after a grace period so a closed tab can't hang a turn). New module `workspace/config_io.py` (scope-aware config-group writes + per-field precedence). Same charter, same engine seam — still a renderer, not a runtime mode. Remaining: visual polish + a narrow-width responsive breakpoint. **Frameworks rejected:** FastAPI (extra dep for a typed REST surface a local panel doesn't need), Chainlit / NiceGUI (own the page, fight the settings panel + theming), Reflex (heavy full-stack — revisit only if Slice 3's dashboard graduates). Full design: [`design/web-surface.md`](design/web-surface.md); redesign detail: [`design/web-ui-redesign.md`](design/web-ui-redesign.md). |
+| D48 | **Web UI is a third surface — local-first & single-user (2026-05-31).** A browser control panel + streaming chat under `src/jac/web/`, served by `jac web serve`. **Stack:** Starlette + Jinja2 + HTMX, SSE (`sse-starlette`) for the agent event stream + browser POSTs for HITL replies — **zero new dependencies** (all transitive via fasta2a / pydantic-ai). It is a *renderer + management API* over the same `SessionDriver` / `EventBus` / capability stack the CLI uses (`jac.sdk`), **not** a new runtime mode. **Charter: single-user, local-first — binds `127.0.0.1`, no accounts, never multi-tenant.** The loopback boundary *is* the security model; a non-loopback `--host` is allowed but warns loudly (the settings panel reads/writes API keys in the clear). **Session scope = the launch directory's `paths.project_state_root()`** — project-only in v1 (server in project A shows project A's sessions; loose dir shows the global `~/.jac` pool); cross-project browsing deferred (a session references its project's files; resuming it elsewhere is ambiguous). **Slices:** 1 = control panel (profiles / providers-keys / secrets / sessions, shipped), 2 = streaming chat + HITL over SSE (shipped — drives the shared `build_session_runtime` engine extracted from the REPL into `runtime/bootstrap.py`; HITL resolves the same `asyncio.Future` the CLI does, from a browser POST), 3 = activity dashboard (shipped — polled `/chat/status` snapshot: token/cost meter, minion cards from `_pending_spawns`, files-changed list). **Redesign (R0–R5, 2026-05-31):** rebuilt the surface as a chat-first **light full-bleed Console** plus a full **Control Panel** — profiles, keys, scope/precedence-aware **config**, MCP, A2A, skills, context/prompts, providers, memory, dashboard/doctor — opened as htmx drawers *over* the live chat (chat never reloads), with a top-bar **model/profile switcher** (mid-session Gru rebuild + env snapshot/rollback guard, mirroring the REPL) and a HITL-disconnect failsafe (auto-deny after a grace period so a closed tab can't hang a turn). New module `workspace/config_io.py` (scope-aware config-group writes + per-field precedence). Same charter, same engine seam — still a renderer, not a runtime mode. Remaining: visual polish + a narrow-width responsive breakpoint. **Frameworks rejected:** FastAPI (extra dep for a typed REST surface a local panel doesn't need), Chainlit / NiceGUI (own the page, fight the settings panel + theming), Reflex (heavy full-stack — revisit only if Slice 3's dashboard graduates). Full design — charter, slices, and the R0–R5 redesign — is consolidated in [`design/web-surface.md`](design/web-surface.md). The surface/engine layering is [§1.5](#15-surfaces-the-shared-engine). |
 | D49 | **SDK control plane — runtime mutations live once, surfaces are thin adapters (2026-05-31).** Three layers: **engine** (`build_session_runtime` → `SessionRuntime` + `SessionDriver` + `EventBus` + capabilities) → **control plane** (`SessionController`, `runtime/control.py`) → **surface adapters** (CLI slash handlers, web endpoints, A2A, future ACP). Every *runtime mutation* — switch model/profile (with the env snapshot/rollback dance), `refresh_toolsets` (mode change), `set_mcp_enabled`, `reload_mcp`, `reload_skills` — is a verb on `SessionController`, which wraps a live `SessionRuntime` and mutates it **in place** (`gru`, `driver.gru`, `model_id`, `active_profile`, `profile_name`, A2A metadata). It returns a plain `ControlResult(ok, message, data)`; it does **not** render and does **not** emit on the bus (slash commands run outside the renderer's turn loop), so each surface styles the result itself — the CLI prints (`cli/slash/render.py`), the web emits an SSE frame. **Why:** the rebuild dance was duplicated and drifting — the CLI REPL had `_rebuild_gru` + a `RefreshToolsets` rebuild inline; the web had a hand-copied `_rebuild` (it had learned to pass `model_override` + reset the settings cache; the CLI hadn't) plus a bug where the MCP toggle wrote a file but never rebuilt Gru (no effect until restart). The control plane removes both copies and fixes the bug; `SessionRuntime` gains a `profile_name` field as the single source of truth. The CLI REPL re-syncs its display locals from the runtime after every slash dispatch; the web re-syncs its shadow fields and reloads the live MCP/skill catalog after a control-panel write (`reload_*_if_live`). This is the prerequisite that makes ACP (D45) a thin adapter. **Also:** the inbound A2A server starts **only** via `jac a2a serve` — `/a2a serve\|stop\|status\|token` removed from the REPL (mirroring `jac web serve`); `/a2a peers` + `/a2a peer add\|remove` (outbound peer config) stay. The `RebuildGru`/`RefreshToolsets`/`StartA2AServer`/`StopA2AServer` slash-result types are gone. |
 
 ### Still open

@@ -1,8 +1,10 @@
 # Codebase map
 
-> **Audience:** contributors navigating `src/jac/` as built in **v0.8.0**.
+> **Audience:** contributors navigating `src/jac/` as built in **v0.9.0**.
 
 Package root: `src/jac/`. Console entry: `jac.cli.app:main` (`pyproject.toml`).
+
+The three surfaces — `cli/`, `web/`, and `a2a/` — are thin adapters over one shared engine (`runtime/bootstrap.py`) and a single control plane (`runtime/control.py`); none of them owns agent logic. The layering and its boundary rules are [architecture §1.5](../architecture.md#15-surfaces-the-shared-engine).
 
 For the rules behind this layout — what goes where, slash-vs-capability, when to split a file — read [`module-strategy.md`](module-strategy.md). This page is the *as-built* tree; that page is the *why*.
 
@@ -12,7 +14,7 @@ For the rules behind this layout — what goes where, slash-vs-capability, when 
 
 ```text
 src/jac/
-├── __init__.py              # __version__ = "0.8.0"
+├── __init__.py              # __version__ = "0.9.0"
 ├── __main__.py              # python -m jac
 ├── config.py                # Settings, CompactionSettings, BudgetSettings, CostSettings
 ├── errors.py                # JacConfigError
@@ -39,7 +41,7 @@ src/jac/
 │   └── slash/
 │       ├── registry.py      # SLASH_COMMANDS, register, parse, dispatch
 │       ├── context.py       # SlashContext
-│       ├── result.py        # Handled, RebuildGru, SwitchSession, StartA2AServer, CompactNow, …
+│       ├── result.py        # Handled, Exit, SwitchSession, InjectUserText, CompactNow (D49 dropped the rebuild/A2A-server result types — mutations go via ctx.controller)
 │       └── handlers/        # ONE FILE PER COMMAND (see module-strategy.md)
 │           ├── meta.py      # /help + /exit
 │           ├── sessions.py  # /sessions
@@ -246,7 +248,7 @@ User workspace: `~/.jac/config.yaml`, `memory.md`, `AGENTS.md`, `mcp.json`, `his
 
 ## Tests (orientation)
 
-Run `uv run pytest --collect-only -q` for the live count (**697** at v0.8.0). `just check` runs format + lint + `ty check src` + `just drift` + pytest.
+Run `uv run pytest --collect-only -q` for the live count (**768** at v0.9.0). `just check` runs format + lint + `ty check src` + `just drift` + pytest.
 
 | Area | Files |
 | --- | --- |
@@ -256,7 +258,7 @@ Run `uv run pytest --collect-only -q` for the live count (**697** at v0.8.0). `j
 | Usage / budgets | `test_usage.py`, `test_budget_slash.py` |
 | Plan persistence | `test_plan_persistence.py` |
 | HITL feedback / turn recovery | `test_hitl_feedback.py`, `test_turn_recovery.py` |
-| Web backends | `test_web_backends.py` |
+| Web surface (D48 + redesign) | `test_web_backends.py`, `test_web_chat.py`, `test_web_ui.py`, `test_web_config.py`, `test_web_panels.py`, `test_web_switch.py` |
 | Context capability | `test_context_capability.py` |
 | Profiles / secrets / editor | `test_profiles.py`, `test_secrets.py`, `test_editor.py` |
 | Provider registry | `test_provider_registry.py` |

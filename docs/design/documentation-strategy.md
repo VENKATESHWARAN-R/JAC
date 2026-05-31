@@ -25,6 +25,7 @@ JAC's docs site is built with [Zensical](https://zensical.org/) (`just docs-serv
 | Released behavior (versions) | [`changelog.md`](../changelog.md) | Optional one-liner | User-facing releases |
 | Install & first run | [`user-guide/getting-started.md`](../user-guide/getting-started.md) | — | README duplicates quickstart; link to docs |
 | CLI commands & slash | [`user-guide/cli-reference.md`](../user-guide/cli-reference.md) | — | Must match `jac.cli` and `jac.cli.slash` |
+| Web UI operation | [`user-guide/web-ui.md`](../user-guide/web-ui.md) | — | Task-oriented `jac web serve`; design charter in [`design/web-surface.md`](web-surface.md) |
 | Config (profiles, budgets, compaction) | [`user-guide/configuration.md`](../user-guide/configuration.md) | — | Schema detail in code (`jac.config`, `jac.profiles`) |
 | Sessions & memory | [`user-guide/sessions-and-memory.md`](../user-guide/sessions-and-memory.md) | — | Paths from `jac.workspace.paths` |
 | A2A operations | [`user-guide/a2a-operator.md`](../user-guide/a2a-operator.md) | — | Partial Phase 4; mark in-flight features |
@@ -53,9 +54,9 @@ When code and docs disagree, **code wins until the doc is fixed**. Slash-command
 Defined in `zensical.toml` at the repo root:
 
 - **Overview** — `index.md` (routing table only)
-- **User Guide** — getting started, CLI, configuration, sessions & memory, examples, A2A operator
-- **Developer** — contributing, codebase map, capabilities
-- **Design** — idea, architecture, progress dashboard + archives, changelog, documentation strategy, review remediation
+- **User Guide** — getting started, CLI, web UI, configuration, cost controls, skills, MCP servers, sessions & memory, examples, A2A operator
+- **Developer** — contributing, module strategy, codebase map, capabilities
+- **Design** — idea, architecture, cost-efficient orchestration, web surface, ACP surface, progress dashboard + archives, changelog, documentation strategy, review remediation
 
 The old `docs/usage/` placeholder stubs have been removed. All user-facing content is under `docs/user-guide/`.
 
