@@ -3,10 +3,10 @@
 - ``/profile`` (no arg) — render every configured profile with the active
   one marked. Re-uses :func:`jac.cli.profile_view.render_profile_listing`
   so output matches ``jac profiles list``.
-- ``/profile NAME`` — return :class:`~jac.cli.slash.result.RebuildGru` so
-  the REPL can attempt the switch under its snapshot/rollback discipline.
-  On unknown profile name the handler reports the error in-band and
-  returns :class:`Handled` — no rebuild requested.
+- ``/profile NAME`` — drive the control plane's profile switch (which owns the
+  env-snapshot/rollback so a missing credential leaves Gru on the previous
+  profile), then render the outcome. On unknown profile name the handler
+  reports the error in-band and returns :class:`Handled`.
 """
 
 from __future__ import annotations
@@ -14,7 +14,8 @@ from __future__ import annotations
 from jac.cli.profile_view import render_profile_listing
 from jac.cli.slash.context import SlashContext
 from jac.cli.slash.registry import register
-from jac.cli.slash.result import Handled, RebuildGru, SlashResult
+from jac.cli.slash.render import render_switch
+from jac.cli.slash.result import Handled, SlashResult
 from jac.errors import JacConfigError
 from jac.profiles_crud import get_default_profile_name, get_profile, list_profiles
 
@@ -50,14 +51,16 @@ def _switch(ctx: SlashContext, name: str) -> SlashResult:
     if name == ctx.profile_name:
         ctx.console.print(f"[dim]already on profile {name!r}[/dim]")
         return Handled()
+    # Resolve up front so an unknown name reports cleanly without touching env.
     try:
-        new_profile = get_profile(name)
+        get_profile(name)
     except JacConfigError as exc:
         ctx.console.print(f"[red]error:[/red] {exc}")
         return Handled()
-    # Hand off to the REPL — it owns the env-snapshot/rollback so a missing
-    # credential surfaces as a warning and leaves Gru on the previous profile.
-    return RebuildGru(
-        new_model_id=new_profile.default_model(),
-        new_profile_name=name,
-    )
+    if ctx.controller is None:  # pragma: no cover - always wired in the REPL
+        ctx.console.print("[yellow]control plane is not wired into this session[/yellow]")
+        return Handled()
+    # The controller owns the env-snapshot/rollback so a missing credential
+    # surfaces as a warning and leaves Gru on the previous profile.
+    render_switch(ctx, ctx.controller.switch_profile(name))
+    return Handled()

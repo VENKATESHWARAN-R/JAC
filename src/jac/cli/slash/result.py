@@ -2,8 +2,14 @@
 
 The REPL inspects the returned :class:`SlashResult` after every dispatch and
 acts on it: continue to the next prompt, exit, swap to a different session,
-or (PR3) rebuild Gru against a new model/profile. Side effects live in the
-REPL, not the handlers — handlers are otherwise pure-ish.
+inject synthesized text as a turn, or force a compaction.
+
+Runtime *mutations* (switch model/profile, toggle/reload MCP, reload skills,
+switch mode) are **not** modeled as result types — handlers call the surface-
+agnostic control plane (``ctx.controller``) directly, which mutates the live
+runtime in place; the REPL re-syncs its display from the runtime after every
+dispatch. Side effects that the REPL must drive in its own event loop or that
+touch loop-local state (session, message history) stay as result types here.
 """
 
 from __future__ import annotations
@@ -33,70 +39,6 @@ class SwitchSession:
     """
 
     session: Session
-
-
-@dataclass(frozen=True)
-class RebuildGru:
-    """REPL should rebuild the active Gru against a new model / profile.
-
-    Returned by ``/model`` and ``/profile``. The REPL is responsible for the
-    snapshot-try-rollback dance so a failed env apply (missing credentials,
-    malformed profile) doesn't leave the process in a half-switched state —
-    on failure Gru stays on the previous model and a warning is rendered.
-
-    Attributes:
-        new_model_id: target model identifier (e.g. ``anthropic:claude-opus-4-7``).
-        new_profile_name: profile this swap is happening under. ``None`` for
-            an ad-hoc ``/model PROVIDER:ID`` override that bypasses the
-            configured profile entirely.
-    """
-
-    new_model_id: str
-    new_profile_name: str | None
-
-
-@dataclass(frozen=True)
-class RefreshToolsets:
-    """REPL should rebuild Gru in place against the *current* model/profile.
-
-    Returned by ``/mcp reload|enable|disable`` (Phase F). Unlike
-    :class:`RebuildGru` there's no model or profile change — the active
-    model stays bound; we only need the agent reconstructed so a capability
-    whose toolset changed (the reused :class:`MCPCapability`, whose
-    ``get_toolset`` reads its live catalog) is re-consulted. No env dance,
-    no "switched model" message.
-
-    Attributes:
-        note: short status line the REPL prints after the rebuild
-            (e.g. ``"reloaded MCP servers"``).
-    """
-
-    note: str = ""
-
-
-@dataclass(frozen=True)
-class StartA2AServer:
-    """REPL should start the A2A guest server (D24, Phase 4.a).
-
-    Returned by ``/a2a serve``. The slash handler validates args and
-    parses flags; the REPL drives the async ``A2ACapability.start_server``
-    call in its own event loop so the uvicorn task's lifetime matches
-    the REPL's. Failures (port in use, bind error, missing model) are
-    rendered by the REPL as a friendly message; the server stays down.
-    """
-
-    host: str
-    port: int
-    unsafe: bool
-
-
-@dataclass(frozen=True)
-class StopA2AServer:
-    """REPL should stop the A2A guest server (D24, Phase 4.a).
-
-    Returned by ``/a2a stop``. The REPL awaits ``A2ACapability.stop_server``
-    in its own event loop and renders the outcome.
-    """
 
 
 @dataclass(frozen=True)
@@ -133,14 +75,4 @@ class CompactNow:
     """
 
 
-SlashResult = (
-    Handled
-    | Exit
-    | SwitchSession
-    | RebuildGru
-    | RefreshToolsets
-    | StartA2AServer
-    | StopA2AServer
-    | InjectUserText
-    | CompactNow
-)
+SlashResult = Handled | Exit | SwitchSession | InjectUserText | CompactNow

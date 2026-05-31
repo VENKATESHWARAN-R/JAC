@@ -6,7 +6,22 @@ All notable changes to JAC are documented here. Format follows
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- **SDK control plane (`SessionController`, D49).** A surface-agnostic Layer-2 class (`runtime/control.py`) owning every runtime mutation — switch model/profile, refresh toolsets, enable/disable/reload MCP, reload skills. CLI and web now drive the identical verbs instead of each re-implementing the rebuild dance.
+- **Web parity with the CLI:** the control panel reloads the live MCP/skill catalog into the running chat after an edit (no restart needed), and each skill gets a **"Use in chat"** action (mirrors the CLI `/skill use`).
+
+### Changed
+
+- **The inbound A2A server is started only via `jac a2a serve`** (like `jac web serve`). The `/a2a serve|stop|status|token` REPL slash commands were removed; `/a2a peers` and `/a2a peer add|remove` (outbound peer config) remain.
+
+### Fixed
+
+- **Web MCP toggle now takes effect immediately.** Previously, enabling/disabling an MCP server in the web UI wrote the config file but never rebuilt Gru, so the change did nothing until restart.
+
+### Removed
+
+- Internal slash-result types `RebuildGru` / `RefreshToolsets` / `StartA2AServer` / `StopA2AServer` and the web's forked `_rebuild` — superseded by the control plane.
 
 ## [0.8.0] - 2026-05-30
 

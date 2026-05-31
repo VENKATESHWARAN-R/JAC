@@ -87,7 +87,7 @@ Slash lines are handled locally — they are **not** sent to the model.
 | `/skill` | `/skill list\|use NAME\|reload` | Manage loaded skills — list active/shadowed, inject a skill body, or re-scan skill directories |
 | `/mcp` | `/mcp list\|reload\|enable NAME\|disable NAME` | Manage external MCP tool servers — list status/transport/source, re-scan catalogs, toggle a server (persists + rebuilds Gru). See [MCP servers](mcp.md) |
 | `/spawns` | `/spawns` | List currently-active bidirectional sub-agent channels (only populated when `cost.sub_agent_bidirectional` is on) |
-| `/a2a` | see [A2A operator](a2a-operator.md) | Server lifecycle, token, and peer management — `serve`, `stop`, `status`, `token`, `peers`, `peer add\|remove` |
+| `/a2a` | see [A2A operator](a2a-operator.md) | **Outbound peer management only** — `peers`, `peer add\|remove`. The inbound server lifecycle (`serve`/`stop`/`status`/`token`) was removed from the REPL; start the server with `jac a2a serve` (like `jac web serve`). |
 
 Tab completion: type `/` and start a command name (first word only).
 

@@ -18,7 +18,8 @@ from rich.prompt import Prompt
 
 from jac.cli.slash.context import SlashContext
 from jac.cli.slash.registry import register
-from jac.cli.slash.result import Handled, RebuildGru, SlashResult
+from jac.cli.slash.render import render_switch
+from jac.cli.slash.result import Handled, SlashResult
 
 
 @register(
@@ -44,7 +45,21 @@ def _switch_to(ctx: SlashContext, model_id: str) -> SlashResult:
             f"[dim]note: {model_id} isn't in profile "
             f"{ctx.profile_name!r}'s tiers — ad-hoc switch only.[/dim]"
         )
-    return RebuildGru(new_model_id=model_id, new_profile_name=ctx.profile_name)
+    return _apply_switch(ctx, model_id)
+
+
+def _apply_switch(ctx: SlashContext, model_id: str) -> SlashResult:
+    """Drive the control plane's model switch and render the outcome.
+
+    The controller owns the env snapshot/rollback + Gru rebuild and mutates
+    the runtime in place; the REPL re-syncs its display from the runtime after
+    dispatch. Same path the web surface drives.
+    """
+    if ctx.controller is None:  # pragma: no cover - always wired in the REPL
+        ctx.console.print("[yellow]control plane is not wired into this session[/yellow]")
+        return Handled()
+    render_switch(ctx, ctx.controller.switch_model(model_id))
+    return Handled()
 
 
 def _interactive_picker(ctx: SlashContext) -> SlashResult:
@@ -91,4 +106,4 @@ def _interactive_picker(ctx: SlashContext) -> SlashResult:
     if picked_id == ctx.model_id:
         ctx.console.print(f"[dim]already on {picked_id}[/dim]")
         return Handled()
-    return RebuildGru(new_model_id=picked_id, new_profile_name=ctx.profile_name)
+    return _apply_switch(ctx, picked_id)

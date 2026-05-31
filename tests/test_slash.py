@@ -12,7 +12,6 @@ from rich.console import Console
 from jac.cli.slash import (
     Exit,
     Handled,
-    RebuildGru,
     SlashContext,
     SwitchSession,
     UnknownSlashCommand,
@@ -22,10 +21,53 @@ from jac.cli.slash import (
 )
 from jac.cli.slash.registry import SLASH_COMMANDS, SlashCommand, register
 from jac.errors import JacConfigError
+from jac.runtime.control import ControlResult
 from jac.runtime.session import Session
 from jac.workspace import paths
 
 # ---------- fixtures ----------
+
+
+class _FakeController:
+    """Records control-plane verb calls and returns a success ControlResult.
+
+    The mutating handlers (``/model``, ``/profile``, ``/mcp``, ``/mode``) are
+    thin adapters that call ``ctx.controller`` and render the result; here we
+    assert they call the right verb. The control plane's own behavior (rebuild,
+    rollback, persistence) is tested directly in ``test_control.py``.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[tuple] = []
+
+    def switch_model(self, model_id: str) -> ControlResult:
+        self.calls.append(("switch_model", model_id))
+        return ControlResult(
+            True, f"switched to {model_id}", {"model": model_id, "profile": "claude"}
+        )
+
+    def switch_profile(self, name: str) -> ControlResult:
+        self.calls.append(("switch_profile", name))
+        return ControlResult(
+            True, f"switched to {name}-model", {"model": f"{name}-model", "profile": name}
+        )
+
+    def set_mcp_enabled(self, name: str, enabled: bool) -> ControlResult:
+        self.calls.append(("set_mcp_enabled", name, enabled))
+        verb = "enabled" if enabled else "disabled"
+        return ControlResult(True, f"{verb} MCP server {name}")
+
+    def reload_mcp(self) -> ControlResult:
+        self.calls.append(("reload_mcp",))
+        return ControlResult(True, "reloaded MCP catalog (0 servers enabled)")
+
+    def reload_skills(self) -> ControlResult:
+        self.calls.append(("reload_skills",))
+        return ControlResult(True, "reloaded skills (0 available)")
+
+    def refresh_toolsets(self, *, note: str = "") -> ControlResult:
+        self.calls.append(("refresh_toolsets", note))
+        return ControlResult(True, note or "toolsets refreshed")
 
 
 @pytest.fixture
@@ -48,6 +90,7 @@ def ctx() -> SlashContext:
         profile_name="claude",
         profile=profile,
         model_id="anthropic:claude-sonnet-4-5",
+        controller=_FakeController(),  # type: ignore[arg-type]
     )
 
 
@@ -352,11 +395,11 @@ def test_resume_handler_catches_jacconfigerror(
 # ---------- /model ----------
 
 
-def test_model_explicit_id_returns_rebuild(ctx: SlashContext) -> None:
+def test_model_explicit_id_drives_switch(ctx: SlashContext) -> None:
     result = dispatch("/model anthropic:claude-opus-4-7", ctx)
-    assert isinstance(result, RebuildGru)
-    assert result.new_model_id == "anthropic:claude-opus-4-7"
-    assert result.new_profile_name == "claude"
+    assert isinstance(result, Handled)
+    assert ("switch_model", "anthropic:claude-opus-4-7") in ctx.controller.calls  # type: ignore[union-attr]
+    assert "switched to" in ctx.console.export_text()
 
 
 def test_model_explicit_id_already_active_is_noop(ctx: SlashContext) -> None:
@@ -367,7 +410,8 @@ def test_model_explicit_id_already_active_is_noop(ctx: SlashContext) -> None:
 
 def test_model_explicit_id_outside_tiers_warns(ctx: SlashContext) -> None:
     result = dispatch("/model openai:gpt-99", ctx)
-    assert isinstance(result, RebuildGru)
+    assert isinstance(result, Handled)
+    assert ("switch_model", "openai:gpt-99") in ctx.controller.calls  # type: ignore[union-attr]
     assert "isn't in profile" in ctx.console.export_text()
 
 
@@ -377,8 +421,8 @@ def test_model_picker_selects_by_index(ctx: SlashContext, monkeypatch: pytest.Mo
     # Picker enumerates: 1=small (haiku), 2=medium (sonnet, active), 3=large (opus)
     monkeypatch.setattr(model_mod.Prompt, "ask", lambda *a, **kw: "3")
     result = dispatch("/model", ctx)
-    assert isinstance(result, RebuildGru)
-    assert result.new_model_id == "anthropic:claude-opus-4-7"
+    assert isinstance(result, Handled)
+    assert ("switch_model", "anthropic:claude-opus-4-7") in ctx.controller.calls  # type: ignore[union-attr]
 
 
 def test_model_picker_cancel(ctx: SlashContext, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -461,11 +505,11 @@ def test_profile_no_arg_lists_with_active_marker(ctx: SlashContext, isolated_con
     assert "(active)" in out
 
 
-def test_profile_switch_returns_rebuild(ctx: SlashContext, isolated_config: Path) -> None:
+def test_profile_switch_drives_switch(ctx: SlashContext, isolated_config: Path) -> None:
     result = dispatch("/profile openai", ctx)
-    assert isinstance(result, RebuildGru)
-    assert result.new_model_id == "openai:gpt-4o"
-    assert result.new_profile_name == "openai"
+    assert isinstance(result, Handled)
+    assert ("switch_profile", "openai") in ctx.controller.calls  # type: ignore[union-attr]
+    assert "switched to" in ctx.console.export_text()
 
 
 def test_profile_switch_to_same_is_noop(ctx: SlashContext, isolated_config: Path) -> None:
@@ -546,12 +590,14 @@ def test_mode_no_args_shows_current(ctx: SlashContext, _reset_session_policy: No
 
 
 def test_mode_switch_to_plan_rebuilds(ctx: SlashContext, _reset_session_policy: None) -> None:
-    from jac.cli.slash import RefreshToolsets
     from jac.runtime import modes
 
     result = dispatch("/mode plan", ctx)
-    assert isinstance(result, RefreshToolsets)
+    assert isinstance(result, Handled)
     assert modes.get_mode() == "plan"
+    # The mode is set first (build_gru reads it), then Gru is rebuilt via the
+    # control plane so the new mode's system-prompt guidance applies.
+    assert ("refresh_toolsets", "") in ctx.controller.calls  # type: ignore[union-attr]
 
 
 def test_mode_unknown_is_rejected(ctx: SlashContext, _reset_session_policy: None) -> None:

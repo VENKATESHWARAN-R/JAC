@@ -149,11 +149,10 @@ Hard stop at 100% of limit — use `/budget extend` or `/clear` for a fresh sess
 
 ## 9. Expose JAC to another agent (A2A)
 
-Terminal A — REPL with server:
+Terminal A — start the headless server (it prints the bearer token on startup):
 
-```text
-/a2a serve
-/a2a token
+```bash
+jac a2a serve
 ```
 
 Terminal B — another JAC or A2A client:

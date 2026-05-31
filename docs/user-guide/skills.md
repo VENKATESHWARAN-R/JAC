@@ -143,7 +143,7 @@ Run `/skill list` to see them in your session.
 | --- | --- |
 | **Sub-agents (Phase B)** | Skills are read by the *main* agent. They commonly recommend `spawn_sub_agent(...)` for context-heavy steps. Sub-agents themselves don't load skills today — the playbook is delivered via `task_packet.objective`. |
 | **Post-flight verification** | The `verify-change` reference skill demonstrates the pattern: skill body suggests putting check steps in `success_criteria` so the sub-agent self-verifies before returning. (Phase C deterministic hooks were considered and dropped — D37.) |
-| **A2A AgentCard** | Every loaded skill is published as an additional A2A `Skill` entry on the guest server's card (under `id: jac-skill-<name>`). Peers calling `/.well-known/agent-card.json` can discover what playbooks your JAC has loaded. Refresh requires a server restart (`/a2a stop && /a2a serve`). |
+| **A2A AgentCard** | Every loaded skill is published as an additional A2A `Skill` entry on the guest server's card (under `id: jac-skill-<name>`). Peers calling `/.well-known/agent-card.json` can discover what playbooks your JAC has loaded. Refresh requires a server restart (re-run `jac a2a serve`). |
 | **Prompt cache** | The Skills system-prompt block is stable as long as your on-disk skills are stable, so it stays inside the cache prefix. `/skill reload` changes the block content; the next turn pays one cache-miss to seat the new prefix. |
 
 ## When **not** to use skills

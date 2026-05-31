@@ -276,6 +276,12 @@ async def config_raw(request: Request) -> Response:
 
 
 def _mcp_after(request: Request, result: actions.ActionResult, scope: str | None) -> Response:
+    # The panel wrote mcp.json (file editor). If a chat session is live, make
+    # the edit take effect in it too — re-scan the catalog + rebuild Gru — so
+    # the web matches the CLI's /mcp reload|enable|disable instead of waiting
+    # for a restart.
+    if result.ok:
+        get_manager().reload_mcp_if_live()
     if _is_htmx(request):
         flash = {"kind": "ok" if result.ok else "err", "msg": result.message}
         return _fragment(request, "panel/mcp.html", panel.mcp_context(scope), flash=flash)
@@ -354,12 +360,16 @@ async def skills_save(request: Request) -> Response:
     result = actions.skill_save_action(
         str(form.get("scope", "")), str(form.get("name", "")), str(form.get("text", ""))
     )
+    if result.ok:
+        get_manager().reload_skills_if_live()
     return _after_write(request, result, "skills", "/skills")
 
 
 async def skills_delete(request: Request) -> Response:
     form = await request.form()
     result = actions.skill_delete_action(str(form.get("scope", "")), str(form.get("name", "")))
+    if result.ok:
+        get_manager().reload_skills_if_live()
     return _after_write(request, result, "skills", "/skills")
 
 
@@ -481,6 +491,12 @@ async def chat_switch_profile(request: Request) -> Response:
     return JSONResponse(await get_manager().switch_profile(str(data.get("profile", ""))))
 
 
+async def chat_use_skill(request: Request) -> Response:
+    """Run a turn seeded with a loaded skill's body (mirrors CLI ``/skill use``)."""
+    data = await request.json()
+    return JSONResponse(await get_manager().use_skill(str(data.get("name", ""))))
+
+
 def create_app() -> Starlette:
     """Build the JAC web-UI ASGI app (Console + Control Panel)."""
     routes = [
@@ -536,6 +552,7 @@ def create_app() -> Starlette:
         Route("/chat/switcher", chat_switcher, name="chat_switcher"),
         Route("/chat/switch-model", chat_switch_model, methods=["POST"]),
         Route("/chat/switch-profile", chat_switch_profile, methods=["POST"]),
+        Route("/chat/use-skill", chat_use_skill, methods=["POST"]),
         Mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static"),
     ]
     return Starlette(routes=routes)

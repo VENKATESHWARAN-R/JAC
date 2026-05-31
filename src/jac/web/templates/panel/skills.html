@@ -3,7 +3,7 @@
   {% if flash %}<div class="flash {{ flash.kind }}">{{ flash.msg }}</div>{% endif %}
   <h1>Skills</h1>
   <p class="note">Loadable playbooks (community <span class="mono">SKILL.md</span> format).
-    Project shadows user shadows package. Edit reloads on the next chat.</p>
+    Project shadows user shadows package. Edits reload into the live chat immediately.</p>
 
   {% if not skills_active %}<p class="note">No skills loaded.</p>{% endif %}
   {% for s in skills_active %}
@@ -24,16 +24,19 @@
           <button type="submit">Save</button>
         </form>
       </details>
+      {% else %}
+      <p class="note">Shipped (package) skill — read-only. Recreate it under user/project to customize.</p>
+      {% endif %}
       <div class="row-actions">
+        <button type="button" data-use-skill="{{ s.name }}">Use in chat ▶</button>
+        {% if s.editable %}
         <form {{ form_attrs("/skills/delete", in_drawer, confirm="Delete skill " ~ s.name ~ "?") }}>
           <input type="hidden" name="scope" value="{{ s.source }}">
           <input type="hidden" name="name" value="{{ s.name }}">
           <button class="danger" type="submit">Delete</button>
         </form>
+        {% endif %}
       </div>
-      {% else %}
-      <p class="note">Shipped (package) skill — read-only. Recreate it under user/project to customize.</p>
-      {% endif %}
     </div>
   </div>
   {% endfor %}

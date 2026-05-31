@@ -62,24 +62,12 @@ Context loaded: `~/.jac/AGENTS.md`, `~/.jac/memory.md`, `<repo>/AGENTS.md`, `<re
 
 ## Start and stop the server
 
-### In the REPL
-
-```text
-/a2a serve
-/a2a serve --port 9000 --host 127.0.0.1
-/a2a serve --unsafe
-/a2a status
-/a2a token
-/a2a stop
-```
-
-Token is printed at serve time; `/a2a token` reprints it if the server is running.
-
-### Headless
+The inbound server is **headless-only** — started with `jac a2a serve`, the same way the web UI is started with `jac web serve`. It can **not** be started from inside the REPL (the `/a2a serve`/`stop`/`status`/`token` slash commands were removed; typing one prints a hint pointing here). This keeps the long-lived server process decoupled from your interactive session.
 
 ```bash
 jac a2a serve
 jac a2a serve --profile claude --port 8001
+jac a2a serve --port 9000 --host 127.0.0.1
 jac a2a serve --unsafe   # trusted networks only
 ```
 
@@ -89,9 +77,9 @@ Startup prints:
 - Bearer token (unless `--unsafe`)
 - Agent card URL: `{url}/.well-known/agent-card.json`
 
-Ctrl-C or SIGTERM shuts down cleanly.
+Ctrl-C or SIGTERM shuts down cleanly. The server does **not** auto-start when you open `jac`.
 
-The server does **not** auto-start when you open `jac` — you opt in with `/a2a serve` or `jac a2a serve`.
+Inside the REPL you still manage **outbound** peers (who Gru can call) — `/a2a peers`, `/a2a peer add|remove` — since those configure the `a2a_call` / `a2a_discover` tools, not the inbound server.
 
 ## On-disk A2A state
 

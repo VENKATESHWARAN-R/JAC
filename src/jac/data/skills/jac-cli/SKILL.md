@@ -79,7 +79,7 @@ A folder is a **project** if it has `.git` or `.agents/` at/above the CWD. Outsi
 /skill list|use NAME|reload          # see Skill composition below
 /mcp list|reload|enable NAME|disable NAME   # see MCP composition below
 /spawns                              # list parked bidirectional sub-agents
-/a2a …                               # see A2A composition below
+/a2a peers|peer add|remove           # outbound peers only (start the server with `jac a2a serve`)
 /exit                                # quit (also: exit / quit / :q / Ctrl-D)
 ```
 
@@ -145,24 +145,16 @@ Servers are declared in `~/.jac/mcp.json` (user) and `<repo>/.agents/mcp.json` (
 
 ## A2A composition
 
-Server lifecycle (in-REPL):
-
-```text
-/a2a serve                           # bind to profile default (127.0.0.1:8001), bearer auth
-/a2a serve --port 9000 --host 127.0.0.1
-/a2a serve --unsafe                  # NO AUTH — trusted networks only
-/a2a stop
-/a2a status                          # URL, auth, peer count, last 5 inbound
-/a2a token                           # reprint current bearer
-```
-
-Headless equivalent:
+Server lifecycle — **headless only** (the inbound server can no longer be started from the REPL; this mirrors how the web UI is started with `jac web serve`):
 
 ```bash
-jac a2a serve
+jac a2a serve                        # bind to profile default (127.0.0.1:8001), bearer auth
 jac a2a serve --profile claude --port 8001
-jac a2a serve --unsafe
+jac a2a serve --port 9000 --host 127.0.0.1
+jac a2a serve --unsafe               # NO AUTH — trusted networks only
 ```
+
+The token is printed at serve time; bind/auth/status are visible in that process's banner. There is **no** `/a2a serve|stop|status|token` slash command — typing one in the REPL just prints a hint pointing at `jac a2a serve`.
 
 Peer management — three auth shapes:
 

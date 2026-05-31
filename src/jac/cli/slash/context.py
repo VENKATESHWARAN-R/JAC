@@ -18,6 +18,7 @@ from jac.capabilities.a2a import A2ACapability
 from jac.capabilities.mcp import MCPCapability
 from jac.capabilities.skills import SkillsCapability
 from jac.profiles import Profile
+from jac.runtime.control import SessionController
 from jac.runtime.session import Session
 from jac.runtime.usage import UsageTracker
 
@@ -66,3 +67,10 @@ class SlashContext:
     """MCP server loader capability (Phase F, D28). ``/mcp list|reload|
     enable|disable`` read and mutate its catalog. ``None`` in tests that
     don't exercise the MCP surface."""
+
+    controller: SessionController | None = None
+    """Surface-agnostic control plane over the live session runtime. The
+    mutating commands — ``/model``, ``/profile``, ``/mcp reload|enable|
+    disable`` — call its verbs (which rebuild Gru in place on the runtime)
+    instead of returning a CLI-specific result for the REPL to act on.
+    ``None`` in tests that don't exercise those commands."""

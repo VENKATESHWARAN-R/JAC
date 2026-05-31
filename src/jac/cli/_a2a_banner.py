@@ -1,11 +1,11 @@
 """Shared A2A server-started banner.
 
-Two surfaces start the A2A server — ``/a2a serve`` inside the REPL
-(:func:`jac.cli.repl._handle_start_a2a`) and the headless ``jac a2a serve``
-(:func:`jac.cli.a2a.serve_command`). Both print the same multi-line banner
-when the server comes up: URL, bind host, bearer token (or unsafe warning),
-agent-card URL. Centralizing that here keeps the two surfaces from
-drifting apart.
+The inbound A2A server is started only by the headless ``jac a2a serve``
+(:func:`jac.cli.a2a.serve_command`) — the REPL no longer starts one. This
+banner prints when the server comes up: URL, bind host, bearer token (or
+unsafe warning), agent-card URL. It lives in its own module so the command
+file stays focused; it remains a stable seam should another surface ever
+need to print the same banner.
 
 The banner takes the ``ServerInfo``-shaped object returned by
 :meth:`A2ACapability.start_server` and a ``rich.Console`` to print to.

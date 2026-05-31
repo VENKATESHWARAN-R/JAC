@@ -11,9 +11,10 @@ Subcommands:
 - ``/mcp enable NAME`` / ``/mcp disable NAME`` — flip a server on/off,
   persist to the owning file's ``jac`` block, and rebuild Gru.
 
-Enable/disable/reload return :class:`RefreshToolsets` so the REPL rebuilds
-Gru in place (no model switch) — the reused :class:`MCPCapability`'s
-``get_toolset`` reads its live catalog on the rebuild.
+Enable/disable/reload delegate to the control plane (``ctx.controller``),
+which persists the change *and* rebuilds Gru in place (no model switch) so
+the reused :class:`MCPCapability`'s ``get_toolset`` is re-consulted against
+its live catalog. The web surface drives the identical verbs.
 """
 
 from __future__ import annotations
@@ -22,7 +23,8 @@ from rich.table import Table
 
 from jac.cli.slash.context import SlashContext
 from jac.cli.slash.registry import register
-from jac.cli.slash.result import Handled, RefreshToolsets, SlashResult
+from jac.cli.slash.render import render_action
+from jac.cli.slash.result import Handled, SlashResult
 
 _USAGE = "/mcp {list | reload | enable NAME | disable NAME}"
 
@@ -87,32 +89,21 @@ def _handle_list(ctx: SlashContext) -> SlashResult:
 
 
 def _handle_reload(ctx: SlashContext) -> SlashResult:
-    assert ctx.mcp is not None
-    ctx.mcp.reload()
-    n = len(ctx.mcp.catalog.enabled)
-    return RefreshToolsets(note=f"reloaded MCP catalog ({n} server{'s' if n != 1 else ''} enabled)")
+    if ctx.controller is None:  # pragma: no cover - always wired in the REPL
+        ctx.console.print("[yellow]control plane is not wired into this session[/yellow]")
+        return Handled()
+    render_action(ctx, ctx.controller.reload_mcp())
+    return Handled()
 
 
 def _handle_toggle(ctx: SlashContext, sub: str, name: str) -> SlashResult:
-    assert ctx.mcp is not None
     if not name:
         ctx.console.print(f"[dim]usage:[/dim] /mcp {sub} NAME")
         return Handled()
-    if name not in ctx.mcp.catalog.servers:
-        available = ", ".join(sorted(ctx.mcp.catalog.servers)) or "(none)"
-        ctx.console.print(
-            f"[red]unknown MCP server:[/red] {name!r}  [dim](available: {available})[/dim]"
-        )
+    if ctx.controller is None:  # pragma: no cover - always wired in the REPL
+        ctx.console.print("[yellow]control plane is not wired into this session[/yellow]")
         return Handled()
-
-    want_enabled = sub == "enable"
-    if ctx.mcp.catalog.servers[name].knobs.enabled == want_enabled:
-        ctx.console.print(f"[dim]{name} is already {sub}d[/dim]")
-        return Handled()
-
-    try:
-        ctx.mcp.set_enabled(name, want_enabled)
-    except OSError as exc:
-        ctx.console.print(f"[red]could not persist change:[/red] {exc}")
-        return Handled()
-    return RefreshToolsets(note=f"{sub}d MCP server [bold]{name}[/bold]")
+    # The control plane validates (unknown server / already-in-state), persists
+    # the flag, and rebuilds Gru so the change takes effect immediately.
+    render_action(ctx, ctx.controller.set_mcp_enabled(name, enabled=sub == "enable"))
+    return Handled()
