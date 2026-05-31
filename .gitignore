@@ -229,3 +229,6 @@ __marimo__/
 
 # macOS
 .DS_Store
+
+# Claude Code local config (preview launch config + local settings)
+.claude/

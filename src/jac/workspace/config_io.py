@@ -27,7 +27,6 @@ import yaml
 
 from jac.workspace import paths
 
-Scope = Literal["project", "user"]
 Origin = Literal["env", "dotenv", "project", "user", "defaults", "code"]
 
 # Precedence rank (lower = higher precedence), matching config_loader's stack.
