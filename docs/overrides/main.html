@@ -1,6 +1,11 @@
 <!-- overrides/main.html -->
 {% extends "base.html" %}
 
+{% block extrahead %}
+  {{ super() }}
+  <meta name="google-site-verification" content="MZ-x_iOuiSW-cg7ozOASdbA9QatCeZjbtCylcGAh_r0" />
+{% endblock %}
+
 {% block announce %}
   <span>
     🍌 JAC is a learning-first agentic coding harness — Gru is still training the minions.
